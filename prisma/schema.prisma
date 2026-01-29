@@ -1,0 +1,276 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────
+
+enum CompanionMode {
+  CALM_LISTENER
+  LIGHT_AND_FUN
+  NIGHT_COMPANION
+  MOTIVATOR
+}
+
+enum MatchIntent {
+  VENT
+  CASUAL_CHAT
+  DEEP_TALK
+  ADVICE
+  JUST_LISTEN
+}
+
+enum MoodTag {
+  HAPPY
+  SAD
+  ANXIOUS
+  LONELY
+  ANGRY
+  NEUTRAL
+  EXCITED
+  TIRED
+  OVERWHELMED
+  HOPEFUL
+}
+
+enum ConversationType {
+  HUMAN_MATCHED
+  AI_HANDOFF
+}
+
+enum MatchRequestStatus {
+  WAITING
+  MATCHED
+  EXPIRED
+  CANCELLED
+}
+
+enum ConversationStatus {
+  ACTIVE
+  ENDED
+}
+
+enum AiSessionStatus {
+  ACTIVE
+  ENDED
+}
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum ReportReason {
+  HARASSMENT
+  SPAM
+  INAPPROPRIATE_CONTENT
+  SELF_HARM
+  THREATS
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  DISMISSED
+}
+
+enum BanStatus {
+  NONE
+  WARNING
+  TEMP_BAN
+  PERMANENT_BAN
+}
+
+// ─── Models ─────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  email         String?   @unique
+  passwordHash  String?
+  deviceId      String?   @unique
+  phoneHash     String?   @unique
+  displayName   String    // Auto-generated like "Gentle Owl 17"
+  avatarUrl     String?
+  bio           String?
+  profession    String?
+  gender        String?   // "male", "female", "other"
+  location      String?
+  status        String    @default("available") // "available", "busy"
+  availabilityNote String? // e.g. "Available for 15min call", "Free in 30 mins"
+  isAnonymous   Boolean   @default(true)
+  isOnline      Boolean   @default(false)
+  lastSeenAt    DateTime?
+  availableFor  String[]  @default(["text"])
+  banStatus     BanStatus @default(NONE)
+  banExpiresAt  DateTime?
+  flagCount     Int       @default(0)
+  lastFlaggedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  preference     UserPreference?
+  refreshTokens  RefreshToken[]
+  aiSessions     AiSession[]
+  matchRequests  MatchRequest[]
+  conversations  ConversationParticipant[]
+  messages       Message[]
+  reportsMade    Report[]  @relation("ReportsMade")
+  reportsAgainst Report[]  @relation("ReportsAgainst")
+  blocksInitiated Block[] @relation("BlocksInitiated")
+  blocksReceived  Block[] @relation("BlocksReceived")
+
+  @@index([banStatus])
+}
+
+model UserPreference {
+  id        String      @id @default(uuid())
+  userId    String      @unique
+  mood      MoodTag     @default(NEUTRAL)
+  language  String      @default("en")
+  timezone  String      @default("UTC")
+  topics    String[]    @default([])
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model AiSession {
+  id       String          @id @default(uuid())
+  userId   String
+  mode     CompanionMode
+  status   AiSessionStatus @default(ACTIVE)
+  metadata Json?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages AiMessage[]
+
+  @@index([userId, status])
+}
+
+model AiMessage {
+  id        String        @id @default(uuid())
+  sessionId String
+  role      AiMessageRole
+  content   String
+  mood      MoodTag?
+  metadata  Json?
+  createdAt DateTime      @default(now())
+
+  session AiSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+model MatchRequest {
+  id        String             @id @default(uuid())
+  userId    String
+  intent    MatchIntent
+  mood      MoodTag            @default(NEUTRAL)
+  language  String             @default("en")
+  timezone  String             @default("UTC")
+  topics    String[]           @default([])
+  status    MatchRequestStatus @default(WAITING)
+  matchedWith String?
+  fromAiSession String?
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, intent])
+  @@index([userId])
+}
+
+model Conversation {
+  id        String             @id @default(uuid())
+  type      ConversationType   @default(HUMAN_MATCHED)
+  status    ConversationStatus @default(ACTIVE)
+  metadata  Json?
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  participants ConversationParticipant[]
+  messages     Message[]
+}
+
+model ConversationParticipant {
+  id             String   @id @default(uuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime @default(now())
+  leftAt         DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  conversationId String
+  senderId       String
+  content        String
+  isSystem       Boolean  @default(false)
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+model Report {
+  id         String       @id @default(uuid())
+  reporterId String
+  reportedId String
+  reason     ReportReason
+  details    String?
+  status     ReportStatus @default(PENDING)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  reporter User @relation("ReportsMade", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported User @relation("ReportsAgainst", fields: [reportedId], references: [id], onDelete: Cascade)
+
+  @@index([reportedId, status])
+}
+
+model Block {
+  id        String   @id @default(uuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("BlocksInitiated", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("BlocksReceived", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+}
