@@ -1,6 +1,6 @@
 import { prisma } from '../../config/database';
 import { NotFoundError } from '../../shared/errors';
-import { UpdatePreferenceInput, UpdateAvailabilityInput } from './user.schema';
+import { UpdatePreferenceInput, UpdateAvailabilityInput, UpdatePrivacyInput } from './user.schema';
 
 async function findUserOrThrow(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -19,10 +19,16 @@ export async function getProfile(userId: string) {
       gender: true,
       location: true,
       status: true,
+      availabilityNote: true,
       isAnonymous: true,
       isOnline: true,
       lastSeenAt: true,
       availableFor: true,
+      availableUntil: true,
+      isVerified: true,
+      verifiedAt: true,
+      verifiedRole: true,
+      isProfilePublic: true,
       banStatus: true,
       banExpiresAt: true,
       createdAt: true,
@@ -54,7 +60,7 @@ export async function listUsers(currentUserId: string) {
     b.blockerId === currentUserId ? b.blockedId : b.blockerId,
   );
 
-  return prisma.user.findMany({
+  const users = await prisma.user.findMany({
     where: {
       id: { notIn: [currentUserId, ...blockedIds] },
     },
@@ -71,8 +77,44 @@ export async function listUsers(currentUserId: string) {
       isOnline: true,
       lastSeenAt: true,
       availableFor: true,
+      availableUntil: true,
+      isVerified: true,
+      verifiedRole: true,
+      isProfilePublic: true,
+      _count: { select: { followsReceived: true } },
     },
     orderBy: [{ isOnline: 'desc' }, { lastSeenAt: 'desc' }],
+  });
+
+  // Get who the current user follows
+  const following = await prisma.follow.findMany({
+    where: { followerId: currentUserId },
+    select: { followingId: true },
+  });
+  const followingSet = new Set(following.map((f) => f.followingId));
+
+  return users.map((user) => {
+    const isPrivate = !user.isProfilePublic;
+    return {
+      id: user.id,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      bio: isPrivate ? null : user.bio,
+      profession: isPrivate ? null : user.profession,
+      gender: user.gender,
+      location: isPrivate ? null : user.location,
+      status: user.status,
+      availabilityNote: isPrivate ? null : user.availabilityNote,
+      isOnline: user.isOnline,
+      lastSeenAt: user.lastSeenAt,
+      availableFor: user.availableFor,
+      availableUntil: user.availableUntil,
+      isVerified: user.isVerified,
+      verifiedRole: user.verifiedRole,
+      isProfilePublic: user.isProfilePublic,
+      followerCount: user._count.followsReceived,
+      isFollowedByMe: followingSet.has(user.id),
+    };
   });
 }
 
@@ -80,9 +122,66 @@ export async function updateAvailability(userId: string, data: UpdateAvailabilit
   await findUserOrThrow(userId);
   return prisma.user.update({
     where: { id: userId },
-    data: { availableFor: data.availableFor },
-    select: { id: true, availableFor: true },
+    data: {
+      availableFor: data.availableFor,
+      availabilityNote: data.availabilityNote ?? null,
+      status: data.status ?? 'available',
+      availableUntil: data.availableUntil ? new Date(data.availableUntil) : null,
+    },
+    select: {
+      id: true,
+      availableFor: true,
+      availabilityNote: true,
+      status: true,
+      availableUntil: true,
+    },
   });
+}
+
+export async function stopAvailability(userId: string) {
+  await findUserOrThrow(userId);
+  return prisma.user.update({
+    where: { id: userId },
+    data: {
+      availableFor: ['text'],
+      availabilityNote: null,
+      status: 'available',
+      availableUntil: null,
+    },
+    select: {
+      id: true,
+      availableFor: true,
+      availabilityNote: true,
+      status: true,
+      availableUntil: true,
+    },
+  });
+}
+
+export async function expireAvailabilities() {
+  const now = new Date();
+  const expired = await prisma.user.findMany({
+    where: {
+      availableUntil: { lt: now },
+    },
+    select: { id: true },
+  });
+
+  if (expired.length === 0) return [];
+
+  const ids = expired.map((u) => u.id);
+
+  await prisma.user.updateMany({
+    where: { id: { in: ids } },
+    data: {
+      availableFor: ['text'],
+      availabilityNote: null,
+      status: 'available',
+      availableUntil: null,
+    },
+  });
+
+  return ids;
 }
 
 export async function uploadAvatar(userId: string, avatarUrl: string) {
@@ -121,6 +220,15 @@ export async function updatePreference(userId: string, data: UpdatePreferenceInp
       topics: true,
       updatedAt: true,
     },
+  });
+}
+
+export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
+  await findUserOrThrow(userId);
+  return prisma.user.update({
+    where: { id: userId },
+    data: { isProfilePublic: data.isProfilePublic },
+    select: { id: true, isProfilePublic: true },
   });
 }
 

@@ -108,6 +108,11 @@ model User {
   isOnline      Boolean   @default(false)
   lastSeenAt    DateTime?
   availableFor  String[]  @default(["text"])
+  availableUntil DateTime?
+  isVerified    Boolean   @default(false)
+  verifiedAt    DateTime?
+  verifiedRole  String?
+  isProfilePublic Boolean @default(true)
   banStatus     BanStatus @default(NONE)
   banExpiresAt  DateTime?
   flagCount     Int       @default(0)
@@ -123,8 +128,10 @@ model User {
   messages       Message[]
   reportsMade    Report[]  @relation("ReportsMade")
   reportsAgainst Report[]  @relation("ReportsAgainst")
-  blocksInitiated Block[] @relation("BlocksInitiated")
-  blocksReceived  Block[] @relation("BlocksReceived")
+  blocksInitiated  Block[]  @relation("BlocksInitiated")
+  blocksReceived   Block[]  @relation("BlocksReceived")
+  followsInitiated Follow[] @relation("FollowsInitiated")
+  followsReceived  Follow[] @relation("FollowsReceived")
 
   @@index([banStatus])
 }
@@ -273,4 +280,18 @@ model Block {
   @@unique([blockerId, blockedId])
   @@index([blockerId])
   @@index([blockedId])
+}
+
+model Follow {
+  id          String   @id @default(uuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("FollowsInitiated", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("FollowsReceived", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
 }

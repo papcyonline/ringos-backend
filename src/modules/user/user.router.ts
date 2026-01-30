@@ -3,8 +3,10 @@ import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { AuthRequest } from '../../shared/types';
 import { avatarUpload, fileToAvatarUrl } from '../../shared/upload';
-import { updatePreferenceSchema, updateAvailabilitySchema } from './user.schema';
+import { getIO } from '../../config/socket';
+import { updatePreferenceSchema, updateAvailabilitySchema, updatePrivacySchema } from './user.schema';
 import * as userService from './user.service';
+import * as followService from './follow.service';
 
 const router = Router();
 
@@ -51,6 +53,34 @@ router.put(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const result = await userService.updateAvailability(req.user!.userId, req.body);
+      getIO().emit('user:status-update', {
+        userId: req.user!.userId,
+        status: result.status,
+        availabilityNote: result.availabilityNote,
+        availableFor: result.availableFor,
+        availableUntil: result.availableUntil,
+      });
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /me/availability - Stop availability (reset to defaults)
+router.delete(
+  '/me/availability',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await userService.stopAvailability(req.user!.userId);
+      getIO().emit('user:status-update', {
+        userId: req.user!.userId,
+        status: result.status,
+        availabilityNote: result.availabilityNote,
+        availableFor: result.availableFor,
+        availableUntil: result.availableUntil,
+      });
       res.json(result);
     } catch (err) {
       next(err);
@@ -76,11 +106,76 @@ router.post(
   },
 );
 
+// PUT /me/privacy - Toggle profile privacy
+router.put(
+  '/me/privacy',
+  authenticate,
+  validate(updatePrivacySchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await userService.updatePrivacy(req.user!.userId, req.body);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /me/following - List who current user follows
+router.get('/me/following', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const following = await followService.getFollowing(req.user!.userId);
+    res.json(following);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /me - Delete current user's account
 router.delete('/me', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     await userService.deleteAccount(req.user!.userId);
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /:id/follow - Follow a user
+router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await followService.followUser(req.user!.userId, req.params.id);
+    res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /:id/follow - Unfollow a user
+router.delete('/:id/follow', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    await followService.unfollowUser(req.user!.userId, req.params.id);
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /:id/followers - List followers of a user
+router.get('/:id/followers', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const followers = await followService.getFollowers(req.params.id);
+    res.json(followers);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /:id/following - List who a user follows
+router.get('/:id/following', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const following = await followService.getFollowing(req.params.id);
+    res.json(following);
   } catch (err) {
     next(err);
   }

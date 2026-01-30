@@ -26,6 +26,15 @@ export const updateAvailabilitySchema = z.object({
   availableFor: z
     .array(z.enum(['text', 'call', 'video']))
     .min(1, 'Must be available for at least one mode'),
+  availabilityNote: z.string().max(200).optional(),
+  status: z.enum(['available', 'busy']).optional(),
+  availableUntil: z.string().datetime().optional().nullable(),
 });
 
 export type UpdateAvailabilityInput = z.infer<typeof updateAvailabilitySchema>;
+
+export const updatePrivacySchema = z.object({
+  isProfilePublic: z.boolean(),
+});
+
+export type UpdatePrivacyInput = z.infer<typeof updatePrivacySchema>;
