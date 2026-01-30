@@ -12,6 +12,8 @@ import {
   phoneAuthSchema,
   verifyOtpSchema,
   refreshTokenSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
 } from './auth.schema';
 import * as authService from './auth.service';
 
@@ -112,6 +114,34 @@ router.post(
       const { phone, code } = req.body;
       const result = await authService.verifyOtp(phone, code);
       logger.info({ userId: result.user.id }, 'OTP verified');
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/forgot-password',
+  validate(forgotPasswordSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { email } = req.body;
+      const result = await authService.requestPasswordReset(email);
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/reset-password',
+  validate(resetPasswordSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { email, code, newPassword } = req.body;
+      const result = await authService.resetPassword(email, code, newPassword);
       res.status(200).json(result);
     } catch (err) {
       next(err);

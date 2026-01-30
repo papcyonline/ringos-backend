@@ -21,7 +21,7 @@ export const usernameSchema = z.object({
   gender: z.enum(['male', 'female', 'other']).optional(),
   location: z.string().max(100).optional(),
   availabilityNote: z.string().max(120).optional(),
-  language: z.string().min(2).max(10).optional(),
+  language: z.string().min(2).max(100).optional(),
 });
 
 export const phoneAuthSchema = z.object({
@@ -35,4 +35,14 @@ export const verifyOtpSchema = z.object({
 
 export const refreshTokenSchema = z.object({
   refreshToken: z.string(),
+});
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+export const resetPasswordSchema = z.object({
+  email: z.string().email(),
+  code: z.string().length(6),
+  newPassword: z.string().min(6),
 });

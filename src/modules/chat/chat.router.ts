@@ -81,6 +81,23 @@ router.post(
   },
 );
 
+// POST /conversations/direct/:userId - Get or create a direct conversation
+router.post(
+  '/conversations/direct/:userId',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const conversation = await chatService.getOrCreateDirectConversation(
+        req.user!.userId,
+        req.params.userId,
+      );
+      res.json(conversation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // POST /conversations/:conversationId/end - End a conversation
 router.post(
   '/conversations/:conversationId/end',

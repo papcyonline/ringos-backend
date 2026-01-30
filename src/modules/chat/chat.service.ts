@@ -31,7 +31,7 @@ export async function getConversation(conversationId: string, userId: string) {
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
           },
         },
       },
@@ -65,7 +65,7 @@ export async function getConversations(userId: string) {
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
           },
         },
       },
@@ -90,6 +90,67 @@ export async function getConversations(userId: string) {
     lastMessage: c.messages[0] || null,
     messages: undefined,
   }));
+}
+
+/**
+ * Get or create a direct 1-on-1 conversation between two users.
+ */
+export async function getOrCreateDirectConversation(userId: string, targetUserId: string) {
+  if (userId === targetUserId) {
+    throw new ForbiddenError('Cannot create a conversation with yourself');
+  }
+
+  // Check if a 1-on-1 conversation already exists between the two users
+  const existing = await prisma.conversation.findFirst({
+    where: {
+      type: 'HUMAN_MATCHED',
+      status: 'ACTIVE',
+      AND: [
+        { participants: { some: { userId } } },
+        { participants: { some: { userId: targetUserId } } },
+      ],
+    },
+    include: {
+      participants: {
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (existing) {
+    logger.debug({ conversationId: existing.id, userId, targetUserId }, 'Found existing direct conversation');
+    return existing;
+  }
+
+  // Create new conversation with both participants
+  const conversation = await prisma.conversation.create({
+    data: {
+      type: 'HUMAN_MATCHED',
+      status: 'ACTIVE',
+      participants: {
+        create: [
+          { userId },
+          { userId: targetUserId },
+        ],
+      },
+    },
+    include: {
+      participants: {
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+          },
+        },
+      },
+    },
+  });
+
+  logger.info({ conversationId: conversation.id, userId, targetUserId }, 'Created direct conversation');
+  return conversation;
 }
 
 /**

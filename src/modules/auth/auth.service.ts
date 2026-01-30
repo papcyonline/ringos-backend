@@ -47,6 +47,7 @@ export async function anonymousLogin(deviceId: string) {
   return {
     accessToken,
     refreshToken,
+    userId: user.id,
     user: {
       id: user.id,
       displayName: user.displayName,
@@ -55,7 +56,8 @@ export async function anonymousLogin(deviceId: string) {
   };
 }
 
-export async function register(email: string, password: string) {
+export async function register(rawEmail: string, password: string) {
+  const email = rawEmail.toLowerCase().trim();
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     throw new BadRequestError('An account with this email already exists');
@@ -97,7 +99,8 @@ export async function register(email: string, password: string) {
   };
 }
 
-export async function login(email: string, password: string) {
+export async function login(rawEmail: string, password: string) {
+  const email = rawEmail.toLowerCase().trim();
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !user.passwordHash) {
     throw new UnauthorizedError('Invalid email or password');
@@ -262,6 +265,7 @@ export async function verifyOtp(phone: string, code: string) {
   return {
     accessToken,
     refreshToken,
+    userId: user.id,
     user: {
       id: user.id,
       displayName: user.displayName,
@@ -310,6 +314,54 @@ export async function refreshTokens(token: string) {
   });
 
   return { accessToken, refreshToken };
+}
+
+export async function requestPasswordReset(rawEmail: string) {
+  const email = rawEmail.toLowerCase().trim();
+  const user = await prisma.user.findUnique({ where: { email } });
+
+  if (user) {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    otpStore.set(`reset:${email}`, { code, expiresAt: Date.now() + 5 * 60 * 1000 });
+    logger.info({ email, code }, 'Password reset code generated (MVP - logged to console)');
+  }
+
+  return { message: 'If an account with that email exists, a reset code has been sent.' };
+}
+
+export async function resetPassword(rawEmail: string, code: string, newPassword: string) {
+  const email = rawEmail.toLowerCase().trim();
+  const stored = otpStore.get(`reset:${email}`);
+
+  if (!stored) {
+    throw new BadRequestError('No reset code requested for this email');
+  }
+
+  if (Date.now() > stored.expiresAt) {
+    otpStore.delete(`reset:${email}`);
+    throw new BadRequestError('Reset code has expired');
+  }
+
+  if (stored.code !== code) {
+    throw new BadRequestError('Invalid reset code');
+  }
+
+  otpStore.delete(`reset:${email}`);
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    throw new BadRequestError('User not found');
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash },
+  });
+
+  logger.info({ userId: user.id }, 'Password reset successfully');
+
+  return { message: 'Password has been reset successfully. Please log in with your new password.' };
 }
 
 export async function logout(userId: string, token: string) {

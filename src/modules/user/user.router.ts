@@ -4,7 +4,7 @@ import { validate } from '../../middleware/validate';
 import { AuthRequest } from '../../shared/types';
 import { avatarUpload, fileToAvatarUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
-import { updatePreferenceSchema, updateAvailabilitySchema, updatePrivacySchema } from './user.schema';
+import { updatePreferenceSchema, updateAvailabilitySchema, updatePrivacySchema, updateProfileSchema } from './user.schema';
 import * as userService from './user.service';
 import * as followService from './follow.service';
 
@@ -29,6 +29,21 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response, next: Ne
     next(err);
   }
 });
+
+// PUT /me/profile - Update display name, bio, profession, gender, location
+router.put(
+  '/me/profile',
+  authenticate,
+  validate(updateProfileSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const profile = await userService.updateProfile(req.user!.userId, req.body);
+      res.json(profile);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // PUT /me/preferences - Update current user's preferences
 router.put(

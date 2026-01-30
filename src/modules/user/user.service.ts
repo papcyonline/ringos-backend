@@ -1,6 +1,6 @@
 import { prisma } from '../../config/database';
 import { NotFoundError } from '../../shared/errors';
-import { UpdatePreferenceInput, UpdateAvailabilityInput, UpdatePrivacyInput } from './user.schema';
+import { UpdatePreferenceInput, UpdateAvailabilityInput, UpdatePrivacyInput, UpdateProfileInput } from './user.schema';
 
 async function findUserOrThrow(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -16,6 +16,7 @@ export async function getProfile(userId: string) {
       displayName: true,
       avatarUrl: true,
       bio: true,
+      profession: true,
       gender: true,
       location: true,
       status: true,
@@ -41,11 +42,21 @@ export async function getProfile(userId: string) {
           topics: true,
         },
       },
+      _count: {
+        select: {
+          followsReceived: true,
+          followsInitiated: true,
+        },
+      },
     },
   });
 
   if (!user) throw new NotFoundError('User not found');
-  return user;
+  return {
+    ...user,
+    followerCount: user._count.followsReceived,
+    followingCount: user._count.followsInitiated,
+  };
 }
 
 export async function listUsers(currentUserId: string) {
@@ -229,6 +240,23 @@ export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
     where: { id: userId },
     data: { isProfilePublic: data.isProfilePublic },
     select: { id: true, isProfilePublic: true },
+  });
+}
+
+export async function updateProfile(userId: string, data: UpdateProfileInput) {
+  await findUserOrThrow(userId);
+  return prisma.user.update({
+    where: { id: userId },
+    data,
+    select: {
+      id: true,
+      displayName: true,
+      avatarUrl: true,
+      bio: true,
+      profession: true,
+      gender: true,
+      location: true,
+    },
   });
 }
 
