@@ -40,6 +40,23 @@ enum MoodTag {
 enum ConversationType {
   HUMAN_MATCHED
   AI_HANDOFF
+  GROUP
+}
+
+enum ParticipantRole {
+  ADMIN
+  MEMBER
+}
+
+enum CallType {
+  AUDIO
+  VIDEO
+}
+
+enum CallLogStatus {
+  COMPLETED
+  MISSED
+  REJECTED
 }
 
 enum MatchRequestStatus {
@@ -132,6 +149,8 @@ model User {
   blocksReceived   Block[]  @relation("BlocksReceived")
   followsInitiated Follow[] @relation("FollowsInitiated")
   followsReceived  Follow[] @relation("FollowsReceived")
+  reactions        MessageReaction[]
+  callLogs         CallLog[]
 
   @@index([banStatus])
 }
@@ -215,19 +234,24 @@ model Conversation {
   id        String             @id @default(uuid())
   type      ConversationType   @default(HUMAN_MATCHED)
   status    ConversationStatus @default(ACTIVE)
+  name      String?
+  avatarUrl String?
   metadata  Json?
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
   participants ConversationParticipant[]
   messages     Message[]
+  callLogs     CallLog[]
 }
 
 model ConversationParticipant {
-  id             String   @id @default(uuid())
+  id             String          @id @default(uuid())
   conversationId String
   userId         String
-  joinedAt       DateTime @default(now())
+  role           ParticipantRole @default(MEMBER)
+  lastReadAt     DateTime?
+  joinedAt       DateTime        @default(now())
   leftAt         DateTime?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -238,18 +262,41 @@ model ConversationParticipant {
 }
 
 model Message {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   conversationId String
   senderId       String
   content        String
-  isSystem       Boolean  @default(false)
+  isSystem       Boolean   @default(false)
   metadata       Json?
-  createdAt      DateTime @default(now())
+  replyToId      String?
+  imageUrl       String?
+  viewOnce       Boolean   @default(false)
+  viewOnceOpened Boolean   @default(false)
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
 
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User               @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo      Message?           @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies      Message[]          @relation("MessageReplies")
+  reactions    MessageReaction[]
 
   @@index([conversationId, createdAt])
+}
+
+model MessageReaction {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
 }
 
 model Report {
@@ -294,4 +341,22 @@ model Follow {
   @@unique([followerId, followingId])
   @@index([followerId])
   @@index([followingId])
+}
+
+model CallLog {
+  id             String        @id @default(uuid())
+  callId         String        @unique
+  conversationId String
+  initiatorId    String
+  callType       CallType      @default(AUDIO)
+  status         CallLogStatus @default(MISSED)
+  startedAt      DateTime      @default(now())
+  endedAt        DateTime?
+  durationSecs   Int?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  initiator    User         @relation(fields: [initiatorId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([initiatorId])
 }

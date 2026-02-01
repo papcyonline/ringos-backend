@@ -28,7 +28,7 @@ export async function generateAiResponse(
   ];
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4',
+    model: 'gpt-4o',
     messages: formattedMessages,
     temperature: 0.8,
     max_tokens: 1024,

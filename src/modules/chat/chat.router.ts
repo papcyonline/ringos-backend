@@ -3,8 +3,11 @@ import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { moderateMessage } from '../../middleware/moderation';
 import { AuthRequest } from '../../shared/types';
-import { sendMessageSchema } from './chat.schema';
+import { chatImageUpload, fileToChatImageUrl } from '../../shared/upload';
+import { getIO } from '../../config/socket';
+import { sendMessageSchema, editMessageSchema, reactMessageSchema } from './chat.schema';
 import * as chatService from './chat.service';
+import * as groupService from './group.service';
 
 const router = Router();
 
@@ -73,8 +76,265 @@ router.post(
         req.params.conversationId,
         req.user!.userId,
         req.body.content,
+        req.body.replyToId,
       );
       res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /conversations/:conversationId/messages/:messageId - Edit a message
+router.put(
+  '/conversations/:conversationId/messages/:messageId',
+  authenticate,
+  validate(editMessageSchema),
+  moderateMessage('content'),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const message = await chatService.editMessage(
+        req.params.messageId,
+        req.user!.userId,
+        req.body.content,
+      );
+      res.json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /conversations/:conversationId/messages/:messageId - Delete a message
+router.delete(
+  '/conversations/:conversationId/messages/:messageId',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const message = await chatService.deleteMessage(
+        req.params.messageId,
+        req.user!.userId,
+      );
+      res.json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/messages/:messageId/reactions - Toggle reaction
+router.post(
+  '/conversations/:conversationId/messages/:messageId/reactions',
+  authenticate,
+  validate(reactMessageSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.toggleReaction(
+        req.params.messageId,
+        req.user!.userId,
+        req.body.emoji,
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/image - Send an image message
+router.post(
+  '/conversations/:conversationId/image',
+  authenticate,
+  chatImageUpload.single('image'),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No image uploaded' });
+      }
+      const imageUrl = fileToChatImageUrl(req.file);
+      const caption = (req.body.caption as string) || '';
+      const replyToId = req.body.replyToId as string | undefined;
+      const viewOnce = req.body.viewOnce === 'true';
+
+      const message = await chatService.sendMessage(
+        req.params.conversationId,
+        req.user!.userId,
+        caption,
+        replyToId,
+        imageUrl,
+        viewOnce,
+      );
+
+      // Broadcast to room so other participants see it
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', {
+        id: message.id,
+        conversationId: req.params.conversationId,
+        senderId: message.senderId,
+        senderName: message.sender.displayName,
+        content: message.content,
+        imageUrl: message.imageUrl,
+        viewOnce: message.viewOnce,
+        viewOnceOpened: message.viewOnceOpened,
+        replyToId: message.replyToId,
+        replyTo: message.replyTo
+          ? {
+              id: message.replyTo.id,
+              content: message.replyTo.content,
+              senderId: message.replyTo.senderId,
+              senderName: (message.replyTo as any).sender.displayName,
+            }
+          : null,
+        editedAt: message.editedAt,
+        deletedAt: message.deletedAt,
+        reactions: message.reactions.map((r: any) => ({
+          emoji: r.emoji,
+          userId: r.userId,
+          displayName: r.user.displayName,
+        })),
+        createdAt: message.createdAt,
+      });
+
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/messages/:messageId/view-once - Open a view-once message
+router.post(
+  '/conversations/:conversationId/messages/:messageId/view-once',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.openViewOnce(
+        req.params.messageId,
+        req.user!.userId,
+      );
+
+      // Notify the room that view-once was opened
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:viewOnceOpened', {
+        messageId: result.messageId,
+      });
+
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/group - Create a group conversation
+router.post(
+  '/conversations/group',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { name, memberIds, avatarUrl } = req.body;
+      if (!name || !memberIds || !Array.isArray(memberIds)) {
+        return res.status(400).json({ error: 'name and memberIds are required' });
+      }
+      const conversation = await groupService.createGroup(
+        req.user!.userId,
+        name,
+        memberIds,
+        avatarUrl,
+      );
+      res.status(201).json(conversation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /conversations/:id/group - Update group name/avatar
+router.put(
+  '/conversations/:conversationId/group',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { name, avatarUrl } = req.body;
+      const conversation = await groupService.updateGroup(
+        req.params.conversationId,
+        req.user!.userId,
+        { name, avatarUrl },
+      );
+      res.json(conversation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:id/members - Add members to group
+router.post(
+  '/conversations/:conversationId/members',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { memberIds } = req.body;
+      if (!memberIds || !Array.isArray(memberIds)) {
+        return res.status(400).json({ error: 'memberIds array is required' });
+      }
+      const conversation = await groupService.addMembers(
+        req.params.conversationId,
+        req.user!.userId,
+        memberIds,
+      );
+
+      // Emit socket event for member changes
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('group:members-changed', {
+        conversationId: req.params.conversationId,
+      });
+
+      res.json(conversation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /conversations/:id/members/:userId - Remove member from group
+router.delete(
+  '/conversations/:conversationId/members/:userId',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.removeMember(
+        req.params.conversationId,
+        req.user!.userId,
+        req.params.userId,
+      );
+
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('group:members-changed', {
+        conversationId: req.params.conversationId,
+      });
+      io.to(`user:${req.params.userId}`).emit('group:removed', {
+        conversationId: req.params.conversationId,
+      });
+
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/read - Mark conversation as read
+router.post(
+  '/conversations/:conversationId/read',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      await chatService.markConversationAsRead(
+        req.params.conversationId,
+        req.user!.userId,
+      );
+      res.json({ success: true });
     } catch (err) {
       next(err);
     }

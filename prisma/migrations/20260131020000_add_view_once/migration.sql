@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Message" ADD COLUMN "viewOnce" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Message" ADD COLUMN "viewOnceOpened" BOOLEAN NOT NULL DEFAULT false;

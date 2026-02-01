@@ -3,13 +3,14 @@ import { env } from '../../config/env';
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
-export async function synthesizeSpeech(
-  text: string,
-  voice: 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer' = 'nova',
-): Promise<Buffer> {
+/**
+ * Convert text to speech using OpenAI TTS.
+ * Returns an audio Buffer (mp3).
+ */
+export async function synthesizeSpeech(text: string): Promise<Buffer> {
   const response = await openai.audio.speech.create({
     model: 'tts-1',
-    voice,
+    voice: 'nova',
     input: text,
     response_format: 'mp3',
   });

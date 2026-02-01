@@ -2,9 +2,30 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 
+const messageInclude = {
+  sender: {
+    select: { id: true, displayName: true },
+  },
+  replyTo: {
+    select: {
+      id: true,
+      content: true,
+      senderId: true,
+      sender: { select: { displayName: true } },
+    },
+  },
+  reactions: {
+    select: {
+      id: true,
+      emoji: true,
+      userId: true,
+      user: { select: { displayName: true } },
+    },
+  },
+};
+
 /**
  * Verify that a user is a participant in a conversation.
- * Returns the participant record or throws ForbiddenError.
  */
 async function verifyParticipant(conversationId: string, userId: string) {
   const participant = await prisma.conversationParticipant.findUnique({
@@ -22,7 +43,6 @@ async function verifyParticipant(conversationId: string, userId: string) {
 
 /**
  * Get a single conversation with its participants.
- * Verifies the requesting user is a participant.
  */
 export async function getConversation(conversationId: string, userId: string) {
   const conversation = await prisma.conversation.findUnique({
@@ -78,18 +98,68 @@ export async function getConversations(userId: string) {
           senderId: true,
           createdAt: true,
           isSystem: true,
+          deletedAt: true,
         },
       },
     },
     orderBy: { updatedAt: 'desc' },
   });
 
-  logger.debug({ userId, count: conversations.length }, 'Listed conversations');
-  return conversations.map((c) => ({
-    ...c,
-    lastMessage: c.messages[0] || null,
-    messages: undefined,
-  }));
+  // Compute unread counts and last missed calls per conversation
+  const results = await Promise.all(
+    conversations.map(async (c) => {
+      const myParticipant = c.participants.find((p) => p.userId === userId);
+      const lastReadAt = myParticipant?.lastReadAt;
+
+      // Unread count: messages after lastReadAt not sent by me
+      const unreadCount = await prisma.message.count({
+        where: {
+          conversationId: c.id,
+          senderId: { not: userId },
+          deletedAt: null,
+          ...(lastReadAt ? { createdAt: { gt: lastReadAt } } : {}),
+        },
+      });
+
+      // Last missed call where user is NOT the initiator
+      const lastMissedCall = await prisma.callLog.findFirst({
+        where: {
+          conversationId: c.id,
+          status: 'MISSED',
+          initiatorId: { not: userId },
+        },
+        orderBy: { startedAt: 'desc' },
+        select: { callType: true, startedAt: true },
+      });
+
+      return {
+        ...c,
+        lastMessage: c.messages[0] || null,
+        messages: undefined,
+        unreadCount,
+        lastMissedCall,
+      };
+    }),
+  );
+
+  logger.debug({ userId, count: results.length }, 'Listed conversations');
+  return results;
+}
+
+/**
+ * Mark all messages in a conversation as read for a user.
+ */
+export async function markConversationAsRead(conversationId: string, userId: string) {
+  await verifyParticipant(conversationId, userId);
+
+  await prisma.conversationParticipant.update({
+    where: {
+      conversationId_userId: { conversationId, userId },
+    },
+    data: { lastReadAt: new Date() },
+  });
+
+  logger.debug({ conversationId, userId }, 'Conversation marked as read');
 }
 
 /**
@@ -100,7 +170,6 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
     throw new ForbiddenError('Cannot create a conversation with yourself');
   }
 
-  // Check if a 1-on-1 conversation already exists between the two users
   const existing = await prisma.conversation.findFirst({
     where: {
       type: 'HUMAN_MATCHED',
@@ -126,7 +195,6 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
     return existing;
   }
 
-  // Create new conversation with both participants
   const conversation = await prisma.conversation.create({
     data: {
       type: 'HUMAN_MATCHED',
@@ -155,9 +223,15 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
 
 /**
  * Send a message in a conversation.
- * Verifies the sender is a participant and the conversation is ACTIVE.
  */
-export async function sendMessage(conversationId: string, senderId: string, content: string) {
+export async function sendMessage(
+  conversationId: string,
+  senderId: string,
+  content: string,
+  replyToId?: string,
+  imageUrl?: string,
+  viewOnce?: boolean,
+) {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
   });
@@ -172,20 +246,28 @@ export async function sendMessage(conversationId: string, senderId: string, cont
 
   await verifyParticipant(conversationId, senderId);
 
+  // Verify the reply target exists in this conversation
+  if (replyToId) {
+    const replyTarget = await prisma.message.findFirst({
+      where: { id: replyToId, conversationId },
+    });
+    if (!replyTarget) {
+      throw new NotFoundError('Reply target message not found');
+    }
+  }
+
   const message = await prisma.message.create({
     data: {
       conversationId,
       senderId,
       content,
+      replyToId: replyToId || undefined,
+      imageUrl: imageUrl || undefined,
+      viewOnce: viewOnce || false,
     },
-    include: {
-      sender: {
-        select: { id: true, displayName: true },
-      },
-    },
+    include: messageInclude,
   });
 
-  // Touch the conversation's updatedAt
   await prisma.conversation.update({
     where: { id: conversationId },
     data: { updatedAt: new Date() },
@@ -196,7 +278,130 @@ export async function sendMessage(conversationId: string, senderId: string, cont
 }
 
 /**
- * End a conversation. Sets status to ENDED and records the user's leftAt timestamp.
+ * Edit a message. Only the sender can edit.
+ */
+export async function editMessage(messageId: string, userId: string, content: string) {
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+
+  if (!message) {
+    throw new NotFoundError('Message not found');
+  }
+
+  if (message.senderId !== userId) {
+    throw new ForbiddenError('You can only edit your own messages');
+  }
+
+  if (message.deletedAt) {
+    throw new ForbiddenError('Cannot edit a deleted message');
+  }
+
+  const updated = await prisma.message.update({
+    where: { id: messageId },
+    data: { content, editedAt: new Date() },
+    include: messageInclude,
+  });
+
+  logger.debug({ messageId, userId }, 'Message edited');
+  return updated;
+}
+
+/**
+ * Soft-delete a message. Only the sender can delete.
+ */
+export async function deleteMessage(messageId: string, userId: string) {
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+
+  if (!message) {
+    throw new NotFoundError('Message not found');
+  }
+
+  if (message.senderId !== userId) {
+    throw new ForbiddenError('You can only delete your own messages');
+  }
+
+  if (message.deletedAt) {
+    throw new ForbiddenError('Message is already deleted');
+  }
+
+  const updated = await prisma.message.update({
+    where: { id: messageId },
+    data: { content: '', deletedAt: new Date() },
+    include: messageInclude,
+  });
+
+  logger.debug({ messageId, userId }, 'Message deleted');
+  return updated;
+}
+
+/**
+ * Mark a view-once message as opened. Only the recipient (non-sender) can open.
+ */
+export async function openViewOnce(messageId: string, userId: string) {
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+
+  if (!message) {
+    throw new NotFoundError('Message not found');
+  }
+
+  if (!message.viewOnce) {
+    throw new ForbiddenError('This is not a view-once message');
+  }
+
+  if (message.senderId === userId) {
+    throw new ForbiddenError('Sender cannot open their own view-once message');
+  }
+
+  if (message.viewOnceOpened) {
+    throw new ForbiddenError('This message has already been opened');
+  }
+
+  await verifyParticipant(message.conversationId, userId);
+
+  const updated = await prisma.message.update({
+    where: { id: messageId },
+    data: { viewOnceOpened: true },
+  });
+
+  logger.debug({ messageId, userId }, 'View-once message opened');
+  return { messageId: updated.id, conversationId: updated.conversationId };
+}
+
+/**
+ * Toggle a reaction on a message. Creates if missing, deletes if exists.
+ */
+export async function toggleReaction(messageId: string, userId: string, emoji: string) {
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+
+  if (!message) {
+    throw new NotFoundError('Message not found');
+  }
+
+  // Verify user is a participant in the conversation
+  await verifyParticipant(message.conversationId, userId);
+
+  const existing = await prisma.messageReaction.findUnique({
+    where: {
+      messageId_userId_emoji: { messageId, userId, emoji },
+    },
+  });
+
+  if (existing) {
+    await prisma.messageReaction.delete({ where: { id: existing.id } });
+    logger.debug({ messageId, userId, emoji, action: 'removed' }, 'Reaction toggled');
+    return { action: 'removed' as const, emoji, userId, messageId };
+  }
+
+  const reaction = await prisma.messageReaction.create({
+    data: { messageId, userId, emoji },
+    include: { user: { select: { displayName: true } } },
+  });
+
+  logger.debug({ messageId, userId, emoji, action: 'added' }, 'Reaction toggled');
+  return { action: 'added' as const, emoji, userId, messageId, displayName: reaction.user.displayName };
+}
+
+/**
+ * End a conversation.
  */
 export async function endConversation(conversationId: string, userId: string) {
   const conversation = await prisma.conversation.findUnique({
@@ -228,7 +433,6 @@ export async function endConversation(conversationId: string, userId: string) {
 
 /**
  * Get paginated messages for a conversation.
- * Verifies the requesting user is a participant.
  */
 export async function getMessages(
   conversationId: string,
@@ -246,11 +450,7 @@ export async function getMessages(
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
-      include: {
-        sender: {
-          select: { id: true, displayName: true },
-        },
-      },
+      include: messageInclude,
     }),
     prisma.message.count({ where: { conversationId } }),
   ]);

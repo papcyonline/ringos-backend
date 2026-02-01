@@ -9,6 +9,8 @@ interface ActiveCall {
   initiatorId: string;
   participantIds: Set<string>;
   isGroup: boolean;
+  callType: 'AUDIO' | 'VIDEO';
+  answeredAt?: Date;
 }
 
 /** In-memory store of active calls. */
@@ -28,9 +30,11 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
     conversationId: string;
     targetUserIds: string[];
     isGroup?: boolean;
+    callType?: 'AUDIO' | 'VIDEO';
   }) => {
     try {
-      const { conversationId, targetUserIds, isGroup } = data;
+      const { conversationId, targetUserIds, isGroup, callType } = data;
+      const resolvedCallType = callType ?? 'AUDIO';
 
       if (userCallMap.has(userId)) {
         socket.emit('call:error', { message: 'You are already in a call' });
@@ -51,9 +55,25 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         initiatorId: userId,
         participantIds,
         isGroup: isGroup ?? false,
+        callType: resolvedCallType,
       });
 
       userCallMap.set(userId, callId);
+
+      // Create CallLog with initial MISSED status
+      try {
+        await prisma.callLog.create({
+          data: {
+            callId,
+            conversationId,
+            initiatorId: userId,
+            callType: resolvedCallType,
+            status: 'MISSED',
+          },
+        });
+      } catch (dbErr) {
+        logger.error({ dbErr, callId }, 'Failed to create CallLog');
+      }
 
       socket.join(`call:${callId}`);
 
@@ -63,6 +83,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
           callId,
           conversationId,
           isGroup: isGroup ?? false,
+          callType: resolvedCallType,
           callerName: caller?.displayName ?? 'Unknown',
           callerAvatar: caller?.avatarUrl ?? null,
           participants: Array.from(participantIds)
@@ -72,9 +93,9 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       }
 
       // Confirm to the initiator
-      socket.emit('call:initiated', { callId });
+      socket.emit('call:initiated', { callId, callType: resolvedCallType });
 
-      logger.info({ userId, callId, targetUserIds }, 'Call initiated');
+      logger.info({ userId, callId, targetUserIds, callType: resolvedCallType }, 'Call initiated');
     } catch (error) {
       logger.error({ error, userId }, 'Error initiating call');
       socket.emit('call:error', { message: 'Failed to initiate call' });
@@ -85,7 +106,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
    * call:answer — Accept an incoming call. Notifies the caller
    * so both sides can begin the WebRTC handshake.
    */
-  socket.on('call:answer', (data: { callId: string }) => {
+  socket.on('call:answer', async (data: { callId: string }) => {
     try {
       const { callId } = data;
       const call = activeCalls.get(callId);
@@ -97,6 +118,17 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
       userCallMap.set(userId, callId);
       socket.join(`call:${callId}`);
+      call.answeredAt = new Date();
+
+      // Update CallLog to COMPLETED
+      try {
+        await prisma.callLog.update({
+          where: { callId },
+          data: { status: 'COMPLETED' },
+        });
+      } catch (dbErr) {
+        logger.error({ dbErr, callId }, 'Failed to update CallLog on answer');
+      }
 
       // Notify the initiator that the call was answered
       io.to(`user:${call.initiatorId}`).emit('call:answered', {
@@ -114,7 +146,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   /**
    * call:reject — Decline an incoming call. Notifies the caller.
    */
-  socket.on('call:reject', (data: { callId: string }) => {
+  socket.on('call:reject', async (data: { callId: string }) => {
     try {
       const { callId } = data;
       const call = activeCalls.get(callId);
@@ -125,6 +157,16 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         callId,
         userId,
       });
+
+      // Update CallLog to REJECTED
+      try {
+        await prisma.callLog.update({
+          where: { callId },
+          data: { status: 'REJECTED', endedAt: new Date() },
+        });
+      } catch (dbErr) {
+        logger.error({ dbErr, callId }, 'Failed to update CallLog on reject');
+      }
 
       // For 1-on-1 calls, clean up immediately
       if (!call.isGroup) {
@@ -172,12 +214,29 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   /**
    * call:end — End the call. Notifies all participants.
    */
-  socket.on('call:end', (data: { callId: string }) => {
+  socket.on('call:end', async (data: { callId: string }) => {
     try {
       const { callId } = data;
       const call = activeCalls.get(callId);
 
       if (!call) return;
+
+      // Update CallLog with endedAt and durationSecs
+      try {
+        const now = new Date();
+        const durationSecs = call.answeredAt
+          ? Math.round((now.getTime() - call.answeredAt.getTime()) / 1000)
+          : undefined;
+        await prisma.callLog.update({
+          where: { callId },
+          data: {
+            endedAt: now,
+            ...(durationSecs !== undefined ? { durationSecs } : {}),
+          },
+        });
+      } catch (dbErr) {
+        logger.error({ dbErr, callId }, 'Failed to update CallLog on end');
+      }
 
       // Notify all other participants
       socket.to(`call:${callId}`).emit('call:ended', {
@@ -216,6 +275,22 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         callId,
         endedBy: userId,
       });
+
+      // Update CallLog
+      const now = new Date();
+      const durationSecs = call.answeredAt
+        ? Math.round((now.getTime() - call.answeredAt.getTime()) / 1000)
+        : undefined;
+      prisma.callLog.update({
+        where: { callId },
+        data: {
+          endedAt: now,
+          ...(durationSecs !== undefined ? { durationSecs } : {}),
+        },
+      }).catch((dbErr) => {
+        logger.error({ dbErr, callId }, 'Failed to update CallLog on disconnect');
+      });
+
       cleanupCall(callId);
     }
 

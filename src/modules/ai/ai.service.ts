@@ -84,10 +84,10 @@ export async function sendMessage(
   });
 
   return {
-    reply: aiResult.reply,
+    content: aiResult.reply,
     mood,
-    shouldSuggestHandoff: aiResult.shouldSuggestHandoff,
-    handoffReason: aiResult.handoffReason,
+    should_handoff: aiResult.shouldSuggestHandoff,
+    handoff_reason: aiResult.handoffReason,
   };
 }
 
@@ -105,7 +105,8 @@ export async function sendAudio(
   }
 
   // Process as a regular text message
-  return sendMessage(sessionId, userId, transcribedText);
+  const result = await sendMessage(sessionId, userId, transcribedText);
+  return { ...result, transcription: transcribedText };
 }
 
 export async function endSession(sessionId: string, userId: string) {

@@ -5,6 +5,7 @@ import { validate } from '../../middleware/validate';
 import { AuthRequest } from '../../shared/types';
 import { startSessionSchema, sendMessageSchema } from './ai.schema';
 import * as aiService from './ai.service';
+import { synthesizeSpeech } from './tts.service';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -72,6 +73,29 @@ router.post(
         req.file.mimetype,
       );
       res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /tts - Convert text to speech audio
+router.post(
+  '/tts',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { text } = req.body;
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: 'text field is required' });
+      }
+
+      const audioBuffer = await synthesizeSpeech(text);
+      res.set({
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': audioBuffer.length.toString(),
+      });
+      res.send(audioBuffer);
     } catch (err) {
       next(err);
     }
