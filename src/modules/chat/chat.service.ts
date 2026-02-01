@@ -99,6 +99,7 @@ export async function getConversations(userId: string) {
           createdAt: true,
           isSystem: true,
           deletedAt: true,
+          imageUrl: true,
         },
       },
     },
