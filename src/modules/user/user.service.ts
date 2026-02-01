@@ -260,6 +260,24 @@ export async function updateProfile(userId: string, data: UpdateProfileInput) {
   });
 }
 
+export async function setVerified(userId: string) {
+  await findUserOrThrow(userId);
+  return prisma.user.update({
+    where: { id: userId },
+    data: { isVerified: true, verifiedAt: new Date() },
+    select: { id: true, isVerified: true, verifiedAt: true, verifiedRole: true },
+  });
+}
+
+export async function removeVerified(userId: string) {
+  await findUserOrThrow(userId);
+  return prisma.user.update({
+    where: { id: userId },
+    data: { isVerified: false, verifiedAt: null },
+    select: { id: true, isVerified: true, verifiedAt: true, verifiedRole: true },
+  });
+}
+
 export async function deleteAccount(userId: string) {
   await findUserOrThrow(userId);
   await prisma.user.delete({ where: { id: userId } });

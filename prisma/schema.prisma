@@ -151,6 +151,8 @@ model User {
   followsReceived  Follow[] @relation("FollowsReceived")
   reactions        MessageReaction[]
   callLogs         CallLog[]
+  notifications    Notification[]
+  fcmTokens        FcmToken[]
 
   @@index([banStatus])
 }
@@ -359,4 +361,32 @@ model CallLog {
 
   @@index([conversationId])
   @@index([initiatorId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String   // "chat_message", "new_follower", "profile_liked", "match_found"
+  title     String
+  body      String
+  imageUrl  String?
+  data      Json     @default("{}")
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
+
+model FcmToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

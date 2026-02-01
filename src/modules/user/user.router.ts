@@ -7,6 +7,7 @@ import { getIO } from '../../config/socket';
 import { updatePreferenceSchema, updateAvailabilitySchema, updatePrivacySchema, updateProfileSchema } from './user.schema';
 import * as userService from './user.service';
 import * as followService from './follow.service';
+import { createNotification } from '../notification/notification.service';
 
 const router = Router();
 
@@ -146,6 +147,26 @@ router.get('/me/following', authenticate, async (req: AuthRequest, res: Response
   }
 });
 
+// POST /me/verify - Set user as verified (subscription active)
+router.post('/me/verify', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await userService.setVerified(req.user!.userId);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /me/verify - Remove verification (subscription expired)
+router.delete('/me/verify', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await userService.removeVerified(req.user!.userId);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /me - Delete current user's account
 router.delete('/me', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -160,6 +181,18 @@ router.delete('/me', authenticate, async (req: AuthRequest, res: Response, next:
 router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const result = await followService.followUser(req.user!.userId, req.params.id);
+
+    // Send notification to the followed user
+    const follower = await userService.getProfile(req.user!.userId);
+    createNotification({
+      userId: req.params.id,
+      type: 'new_follower',
+      title: 'New Follower',
+      body: `${follower.displayName} started following you`,
+      imageUrl: follower.avatarUrl ?? undefined,
+      data: { userId: req.user!.userId },
+    }).catch(() => {}); // fire-and-forget
+
     res.status(201).json(result);
   } catch (err) {
     next(err);

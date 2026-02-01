@@ -10,6 +10,7 @@ import { aiRouter } from './modules/ai/ai.router';
 import { matchingRouter } from './modules/matching/matching.router';
 import { chatRouter } from './modules/chat/chat.router';
 import { safetyRouter } from './modules/safety/safety.router';
+import { notificationRouter } from './modules/notification/notification.router';
 
 const app = express();
 
@@ -31,6 +32,7 @@ app.use('/api/ai', aiRouter);
 app.use('/api/matching', matchingRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/safety', safetyRouter);
+app.use('/api/notifications', notificationRouter);
 
 app.use(errorHandler);
 
