@@ -3,7 +3,7 @@ import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { moderateMessage } from '../../middleware/moderation';
 import { AuthRequest } from '../../shared/types';
-import { chatImageUpload, fileToChatImageUrl } from '../../shared/upload';
+import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema } from './chat.schema';
 import * as chatService from './chat.service';
@@ -226,21 +226,82 @@ router.post(
   },
 );
 
+// GET /conversations/groups/discover - List all public groups for discovery
+router.get(
+  '/conversations/groups/discover',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const groups = await groupService.getAllGroups(req.user!.userId);
+      res.json(groups);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/join - Self-join a group
+router.post(
+  '/conversations/:conversationId/join',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const conversation = await groupService.joinGroup(
+        req.params.conversationId,
+        req.user!.userId,
+      );
+
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('group:members-changed', {
+        conversationId: req.params.conversationId,
+      });
+
+      res.json(conversation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // POST /conversations/group - Create a group conversation
 router.post(
   '/conversations/group',
   authenticate,
+  (req: AuthRequest, res: Response, next: NextFunction) => {
+    const contentType = req.headers['content-type'] || '';
+    if (contentType.includes('multipart/form-data')) {
+      avatarUpload.single('avatar')(req, res, next);
+    } else {
+      next();
+    }
+  },
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const { name, memberIds, avatarUrl } = req.body;
-      if (!name || !memberIds || !Array.isArray(memberIds)) {
-        return res.status(400).json({ error: 'name and memberIds are required' });
+      const { name, description } = req.body;
+      if (!name) {
+        return res.status(400).json({ error: 'name is required' });
       }
+      let memberIds: string[] = [];
+      if (req.body.memberIds) {
+        if (Array.isArray(req.body.memberIds)) {
+          memberIds = req.body.memberIds;
+        } else if (typeof req.body.memberIds === 'string') {
+          // Could be JSON array or comma-separated string from FormData
+          try {
+            const parsed = JSON.parse(req.body.memberIds);
+            memberIds = Array.isArray(parsed) ? parsed : [req.body.memberIds];
+          } catch {
+            memberIds = req.body.memberIds.split(',').filter((id: string) => id.trim());
+          }
+        }
+      }
+      const avatarUrl = req.file ? fileToAvatarUrl(req.file) : req.body.avatarUrl || undefined;
       const conversation = await groupService.createGroup(
         req.user!.userId,
         name,
         memberIds,
         avatarUrl,
+        description,
       );
       res.status(201).json(conversation);
     } catch (err) {
@@ -249,19 +310,57 @@ router.post(
   },
 );
 
-// PUT /conversations/:id/group - Update group name/avatar
+// PUT /conversations/:id/group - Update group name/avatar/description
 router.put(
+  '/conversations/:conversationId/group',
+  authenticate,
+  (req: AuthRequest, res: Response, next: NextFunction) => {
+    const contentType = req.headers['content-type'] || '';
+    if (contentType.includes('multipart/form-data')) {
+      avatarUpload.single('avatar')(req, res, next);
+    } else {
+      next();
+    }
+  },
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { name, description } = req.body;
+      const avatarUrl = req.file ? fileToAvatarUrl(req.file) : req.body.avatarUrl;
+      const conversation = await groupService.updateGroup(
+        req.params.conversationId,
+        req.user!.userId,
+        { name, avatarUrl, description },
+      );
+
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('group:updated', {
+        conversationId: req.params.conversationId,
+      });
+
+      res.json(conversation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /conversations/:id/group - Delete a group (admin only)
+router.delete(
   '/conversations/:conversationId/group',
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const { name, avatarUrl } = req.body;
-      const conversation = await groupService.updateGroup(
+      const result = await groupService.deleteGroup(
         req.params.conversationId,
         req.user!.userId,
-        { name, avatarUrl },
       );
-      res.json(conversation);
+
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('group:deleted', {
+        conversationId: req.params.conversationId,
+      });
+
+      res.json(result);
     } catch (err) {
       next(err);
     }

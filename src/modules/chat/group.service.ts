@@ -10,6 +10,7 @@ export async function createGroup(
   name: string,
   memberIds: string[],
   avatarUrl?: string,
+  description?: string,
 ) {
   // Ensure creator is not in memberIds (they're added separately as ADMIN)
   const uniqueMembers = [...new Set(memberIds.filter((id) => id !== creatorId))];
@@ -19,6 +20,7 @@ export async function createGroup(
       type: 'GROUP',
       status: 'ACTIVE',
       name,
+      description: description || null,
       avatarUrl: avatarUrl || null,
       participants: {
         create: [
@@ -48,7 +50,7 @@ export async function createGroup(
 export async function updateGroup(
   conversationId: string,
   userId: string,
-  updates: { name?: string; avatarUrl?: string },
+  updates: { name?: string; avatarUrl?: string; description?: string },
 ) {
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId } },
@@ -65,6 +67,7 @@ export async function updateGroup(
     where: { id: conversationId },
     data: {
       ...(updates.name !== undefined ? { name: updates.name } : {}),
+      ...(updates.description !== undefined ? { description: updates.description } : {}),
       ...(updates.avatarUrl !== undefined ? { avatarUrl: updates.avatarUrl } : {}),
     },
     include: {
@@ -172,4 +175,131 @@ export async function removeMember(
 
   logger.info({ conversationId, requesterId, targetUserId }, 'Member removed from group');
   return { conversationId, removedUserId: targetUserId };
+}
+
+/**
+ * Delete (soft-delete) a group. Admin only. Sets status to ENDED and marks all participants as left.
+ */
+export async function deleteGroup(conversationId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+
+  if (!participant) {
+    throw new ForbiddenError('You are not a participant in this conversation');
+  }
+  if (participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can delete a group');
+  }
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+  });
+
+  if (!conversation || conversation.type !== 'GROUP') {
+    throw new NotFoundError('Group not found');
+  }
+
+  const now = new Date();
+
+  await prisma.$transaction([
+    prisma.conversation.update({
+      where: { id: conversationId },
+      data: { status: 'ENDED' },
+    }),
+    prisma.conversationParticipant.updateMany({
+      where: { conversationId, leftAt: null },
+      data: { leftAt: now },
+    }),
+  ]);
+
+  logger.info({ conversationId, userId }, 'Group deleted');
+  return { conversationId, deleted: true };
+}
+
+/**
+ * List all active GROUP conversations for discovery (any authenticated user can browse).
+ */
+export async function getAllGroups(currentUserId: string) {
+  const groups = await prisma.conversation.findMany({
+    where: {
+      type: 'GROUP',
+      status: 'ACTIVE',
+    },
+    include: {
+      participants: {
+        where: { leftAt: null },
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true },
+          },
+        },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  return groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    description: g.description,
+    avatarUrl: g.avatarUrl,
+    memberCount: g.participants.length,
+    isMember: g.participants.some((p) => p.userId === currentUserId),
+    createdAt: g.createdAt,
+  }));
+}
+
+/**
+ * Self-join a group conversation. Any user can join any active group.
+ */
+export async function joinGroup(conversationId: string, userId: string) {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+  });
+
+  if (!conversation || conversation.type !== 'GROUP') {
+    throw new NotFoundError('Group not found');
+  }
+
+  if (conversation.status !== 'ACTIVE') {
+    throw new ForbiddenError('This group is no longer active');
+  }
+
+  // Check if user already has a participant record
+  const existing = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+
+  if (existing) {
+    if (existing.leftAt) {
+      // Re-join: clear the leftAt timestamp
+      await prisma.conversationParticipant.update({
+        where: { id: existing.id },
+        data: { leftAt: null, joinedAt: new Date() },
+      });
+    }
+    // Already a member — no-op
+  } else {
+    await prisma.conversationParticipant.create({
+      data: { conversationId, userId, role: 'MEMBER' },
+    });
+  }
+
+  const updated = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    include: {
+      participants: {
+        where: { leftAt: null },
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+          },
+        },
+      },
+    },
+  });
+
+  logger.info({ conversationId, userId }, 'User joined group');
+  return updated;
 }

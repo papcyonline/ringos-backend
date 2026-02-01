@@ -236,8 +236,9 @@ model Conversation {
   id        String             @id @default(uuid())
   type      ConversationType   @default(HUMAN_MATCHED)
   status    ConversationStatus @default(ACTIVE)
-  name      String?
-  avatarUrl String?
+  name        String?
+  description String?
+  avatarUrl   String?
   metadata  Json?
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
