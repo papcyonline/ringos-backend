@@ -4,6 +4,7 @@ import { app } from './app';
 import { env } from './config/env';
 import { connectDatabase } from './config/database';
 import { initializeSocket } from './config/socket';
+import { initializeFirebase } from './config/firebase';
 import { registerChatHandlers } from './modules/chat/chat.gateway';
 import { registerMatchingHandlers } from './modules/matching/matching.gateway';
 import { registerCallHandlers } from './modules/call/call.gateway';
@@ -14,6 +15,7 @@ import { logger } from './shared/logger';
 
 async function main() {
   await connectDatabase();
+  initializeFirebase();
 
   const server = http.createServer(app);
   const io = initializeSocket(server);

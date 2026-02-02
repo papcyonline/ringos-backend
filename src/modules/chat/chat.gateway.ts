@@ -3,6 +3,8 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { moderateContent } from '../safety/moderation.service';
 import * as chatService from './chat.service';
+import { formatMessagePayload } from './chat.utils';
+import { notifyChatMessage } from '../notification/notification.service';
 
 const VALID_EMOJIS = ['thumbsup', 'heart', 'laugh', 'wow', 'sad', 'pray'];
 
@@ -71,36 +73,19 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       }
 
       // Save the message via the service
-      const message = await chatService.sendMessage(conversationId, userId, cleanedContent, replyToId);
+      const message = await chatService.sendMessage(conversationId, userId, cleanedContent, { replyToId });
 
       // Broadcast the message to all participants in the room
-      io.to(`conversation:${conversationId}`).emit('chat:message', {
-        id: message.id,
+      io.to(`conversation:${conversationId}`).emit('chat:message', formatMessagePayload(message, conversationId));
+
+      // Notify other participants (in-app + push)
+      notifyChatMessage(
         conversationId,
-        senderId: message.senderId,
-        senderName: message.sender.displayName,
-        content: message.content,
-        imageUrl: message.imageUrl,
-        viewOnce: message.viewOnce,
-        viewOnceOpened: message.viewOnceOpened,
-        replyToId: message.replyToId,
-        replyTo: message.replyTo
-          ? {
-              id: message.replyTo.id,
-              content: message.replyTo.content,
-              senderId: message.replyTo.senderId,
-              senderName: message.replyTo.sender.displayName,
-            }
-          : null,
-        editedAt: message.editedAt,
-        deletedAt: message.deletedAt,
-        reactions: message.reactions.map((r: any) => ({
-          emoji: r.emoji,
-          userId: r.userId,
-          displayName: r.user.displayName,
-        })),
-        createdAt: message.createdAt,
-      });
+        userId,
+        message.sender.displayName,
+        message.content,
+        { imageUrl: message.imageUrl ?? undefined, audioUrl: message.audioUrl ?? undefined },
+      ).catch(() => {});
 
       logger.debug({ conversationId, userId, messageId: message.id }, 'Message broadcast to room');
     } catch (error: any) {
@@ -200,6 +185,24 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       logger.error({ error, userId }, 'Error toggling reaction');
       const errorMessage = error?.statusCode ? error.message : 'Failed to toggle reaction';
       socket.emit('chat:error', { message: errorMessage });
+    }
+  });
+
+  /**
+   * chat:delivered - Acknowledge message delivery and notify the sender.
+   */
+  socket.on('chat:delivered', async (data: { messageId: string; conversationId: string }) => {
+    try {
+      const { messageId, conversationId } = data;
+
+      // Broadcast to room so the sender sees double grey ticks
+      socket.to(`conversation:${conversationId}`).emit('chat:delivered', {
+        messageId,
+      });
+
+      logger.debug({ messageId, userId }, 'Delivery receipt broadcast');
+    } catch (error: any) {
+      logger.error({ error, userId }, 'Error broadcasting delivery receipt');
     }
   });
 

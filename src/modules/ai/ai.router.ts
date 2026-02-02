@@ -55,6 +55,82 @@ router.post(
   },
 );
 
+// POST /sessions/:sessionId/messages/stream - Stream a text message response (SSE)
+router.post(
+  '/sessions/:sessionId/messages/stream',
+  authenticate,
+  validate(sendMessageSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+
+    try {
+      await aiService.sendMessageStream(
+        req.params.sessionId,
+        req.user!.userId,
+        req.body.content,
+        (token) => {
+          res.write(`data: ${JSON.stringify({ type: 'token', text: token })}\n\n`);
+        },
+        (meta) => {
+          res.write(`data: ${JSON.stringify({ type: 'done', ...meta })}\n\n`);
+          res.end();
+        },
+      );
+    } catch (err) {
+      res.write(`data: ${JSON.stringify({ type: 'error', message: (err as Error).message })}\n\n`);
+      res.end();
+    }
+  },
+);
+
+// POST /sessions/:sessionId/audio/stream - Stream an audio message response (SSE)
+router.post(
+  '/sessions/:sessionId/audio/stream',
+  authenticate,
+  upload.single('audio'),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+
+    try {
+      if (!req.file) {
+        res.write(`data: ${JSON.stringify({ type: 'error', message: 'No audio file provided' })}\n\n`);
+        res.end();
+        return;
+      }
+
+      await aiService.sendAudioStream(
+        req.params.sessionId,
+        req.user!.userId,
+        req.file.buffer,
+        req.file.mimetype,
+        (transcription) => {
+          res.write(`data: ${JSON.stringify({ type: 'transcription', text: transcription })}\n\n`);
+        },
+        (token) => {
+          res.write(`data: ${JSON.stringify({ type: 'token', text: token })}\n\n`);
+        },
+        (meta) => {
+          res.write(`data: ${JSON.stringify({ type: 'done', ...meta })}\n\n`);
+          res.end();
+        },
+      );
+    } catch (err) {
+      res.write(`data: ${JSON.stringify({ type: 'error', message: (err as Error).message })}\n\n`);
+      res.end();
+    }
+  },
+);
+
 // POST /sessions/:sessionId/audio - Send an audio message
 router.post(
   '/sessions/:sessionId/audio',

@@ -2,9 +2,10 @@ import { CompanionMode } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { NotFoundError, BadRequestError } from '../../shared/errors';
 import { promptMap } from './prompts';
-import { generateAiResponse } from './llm.service';
+import { generateAiResponse, streamAiResponse, classifyMood } from './llm.service';
 import { transcribeAudio } from './stt.service';
 import { extractMood } from './emotion.service';
+import { logger } from '../../shared/logger';
 
 export async function startSession(userId: string, mode: CompanionMode) {
   const session = await prisma.aiSession.create({
@@ -64,8 +65,15 @@ export async function sendMessage(
   // Add the new user message
   history.push({ role: 'user', content });
 
-  // Get the system prompt for this mode
-  const systemPrompt = promptMap[session.mode];
+  // Get the system prompt for this mode and personalise with user info
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { displayName: true },
+  });
+  const basePrompt = promptMap[session.mode];
+  const systemPrompt = user?.displayName
+    ? `${basePrompt}\n\nThe user's name is "${user.displayName}". Use their name naturally in conversation when appropriate — don't force it into every message, but use it the way a friend would.`
+    : basePrompt;
 
   // Generate AI response
   const aiResult = await generateAiResponse(history, systemPrompt);
@@ -91,6 +99,78 @@ export async function sendMessage(
   };
 }
 
+/**
+ * Stream a message response via SSE. Calls `onToken` for each text chunk
+ * and `onDone` with the final metadata when complete.
+ */
+export async function sendMessageStream(
+  sessionId: string,
+  userId: string,
+  content: string,
+  onToken: (token: string) => void,
+  onDone: (meta: { mood: string; should_handoff: boolean; handoff_reason?: string }) => void,
+) {
+  const session = await prisma.aiSession.findUnique({
+    where: { id: sessionId },
+    include: {
+      messages: {
+        orderBy: { createdAt: 'asc' },
+      },
+    },
+  });
+
+  if (!session) throw new NotFoundError('AI session not found');
+  if (session.userId !== userId) throw new NotFoundError('AI session not found');
+  if (session.status === 'ENDED') throw new BadRequestError('This session has ended');
+
+  // Save user message
+  await prisma.aiMessage.create({
+    data: { sessionId, role: 'USER', content },
+  });
+
+  // Build history
+  const history = session.messages.map((m) => ({
+    role: m.role === 'USER' ? 'user' : 'assistant',
+    content: m.content,
+  }));
+  history.push({ role: 'user', content });
+
+  // Personalise system prompt with user info
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { displayName: true },
+  });
+  const basePrompt = promptMap[session.mode];
+  const systemPrompt = user?.displayName
+    ? `${basePrompt}\n\nThe user's name is "${user.displayName}". Use their name naturally in conversation when appropriate — don't force it into every message, but use it the way a friend would.`
+    : basePrompt;
+
+  // Stream the reply
+  const fullReply = await streamAiResponse(history, systemPrompt, onToken);
+
+  // Save AI response and classify mood in background (don't block SSE)
+  classifyMood(content, fullReply)
+    .then(async (meta) => {
+      const mood = extractMood(meta.mood);
+      await prisma.aiMessage.create({
+        data: { sessionId, role: 'ASSISTANT', content: fullReply, mood },
+      });
+      onDone({
+        mood,
+        should_handoff: meta.shouldSuggestHandoff,
+        handoff_reason: meta.handoffReason,
+      });
+    })
+    .catch((err) => {
+      logger.error({ err }, 'Background mood classification failed');
+      // Still save the message with neutral mood
+      prisma.aiMessage.create({
+        data: { sessionId, role: 'ASSISTANT', content: fullReply, mood: 'NEUTRAL' },
+      }).catch(() => {});
+      onDone({ mood: 'NEUTRAL', should_handoff: false });
+    });
+}
+
 export async function sendAudio(
   sessionId: string,
   userId: string,
@@ -107,6 +187,28 @@ export async function sendAudio(
   // Process as a regular text message
   const result = await sendMessage(sessionId, userId, transcribedText);
   return { ...result, transcription: transcribedText };
+}
+
+/**
+ * Transcribe audio then stream the AI response via SSE.
+ */
+export async function sendAudioStream(
+  sessionId: string,
+  userId: string,
+  audioBuffer: Buffer,
+  mimeType: string | undefined,
+  onTranscription: (text: string) => void,
+  onToken: (token: string) => void,
+  onDone: (meta: { mood: string; should_handoff: boolean; handoff_reason?: string }) => void,
+) {
+  const transcribedText = await transcribeAudio(audioBuffer, mimeType);
+
+  if (!transcribedText.trim()) {
+    throw new BadRequestError('Could not transcribe audio. Please try again.');
+  }
+
+  onTranscription(transcribedText);
+  await sendMessageStream(sessionId, userId, transcribedText, onToken, onDone);
 }
 
 export async function endSession(sessionId: string, userId: string) {

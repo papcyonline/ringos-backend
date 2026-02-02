@@ -21,7 +21,7 @@ export async function transcribeAudio(
     model: 'whisper-1',
     file,
     language: 'en',
-    prompt: 'This is a conversation with Kora, an AI companion in the Ringos app.',
+    prompt: 'This is a conversation with Kora, an AI companion in the Yomeet app.',
   });
 
   return transcription.text;

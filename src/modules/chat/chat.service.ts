@@ -51,7 +51,7 @@ export async function getConversation(conversationId: string, userId: string) {
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
           },
         },
       },
@@ -62,9 +62,13 @@ export async function getConversation(conversationId: string, userId: string) {
     throw new NotFoundError('Conversation not found');
   }
 
-  const isParticipant = conversation.participants.some((p) => p.userId === userId);
-  if (!isParticipant) {
-    throw new ForbiddenError('You are not a participant in this conversation');
+  // Allow anyone to view GROUP conversations (they are publicly discoverable).
+  // For non-group conversations, require the user to be a participant.
+  if (conversation.type !== 'GROUP') {
+    const isParticipant = conversation.participants.some((p) => p.userId === userId);
+    if (!isParticipant) {
+      throw new ForbiddenError('You are not a participant in this conversation');
+    }
   }
 
   logger.debug({ conversationId, userId }, 'Fetched conversation');
@@ -85,7 +89,7 @@ export async function getConversations(userId: string) {
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
           },
         },
       },
@@ -100,6 +104,7 @@ export async function getConversations(userId: string) {
           isSystem: true,
           deletedAt: true,
           imageUrl: true,
+          audioUrl: true,
         },
       },
     },
@@ -184,7 +189,7 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
           },
         },
       },
@@ -211,7 +216,7 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
           },
         },
       },
@@ -229,10 +234,15 @@ export async function sendMessage(
   conversationId: string,
   senderId: string,
   content: string,
-  replyToId?: string,
-  imageUrl?: string,
-  viewOnce?: boolean,
+  options?: {
+    replyToId?: string;
+    imageUrl?: string;
+    viewOnce?: boolean;
+    audioUrl?: string;
+    audioDuration?: number;
+  },
 ) {
+  const { replyToId, imageUrl, viewOnce, audioUrl, audioDuration } = options ?? {};
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
   });
@@ -265,6 +275,8 @@ export async function sendMessage(
       replyToId: replyToId || undefined,
       imageUrl: imageUrl || undefined,
       viewOnce: viewOnce || false,
+      audioUrl: audioUrl || undefined,
+      audioDuration: audioDuration ?? undefined,
     },
     include: messageInclude,
   });
@@ -434,6 +446,8 @@ export async function endConversation(conversationId: string, userId: string) {
 
 /**
  * Get paginated messages for a conversation.
+ * Computes read/delivered status for the current user's sent messages
+ * based on other participants' lastReadAt timestamps.
  */
 export async function getMessages(
   conversationId: string,
@@ -445,7 +459,7 @@ export async function getMessages(
 
   const skip = (page - 1) * limit;
 
-  const [messages, total] = await Promise.all([
+  const [messages, total, participants] = await Promise.all([
     prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'desc' },
@@ -454,12 +468,29 @@ export async function getMessages(
       include: messageInclude,
     }),
     prisma.message.count({ where: { conversationId } }),
+    prisma.conversationParticipant.findMany({
+      where: { conversationId, userId: { not: userId }, leftAt: null },
+      select: { lastReadAt: true },
+    }),
   ]);
+
+  // Compute message status for messages sent by the current user
+  const data = messages.map((msg) => {
+    if (msg.senderId !== userId) return { ...msg, status: 'sent' };
+
+    const isRead = participants.some(
+      (p) => p.lastReadAt && p.lastReadAt >= msg.createdAt,
+    );
+    if (isRead) return { ...msg, status: 'read' };
+
+    // Message exists in DB so it was delivered
+    return { ...msg, status: 'delivered' };
+  });
 
   logger.debug({ conversationId, userId, page, limit, total }, 'Fetched messages');
 
   return {
-    data: messages,
+    data,
     total,
     page,
     limit,
