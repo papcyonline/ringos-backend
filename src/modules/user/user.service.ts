@@ -59,6 +59,61 @@ export async function getProfile(userId: string) {
   };
 }
 
+export async function getUserById(targetId: string, currentUserId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: targetId },
+    select: {
+      id: true,
+      displayName: true,
+      avatarUrl: true,
+      bio: true,
+      profession: true,
+      gender: true,
+      location: true,
+      status: true,
+      availabilityNote: true,
+      isOnline: true,
+      lastSeenAt: true,
+      availableFor: true,
+      availableUntil: true,
+      isVerified: true,
+      verifiedRole: true,
+      isProfilePublic: true,
+      createdAt: true,
+      _count: { select: { followsReceived: true } },
+    },
+  });
+
+  if (!user) throw new NotFoundError('User not found');
+
+  const followRecord = await prisma.follow.findFirst({
+    where: { followerId: currentUserId, followingId: targetId },
+  });
+
+  const isPrivate = !user.isProfilePublic;
+  return {
+    id: user.id,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+    bio: isPrivate ? null : user.bio,
+    profession: isPrivate ? null : user.profession,
+    gender: user.gender,
+    location: isPrivate ? null : user.location,
+    status: user.status,
+    availabilityNote: isPrivate ? null : user.availabilityNote,
+    isOnline: user.isOnline,
+    lastSeenAt: user.lastSeenAt,
+    availableFor: user.availableFor,
+    availableUntil: user.availableUntil,
+    isVerified: user.isVerified,
+    verifiedRole: user.verifiedRole,
+    isProfilePublic: user.isProfilePublic,
+    followerCount: user._count.followsReceived,
+    isFollowedByMe: !!followRecord,
+    createdAt: user.createdAt,
+  };
+}
+
 export async function listUsers(currentUserId: string) {
   const blocks = await prisma.block.findMany({
     where: {

@@ -201,6 +201,13 @@ export async function notifyChatMessage(
     body = body.substring(0, 97) + '...';
   }
 
+  // Fetch sender's avatar for notification display
+  const sender = await prisma.user.findUnique({
+    where: { id: senderId },
+    select: { avatarUrl: true },
+  });
+  const senderAvatarUrl = sender?.avatarUrl ?? undefined;
+
   for (const participant of participants) {
     // Skip notification if the user is currently viewing this conversation
     if (usersInRoom.has(participant.userId)) continue;
@@ -211,7 +218,8 @@ export async function notifyChatMessage(
       type: 'chat_message',
       title: senderName,
       body,
-      data: { conversationId, senderId },
+      imageUrl: senderAvatarUrl,
+      data: { conversationId, senderId, senderAvatarUrl: senderAvatarUrl ?? null },
     }).catch((err) => {
       logger.error({ err, userId: participant.userId }, 'Failed to create chat notification');
     });

@@ -177,6 +177,16 @@ router.delete('/me', authenticate, async (req: AuthRequest, res: Response, next:
   }
 });
 
+// GET /:id - Get a user's public profile
+router.get('/:id', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = await userService.getUserById(req.params.id, req.user!.userId);
+    res.json(user);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /:id/follow - Follow a user
 router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -187,8 +197,8 @@ router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response,
     createNotification({
       userId: req.params.id,
       type: 'new_follower',
-      title: 'New Follower',
-      body: `${follower.displayName} started following you`,
+      title: follower.displayName,
+      body: 'Started following you',
       imageUrl: follower.avatarUrl ?? undefined,
       data: { userId: req.user!.userId },
     }).catch(() => {}); // fire-and-forget

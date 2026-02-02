@@ -242,6 +242,20 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
   });
 
   /**
+   * chat:leave-room - Leave the socket room without ending the conversation.
+   * Used when the user navigates away from the chat screen.
+   */
+  socket.on('chat:leave-room', (data: { conversationId: string }) => {
+    try {
+      const { conversationId } = data;
+      socket.leave(`conversation:${conversationId}`);
+      logger.debug({ userId, conversationId, socketId: socket.id }, 'User left conversation room (screen close)');
+    } catch (error) {
+      logger.error({ error, userId }, 'Error leaving conversation room');
+    }
+  });
+
+  /**
    * chat:leave - End the conversation, notify the room, and leave the socket room.
    */
   socket.on('chat:leave', async (data: { conversationId: string }) => {
