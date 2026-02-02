@@ -1,5 +1,6 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
+import { env } from './env';
 import { logger } from '../shared/logger';
 import { verifyAccessToken } from '../modules/auth/auth.utils';
 import { setOnline, setOffline } from '../modules/user/user.service';
@@ -7,9 +8,11 @@ import { setOnline, setOffline } from '../modules/user/user.service';
 let io: Server;
 
 export function initializeSocket(httpServer: HttpServer): Server {
+  const corsOrigin = env.CORS_ORIGIN === '*' ? '*' : env.CORS_ORIGIN.split(',').map((o) => o.trim());
+
   io = new Server(httpServer, {
     cors: {
-      origin: '*',
+      origin: corsOrigin,
       methods: ['GET', 'POST'],
     },
     pingTimeout: 60000,

@@ -2,6 +2,7 @@ import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import { env } from './config/env';
 import { errorHandler } from './middleware/errorHandler';
 import { rateLimiter } from './middleware/rateLimiter';
 import { authRouter } from './modules/auth/auth.router';
@@ -14,8 +15,10 @@ import { notificationRouter } from './modules/notification/notification.router';
 
 const app = express();
 
+const corsOrigin = env.CORS_ORIGIN === '*' ? '*' : env.CORS_ORIGIN.split(',').map((o) => o.trim());
+
 app.use(helmet());
-app.use(cors());
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json({ limit: '10mb' }));
 app.use(rateLimiter());
 

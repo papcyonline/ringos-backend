@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../../config/database';
@@ -16,8 +17,49 @@ function refreshTokenExpiryDate(): Date {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 }
 
-// ── In-memory OTP store (MVP only) ─────────────────────
-const otpStore = new Map<string, { code: string; expiresAt: number }>();
+// ── OTP helpers (database-backed) ──────────────────────
+
+async function storeOtp(key: string, code: string, ttlMs: number = 5 * 60 * 1000) {
+  await prisma.otpCode.upsert({
+    where: { key },
+    create: { key, code, expiresAt: new Date(Date.now() + ttlMs) },
+    update: { code, attempts: 0, expiresAt: new Date(Date.now() + ttlMs) },
+  });
+}
+
+async function verifyStoredOtp(key: string, code: string): Promise<void> {
+  const stored = await prisma.otpCode.findUnique({ where: { key } });
+
+  if (!stored) {
+    throw new BadRequestError('No OTP requested');
+  }
+
+  if (new Date() > stored.expiresAt) {
+    await prisma.otpCode.delete({ where: { id: stored.id } });
+    throw new BadRequestError('OTP has expired');
+  }
+
+  if (stored.attempts >= stored.maxAttempts) {
+    await prisma.otpCode.delete({ where: { id: stored.id } });
+    throw new BadRequestError('Too many failed attempts. Please request a new code.');
+  }
+
+  if (stored.code !== code) {
+    await prisma.otpCode.update({
+      where: { id: stored.id },
+      data: { attempts: { increment: 1 } },
+    });
+    throw new BadRequestError('Invalid OTP code');
+  }
+
+  // Valid — delete the used OTP
+  await prisma.otpCode.delete({ where: { id: stored.id } });
+}
+
+/** Deterministic SHA-256 hash for fast indexed phone lookups. */
+function phoneToLookup(phone: string): string {
+  return crypto.createHash('sha256').update(phone.trim()).digest('hex');
+}
 
 export async function anonymousLogin(deviceId: string) {
   let user = await prisma.user.findUnique({ where: { deviceId } });
@@ -170,33 +212,21 @@ export async function setUsername(
 }
 
 export async function requestOtp(phone: string) {
-  const phoneHash = await bcrypt.hash(phone, 10);
+  const lookup = phoneToLookup(phone);
 
-  // Find existing user by trying all stored hashes (MVP approach)
-  // In production, use a deterministic hash or store a phone identifier
-  let user = await prisma.user.findFirst({
-    where: { phoneHash: { not: null } },
+  // Fast O(1) indexed lookup by deterministic hash
+  let matchedUser = await prisma.user.findUnique({
+    where: { phoneLookup: lookup },
+    select: { id: true, displayName: true, isAnonymous: true },
   });
-
-  // Check all users with phoneHash to find a match
-  const usersWithPhone = await prisma.user.findMany({
-    where: { phoneHash: { not: null } },
-    select: { id: true, phoneHash: true, displayName: true, isAnonymous: true },
-  });
-
-  let matchedUser = null;
-  for (const u of usersWithPhone) {
-    if (u.phoneHash && await bcrypt.compare(phone, u.phoneHash)) {
-      matchedUser = u;
-      break;
-    }
-  }
 
   if (!matchedUser) {
     // Create new user with phone
+    const phoneHash = await bcrypt.hash(phone, 10);
     const newUser = await prisma.user.create({
       data: {
         phoneHash,
+        phoneLookup: lookup,
         displayName: generateAnonymousName(),
         isAnonymous: false,
       },
@@ -207,7 +237,7 @@ export async function requestOtp(phone: string) {
 
   // Generate 6-digit OTP
   const code = String(Math.floor(100000 + Math.random() * 900000));
-  otpStore.set(phone, { code, expiresAt: Date.now() + 5 * 60 * 1000 }); // 5 min TTL
+  await storeOtp(phone, code);
 
   // MVP: log OTP instead of sending via SMS
   logger.info({ phone, code }, 'OTP generated (MVP - not sent via SMS)');
@@ -216,36 +246,14 @@ export async function requestOtp(phone: string) {
 }
 
 export async function verifyOtp(phone: string, code: string) {
-  const stored = otpStore.get(phone);
+  await verifyStoredOtp(phone, code);
 
-  if (!stored) {
-    throw new BadRequestError('No OTP requested for this phone number');
-  }
-
-  if (Date.now() > stored.expiresAt) {
-    otpStore.delete(phone);
-    throw new BadRequestError('OTP has expired');
-  }
-
-  if (stored.code !== code) {
-    throw new BadRequestError('Invalid OTP code');
-  }
-
-  otpStore.delete(phone);
-
-  // Find the user by comparing phone hashes
-  const usersWithPhone = await prisma.user.findMany({
-    where: { phoneHash: { not: null } },
-    select: { id: true, phoneHash: true, displayName: true, isAnonymous: true },
+  // Fast O(1) indexed lookup by deterministic hash
+  const lookup = phoneToLookup(phone);
+  const user = await prisma.user.findUnique({
+    where: { phoneLookup: lookup },
+    select: { id: true, displayName: true, isAnonymous: true },
   });
-
-  let user = null;
-  for (const u of usersWithPhone) {
-    if (u.phoneHash && await bcrypt.compare(phone, u.phoneHash)) {
-      user = u;
-      break;
-    }
-  }
 
   if (!user) {
     throw new UnauthorizedError('User not found');
@@ -322,7 +330,7 @@ export async function requestPasswordReset(rawEmail: string) {
 
   if (user) {
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    otpStore.set(`reset:${email}`, { code, expiresAt: Date.now() + 5 * 60 * 1000 });
+    await storeOtp(`reset:${email}`, code);
     logger.info({ email, code }, 'Password reset code generated (MVP - logged to console)');
   }
 
@@ -331,22 +339,7 @@ export async function requestPasswordReset(rawEmail: string) {
 
 export async function resetPassword(rawEmail: string, code: string, newPassword: string) {
   const email = rawEmail.toLowerCase().trim();
-  const stored = otpStore.get(`reset:${email}`);
-
-  if (!stored) {
-    throw new BadRequestError('No reset code requested for this email');
-  }
-
-  if (Date.now() > stored.expiresAt) {
-    otpStore.delete(`reset:${email}`);
-    throw new BadRequestError('Reset code has expired');
-  }
-
-  if (stored.code !== code) {
-    throw new BadRequestError('Invalid reset code');
-  }
-
-  otpStore.delete(`reset:${email}`);
+  await verifyStoredOtp(`reset:${email}`, code);
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {

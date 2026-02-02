@@ -113,6 +113,7 @@ model User {
   passwordHash  String?
   deviceId      String?   @unique
   phoneHash     String?   @unique
+  phoneLookup   String?   @unique  // SHA-256 of phone for fast lookups
   displayName   String    // Auto-generated like "Gentle Owl 17"
   avatarUrl     String?
   bio           String?
@@ -183,6 +184,19 @@ model RefreshToken {
   @@index([expiresAt])
 }
 
+model OtpCode {
+  id        String   @id @default(uuid())
+  key       String   // phone number or "reset:<email>"
+  code      String
+  attempts  Int      @default(0)
+  maxAttempts Int    @default(5)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([key])
+  @@index([expiresAt])
+}
+
 model AiSession {
   id       String          @id @default(uuid())
   userId   String
@@ -239,6 +253,7 @@ model Conversation {
   name        String?
   description String?
   avatarUrl   String?
+  isVerified  Boolean            @default(false)
   metadata  Json?
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
@@ -273,6 +288,8 @@ model Message {
   metadata       Json?
   replyToId      String?
   imageUrl       String?
+  audioUrl       String?
+  audioDuration  Int?
   viewOnce       Boolean   @default(false)
   viewOnceOpened Boolean   @default(false)
   editedAt       DateTime?
