@@ -1,7 +1,13 @@
 import { Server, Socket } from 'socket.io';
 import { randomUUID } from 'crypto';
+import { appendFileSync } from 'fs';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
+
+function debugLog(msg: string, data?: Record<string, unknown>) {
+  const line = `[${new Date().toISOString()}] ${msg} ${data ? JSON.stringify(data) : ''}\n`;
+  try { appendFileSync('/tmp/yomeet-call-debug.log', line); } catch {}
+}
 
 interface ActiveCall {
   callId: string;
@@ -18,6 +24,12 @@ const activeCalls = new Map<string, ActiveCall>();
 
 /** Reverse index: userId -> callId for quick lookup. */
 const userCallMap = new Map<string, string>();
+
+/** Timeout handles for unanswered calls (server-side cleanup). */
+const callTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Maximum time (ms) to wait for an answer before cleaning up server-side. */
+const CALL_TIMEOUT_MS = 60_000;
 
 export function registerCallHandlers(io: Server, socket: Socket): void {
   const userId: string = (socket as any).userId;
@@ -36,9 +48,27 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const { conversationId, targetUserIds, isGroup, callType } = data;
       const resolvedCallType = callType ?? 'AUDIO';
 
-      if (userCallMap.has(userId)) {
-        socket.emit('call:error', { message: 'You are already in a call' });
-        return;
+      debugLog('call:initiate received', { userId, conversationId, targetUserIds, callType: resolvedCallType });
+      logger.info({ userId, conversationId, targetUserIds, callType: resolvedCallType }, 'call:initiate received');
+
+      // Clean up any stale call entry from a previous session
+      const staleCallId = userCallMap.get(userId);
+      if (staleCallId) {
+        const staleCall = activeCalls.get(staleCallId);
+        if (staleCall) {
+          if (!staleCall.answeredAt) {
+            debugLog('Cleaning up stale unanswered call', { userId, staleCallId });
+            cleanupCall(staleCallId);
+            clearCallTimeout(staleCallId);
+          } else {
+            debugLog('Blocking: user already in active call', { userId, staleCallId });
+            socket.emit('call:error', { message: 'You are already in a call' });
+            return;
+          }
+        } else {
+          debugLog('Cleaning stale userCallMap entry (no call found)', { userId, staleCallId });
+          userCallMap.delete(userId);
+        }
       }
 
       const caller = await prisma.user.findUnique({
@@ -79,6 +109,14 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
       // Notify each target user
       for (const targetId of targetUserIds) {
+        // Debug: check if target has active sockets in their room
+        const targetSockets = await io.in(`user:${targetId}`).fetchSockets();
+        debugLog('Emitting call:incoming', { targetId, socketCount: targetSockets.length, callId });
+        logger.info(
+          { targetId, socketCount: targetSockets.length, callId },
+          'Emitting call:incoming to target user room'
+        );
+
         io.to(`user:${targetId}`).emit('call:incoming', {
           callId,
           conversationId,
@@ -95,10 +133,52 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       // Confirm to the initiator
       socket.emit('call:initiated', { callId, callType: resolvedCallType });
 
+      // Server-side timeout: clean up if nobody answers
+      const timeout = setTimeout(async () => {
+        const call = activeCalls.get(callId);
+        if (call && !call.answeredAt) {
+          io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: 'timeout' });
+          // Make all sockets leave the call room
+          const sockets = await io.in(`call:${callId}`).fetchSockets();
+          for (const s of sockets) s.leave(`call:${callId}`);
+
+          // Bump conversation.updatedAt so it sorts to the top of the list
+          try {
+            await prisma.conversation.update({
+              where: { id: conversationId },
+              data: { updatedAt: new Date() },
+            });
+          } catch (dbErr) {
+            logger.error({ dbErr, callId, conversationId }, 'Failed to bump conversation updatedAt on missed call');
+          }
+
+          cleanupCall(callId);
+          logger.info({ callId }, 'Call timed out server-side (no answer)');
+        }
+        callTimeouts.delete(callId);
+      }, CALL_TIMEOUT_MS);
+      callTimeouts.set(callId, timeout);
+
       logger.info({ userId, callId, targetUserIds, callType: resolvedCallType }, 'Call initiated');
     } catch (error) {
+      debugLog('ERROR in call:initiate', { userId, error: String(error) });
       logger.error({ error, userId }, 'Error initiating call');
       socket.emit('call:error', { message: 'Failed to initiate call' });
+    }
+  });
+
+  /**
+   * call:ringing — The target's phone is ringing. Relay to the caller.
+   */
+  socket.on('call:ringing', (data: { callId: string }) => {
+    try {
+      const { callId } = data;
+      const call = activeCalls.get(callId);
+      if (!call || !call.participantIds.has(userId)) return;
+
+      io.to(`user:${call.initiatorId}`).emit('call:ringing', { callId });
+    } catch (error) {
+      logger.error({ error, userId }, 'Error relaying ringing');
     }
   });
 
@@ -119,6 +199,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       userCallMap.set(userId, callId);
       socket.join(`call:${callId}`);
       call.answeredAt = new Date();
+      clearCallTimeout(callId);
 
       // Update CallLog to COMPLETED
       try {
@@ -170,6 +251,9 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
       // For 1-on-1 calls, clean up immediately
       if (!call.isGroup) {
+        // Make all sockets leave the call room
+        const rejectSockets = await io.in(`call:${callId}`).fetchSockets();
+        for (const s of rejectSockets) s.leave(`call:${callId}`);
         cleanupCall(callId);
       } else {
         call.participantIds.delete(userId);
@@ -244,6 +328,10 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         endedBy: userId,
       });
 
+      // Make all sockets leave the call room
+      const endSockets = await io.in(`call:${callId}`).fetchSockets();
+      for (const s of endSockets) s.leave(`call:${callId}`);
+
       cleanupCall(callId);
       logger.info({ userId, callId }, 'Call ended');
     } catch (error) {
@@ -291,6 +379,11 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         logger.error({ dbErr, callId }, 'Failed to update CallLog on disconnect');
       });
 
+      // Make remaining sockets leave the call room
+      io.in(`call:${callId}`).fetchSockets().then((sockets) => {
+        for (const s of sockets) s.leave(`call:${callId}`);
+      }).catch(() => {});
+
       cleanupCall(callId);
     }
 
@@ -298,10 +391,19 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   });
 }
 
+function clearCallTimeout(callId: string): void {
+  const timeout = callTimeouts.get(callId);
+  if (timeout) {
+    clearTimeout(timeout);
+    callTimeouts.delete(callId);
+  }
+}
+
 function cleanupCall(callId: string): void {
   const call = activeCalls.get(callId);
   if (!call) return;
 
+  clearCallTimeout(callId);
   for (const participantId of call.participantIds) {
     userCallMap.delete(participantId);
   }
