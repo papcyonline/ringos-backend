@@ -3,11 +3,13 @@ import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { moderateMessage } from '../../middleware/moderation';
 import { AuthRequest } from '../../shared/types';
-import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl } from '../../shared/upload';
+import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema } from './chat.schema';
 import * as chatService from './chat.service';
 import * as groupService from './group.service';
+import { formatMessagePayload } from './chat.utils';
+import { notifyChatMessage } from '../notification/notification.service';
 
 const router = Router();
 
@@ -76,8 +78,22 @@ router.post(
         req.params.conversationId,
         req.user!.userId,
         req.body.content,
-        req.body.replyToId,
+        { replyToId: req.body.replyToId },
       );
+
+      // Broadcast to room so other participants see it in real-time
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', formatMessagePayload(message, req.params.conversationId));
+
+      // Notify other participants (in-app + push)
+      notifyChatMessage(
+        req.params.conversationId,
+        req.user!.userId,
+        message.sender.displayName,
+        message.content,
+        { imageUrl: message.imageUrl ?? undefined, audioUrl: message.audioUrl ?? undefined },
+      ).catch(() => {}); // fire-and-forget
+
       res.status(201).json(message);
     } catch (err) {
       next(err);
@@ -98,6 +114,15 @@ router.put(
         req.user!.userId,
         req.body.content,
       );
+
+      // Broadcast edit to room
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:edited', {
+        messageId: message.id,
+        content: message.content,
+        editedAt: message.editedAt,
+      });
+
       res.json(message);
     } catch (err) {
       next(err);
@@ -115,6 +140,14 @@ router.delete(
         req.params.messageId,
         req.user!.userId,
       );
+
+      // Broadcast deletion to room
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:deleted', {
+        messageId: message.id,
+        deletedAt: message.deletedAt,
+      });
+
       res.json(message);
     } catch (err) {
       next(err);
@@ -160,40 +193,62 @@ router.post(
         req.params.conversationId,
         req.user!.userId,
         caption,
-        replyToId,
-        imageUrl,
-        viewOnce,
+        { replyToId, imageUrl, viewOnce },
       );
 
       // Broadcast to room so other participants see it
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', {
-        id: message.id,
-        conversationId: req.params.conversationId,
-        senderId: message.senderId,
-        senderName: message.sender.displayName,
-        content: message.content,
-        imageUrl: message.imageUrl,
-        viewOnce: message.viewOnce,
-        viewOnceOpened: message.viewOnceOpened,
-        replyToId: message.replyToId,
-        replyTo: message.replyTo
-          ? {
-              id: message.replyTo.id,
-              content: message.replyTo.content,
-              senderId: message.replyTo.senderId,
-              senderName: (message.replyTo as any).sender.displayName,
-            }
-          : null,
-        editedAt: message.editedAt,
-        deletedAt: message.deletedAt,
-        reactions: message.reactions.map((r: any) => ({
-          emoji: r.emoji,
-          userId: r.userId,
-          displayName: r.user.displayName,
-        })),
-        createdAt: message.createdAt,
-      });
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', formatMessagePayload(message, req.params.conversationId));
+
+      // Notify other participants (in-app + push)
+      notifyChatMessage(
+        req.params.conversationId,
+        req.user!.userId,
+        message.sender.displayName,
+        message.content,
+        { imageUrl: message.imageUrl ?? undefined },
+      ).catch(() => {});
+
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/audio - Send an audio message
+router.post(
+  '/conversations/:conversationId/audio',
+  authenticate,
+  chatAudioUpload.single('audio'),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No audio file uploaded' });
+      }
+      const audioUrl = fileToChatAudioUrl(req.file);
+      const duration = parseInt(req.body.duration as string, 10) || 0;
+      const replyToId = req.body.replyToId as string | undefined;
+
+      const message = await chatService.sendMessage(
+        req.params.conversationId,
+        req.user!.userId,
+        '',
+        { replyToId, audioUrl, audioDuration: duration },
+      );
+
+      // Broadcast to room so other participants see it
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', formatMessagePayload(message, req.params.conversationId));
+
+      // Notify other participants (in-app + push)
+      notifyChatMessage(
+        req.params.conversationId,
+        req.user!.userId,
+        message.sender.displayName,
+        message.content,
+        { audioUrl: message.audioUrl ?? undefined },
+      ).catch(() => {});
 
       res.status(201).json(message);
     } catch (err) {
@@ -220,20 +275,6 @@ router.post(
       });
 
       res.json(result);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-// GET /conversations/groups/discover - List all public groups for discovery
-router.get(
-  '/conversations/groups/discover',
-  authenticate,
-  async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const groups = await groupService.getAllGroups(req.user!.userId);
-      res.json(groups);
     } catch (err) {
       next(err);
     }
@@ -344,6 +385,23 @@ router.put(
   },
 );
 
+// PUT /conversations/:id/group/verify - Toggle group verified (admin only)
+router.put(
+  '/conversations/:conversationId/group/verify',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.toggleGroupVerified(
+        req.params.conversationId,
+        req.user!.userId,
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // DELETE /conversations/:id/group - Delete a group (admin only)
 router.delete(
   '/conversations/:conversationId/group',
@@ -433,6 +491,14 @@ router.post(
         req.params.conversationId,
         req.user!.userId,
       );
+
+      // Broadcast read receipt so the sender sees blue ticks
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:read', {
+        conversationId: req.params.conversationId,
+        userId: req.user!.userId,
+      });
+
       res.json({ success: true });
     } catch (err) {
       next(err);

@@ -217,38 +217,6 @@ export async function deleteGroup(conversationId: string, userId: string) {
   return { conversationId, deleted: true };
 }
 
-/**
- * List all active GROUP conversations for discovery (any authenticated user can browse).
- */
-export async function getAllGroups(currentUserId: string) {
-  const groups = await prisma.conversation.findMany({
-    where: {
-      type: 'GROUP',
-      status: 'ACTIVE',
-    },
-    include: {
-      participants: {
-        where: { leftAt: null },
-        include: {
-          user: {
-            select: { id: true, displayName: true, avatarUrl: true },
-          },
-        },
-      },
-    },
-    orderBy: { updatedAt: 'desc' },
-  });
-
-  return groups.map((g) => ({
-    id: g.id,
-    name: g.name,
-    description: g.description,
-    avatarUrl: g.avatarUrl,
-    memberCount: g.participants.length,
-    isMember: g.participants.some((p) => p.userId === currentUserId),
-    createdAt: g.createdAt,
-  }));
-}
 
 /**
  * Self-join a group conversation. Any user can join any active group.
@@ -301,5 +269,47 @@ export async function joinGroup(conversationId: string, userId: string) {
   });
 
   logger.info({ conversationId, userId }, 'User joined group');
+  return updated;
+}
+
+/**
+ * Toggle isVerified on a group conversation. Admin only.
+ */
+export async function toggleGroupVerified(conversationId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+
+  if (!participant) {
+    throw new ForbiddenError('You are not a participant in this conversation');
+  }
+  if (participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can toggle group verification');
+  }
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+  });
+
+  if (!conversation || conversation.type !== 'GROUP') {
+    throw new NotFoundError('Group not found');
+  }
+
+  const updated = await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { isVerified: !conversation.isVerified },
+    include: {
+      participants: {
+        where: { leftAt: null },
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+          },
+        },
+      },
+    },
+  });
+
+  logger.info({ conversationId, userId, isVerified: updated.isVerified }, 'Group verified status toggled');
   return updated;
 }
