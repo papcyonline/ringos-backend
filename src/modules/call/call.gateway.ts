@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { appendFileSync } from 'fs';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
+import { sendCallPush } from '../notification/notification.service';
 
 function debugLog(msg: string, data?: Record<string, unknown>) {
   const line = `[${new Date().toISOString()}] ${msg} ${data ? JSON.stringify(data) : ''}\n`;
@@ -109,25 +110,42 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
       // Notify each target user
       for (const targetId of targetUserIds) {
-        // Debug: check if target has active sockets in their room
+        // Check if target has active sockets in their room
         const targetSockets = await io.in(`user:${targetId}`).fetchSockets();
-        debugLog('Emitting call:incoming', { targetId, socketCount: targetSockets.length, callId });
+        const isOnline = targetSockets.length > 0;
+
+        debugLog('Emitting call:incoming', { targetId, socketCount: targetSockets.length, callId, isOnline });
         logger.info(
-          { targetId, socketCount: targetSockets.length, callId },
+          { targetId, socketCount: targetSockets.length, callId, isOnline },
           'Emitting call:incoming to target user room'
         );
 
-        io.to(`user:${targetId}`).emit('call:incoming', {
-          callId,
-          conversationId,
-          isGroup: isGroup ?? false,
-          callType: resolvedCallType,
-          callerName: caller?.displayName ?? 'Unknown',
-          callerAvatar: caller?.avatarUrl ?? null,
-          participants: Array.from(participantIds)
-            .filter((id) => id !== targetId)
-            .map((id) => ({ userId: id })),
-        });
+        if (isOnline) {
+          // User is online - send via socket
+          io.to(`user:${targetId}`).emit('call:incoming', {
+            callId,
+            conversationId,
+            isGroup: isGroup ?? false,
+            callType: resolvedCallType,
+            callerName: caller?.displayName ?? 'Unknown',
+            callerAvatar: caller?.avatarUrl ?? null,
+            participants: Array.from(participantIds)
+              .filter((id) => id !== targetId)
+              .map((id) => ({ userId: id })),
+          });
+        } else {
+          // User is offline - send push notification
+          sendCallPush(targetId, {
+            callId,
+            conversationId,
+            callType: resolvedCallType,
+            callerId: userId,
+            callerName: caller?.displayName ?? 'Unknown',
+            callerAvatar: caller?.avatarUrl,
+          }).catch((err) => {
+            logger.error({ err, targetId, callId }, 'Failed to send call push notification');
+          });
+        }
       }
 
       // Confirm to the initiator

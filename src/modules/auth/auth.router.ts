@@ -14,6 +14,8 @@ import {
   refreshTokenSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  googleAuthSchema,
+  appleAuthSchema,
 } from './auth.schema';
 import * as authService from './auth.service';
 
@@ -42,6 +44,36 @@ router.post(
       const { email, password } = req.body;
       const result = await authService.login(email, password);
       logger.info({ userId: result.user.id }, 'User logged in');
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/google',
+  validate(googleAuthSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { idToken } = req.body;
+      const result = await authService.googleAuth(idToken);
+      logger.info({ userId: result.user.id, isNewUser: result.isNewUser }, 'Google auth');
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/apple',
+  validate(appleAuthSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { idToken, fullName } = req.body;
+      const result = await authService.appleAuth(idToken, fullName);
+      logger.info({ userId: result.user.id, isNewUser: result.isNewUser }, 'Apple auth');
       res.status(200).json(result);
     } catch (err) {
       next(err);

@@ -46,3 +46,15 @@ export const resetPasswordSchema = z.object({
   code: z.string().length(6),
   newPassword: z.string().min(6),
 });
+
+export const googleAuthSchema = z.object({
+  idToken: z.string().min(1),
+});
+
+export const appleAuthSchema = z.object({
+  idToken: z.string().min(1),
+  fullName: z.object({
+    givenName: z.string().optional(),
+    familyName: z.string().optional(),
+  }).optional(),
+});

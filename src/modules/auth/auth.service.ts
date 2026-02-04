@@ -1,7 +1,10 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
+import { OAuth2Client } from 'google-auth-library';
+import appleSignIn from 'apple-signin-auth';
 import { prisma } from '../../config/database';
+import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
 import { UnauthorizedError, BadRequestError } from '../../shared/errors';
 import {
@@ -10,6 +13,20 @@ import {
   verifyRefreshToken,
   generateAnonymousName,
 } from './auth.utils';
+import { sendWelcomeEmail, sendPasswordResetEmail } from '../../shared/email.service';
+import { sendOtpSms } from '../../shared/sms.service';
+
+// Google OAuth client - accepts tokens from web, iOS, and Android clients
+const googleClientIds = [
+  env.GOOGLE_CLIENT_ID_WEB,
+  env.GOOGLE_CLIENT_ID_IOS,
+  env.GOOGLE_CLIENT_ID_ANDROID,
+].filter(Boolean) as string[];
+
+const googleClient = googleClientIds.length > 0 ? new OAuth2Client() : null;
+
+// Apple Sign-In configuration
+const appleClientId = env.APPLE_CLIENT_ID;
 
 function refreshTokenExpiryDate(): Date {
   // Parse JWT_REFRESH_EXPIRES_IN default of "7d" — keep it simple: 7 days
@@ -118,6 +135,11 @@ export async function register(rawEmail: string, password: string) {
 
   logger.info({ userId: user.id }, 'Email user registered');
 
+  // Send welcome email (non-blocking)
+  sendWelcomeEmail(email, user.displayName).catch((err) => {
+    logger.error({ error: err, userId: user.id }, 'Failed to send welcome email');
+  });
+
   const accessToken = generateAccessToken({ userId: user.id, isAnonymous: false });
   const refreshToken = generateRefreshToken({ userId: user.id });
 
@@ -175,6 +197,202 @@ export async function login(rawEmail: string, password: string) {
       displayName: user.displayName,
       isAnonymous: user.isAnonymous,
     },
+  };
+}
+
+export async function googleAuth(idToken: string) {
+  if (!googleClient || googleClientIds.length === 0) {
+    throw new BadRequestError('Google Sign-In is not configured');
+  }
+
+  // Verify the Google ID token
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: googleClientIds,
+    });
+    payload = ticket.getPayload();
+  } catch (err) {
+    logger.error({ err }, 'Failed to verify Google ID token');
+    throw new UnauthorizedError('Invalid Google token');
+  }
+
+  if (!payload || !payload.sub || !payload.email) {
+    throw new UnauthorizedError('Invalid Google token payload');
+  }
+
+  const googleId = payload.sub;
+  const email = payload.email.toLowerCase().trim();
+  const name = payload.name || generateAnonymousName();
+  const avatarUrl = payload.picture || null;
+
+  // Check if user exists with this Google ID
+  let user = await prisma.user.findUnique({ where: { googleId } });
+
+  if (user) {
+    // Existing Google user - just log them in
+    logger.info({ userId: user.id }, 'Google user logged in');
+  } else {
+    // Check if user exists with same email (email/password or phone account)
+    const existingEmailUser = await prisma.user.findUnique({ where: { email } });
+
+    if (existingEmailUser) {
+      // Link Google account to existing user
+      user = await prisma.user.update({
+        where: { id: existingEmailUser.id },
+        data: {
+          googleId,
+          // Keep existing avatar if they have one, otherwise use Google's
+          avatarUrl: existingEmailUser.avatarUrl || avatarUrl,
+        },
+      });
+      logger.info({ userId: user.id }, 'Google account linked to existing email user');
+    } else {
+      // New user - create account with Google
+      user = await prisma.user.create({
+        data: {
+          email,
+          googleId,
+          authProvider: 'google',
+          displayName: name,
+          avatarUrl,
+          isAnonymous: false,
+        },
+      });
+      logger.info({ userId: user.id }, 'New Google user registered');
+
+      // Send welcome email (non-blocking)
+      sendWelcomeEmail(email, name).catch((err) => {
+        logger.error({ error: err, userId: user!.id }, 'Failed to send welcome email');
+      });
+    }
+  }
+
+  const accessToken = generateAccessToken({ userId: user.id, isAnonymous: false });
+  const refreshToken = generateRefreshToken({ userId: user.id });
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      token: refreshToken,
+      expiresAt: refreshTokenExpiryDate(),
+    },
+  });
+
+  return {
+    accessToken,
+    refreshToken,
+    userId: user.id,
+    user: {
+      id: user.id,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      isAnonymous: false,
+    },
+    isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime()) < 5000, // Created within last 5 seconds
+  };
+}
+
+export async function appleAuth(idToken: string, fullName?: { givenName?: string; familyName?: string }) {
+  if (!appleClientId) {
+    throw new BadRequestError('Apple Sign-In is not configured');
+  }
+
+  // Verify the Apple ID token
+  let payload;
+  try {
+    payload = await appleSignIn.verifyIdToken(idToken, {
+      audience: appleClientId,
+      ignoreExpiration: false,
+    });
+  } catch (err) {
+    logger.error({ err }, 'Failed to verify Apple ID token');
+    throw new UnauthorizedError('Invalid Apple token');
+  }
+
+  if (!payload || !payload.sub) {
+    throw new UnauthorizedError('Invalid Apple token payload');
+  }
+
+  const appleId = payload.sub;
+  const email = payload.email?.toLowerCase().trim() || null;
+
+  // Apple only sends the name on the first sign-in, so we need to handle it carefully
+  const name = fullName?.givenName
+    ? `${fullName.givenName}${fullName.familyName ? ' ' + fullName.familyName : ''}`.trim()
+    : generateAnonymousName();
+
+  // Check if user exists with this Apple ID
+  let user = await prisma.user.findUnique({ where: { appleId } });
+
+  if (user) {
+    // Existing Apple user - just log them in
+    logger.info({ userId: user.id }, 'Apple user logged in');
+  } else if (email) {
+    // Check if user exists with same email (email/password or Google account)
+    const existingEmailUser = await prisma.user.findUnique({ where: { email } });
+
+    if (existingEmailUser) {
+      // Link Apple account to existing user
+      user = await prisma.user.update({
+        where: { id: existingEmailUser.id },
+        data: { appleId },
+      });
+      logger.info({ userId: user.id }, 'Apple account linked to existing email user');
+    } else {
+      // New user - create account with Apple
+      user = await prisma.user.create({
+        data: {
+          email,
+          appleId,
+          authProvider: 'apple',
+          displayName: name,
+          isAnonymous: false,
+        },
+      });
+      logger.info({ userId: user.id }, 'New Apple user registered');
+
+      // Send welcome email (non-blocking)
+      sendWelcomeEmail(email, name).catch((err) => {
+        logger.error({ error: err, userId: user!.id }, 'Failed to send welcome email');
+      });
+    }
+  } else {
+    // Apple user with private email relay (no email shared)
+    user = await prisma.user.create({
+      data: {
+        appleId,
+        authProvider: 'apple',
+        displayName: name,
+        isAnonymous: false,
+      },
+    });
+    logger.info({ userId: user.id }, 'New Apple user registered (private email)');
+  }
+
+  const accessToken = generateAccessToken({ userId: user.id, isAnonymous: false });
+  const refreshToken = generateRefreshToken({ userId: user.id });
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      token: refreshToken,
+      expiresAt: refreshTokenExpiryDate(),
+    },
+  });
+
+  return {
+    accessToken,
+    refreshToken,
+    userId: user.id,
+    user: {
+      id: user.id,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      isAnonymous: false,
+    },
+    isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime()) < 5000,
   };
 }
 
@@ -239,8 +457,12 @@ export async function requestOtp(phone: string) {
   const code = String(Math.floor(100000 + Math.random() * 900000));
   await storeOtp(phone, code);
 
-  // MVP: log OTP instead of sending via SMS
-  logger.info({ phone, code }, 'OTP generated (MVP - not sent via SMS)');
+  // Send OTP via SMS (falls back to logging if Twilio not configured)
+  const smsSent = await sendOtpSms(phone, code);
+  if (!smsSent) {
+    // Log OTP for development when Twilio is not configured
+    logger.info({ phone, code }, 'OTP generated (SMS not configured - logged for dev)');
+  }
 
   return { message: 'OTP sent successfully' };
 }
@@ -331,7 +553,14 @@ export async function requestPasswordReset(rawEmail: string) {
   if (user) {
     const code = String(Math.floor(100000 + Math.random() * 900000));
     await storeOtp(`reset:${email}`, code);
-    logger.info({ email, code }, 'Password reset code generated (MVP - logged to console)');
+
+    // Send OTP via email
+    const emailSent = await sendPasswordResetEmail(email, code);
+    if (emailSent) {
+      logger.info({ email }, 'Password reset code sent via email');
+    } else {
+      logger.info({ email, code }, 'Password reset code generated (email not configured)');
+    }
   }
 
   return { message: 'If an account with that email exists, a reset code has been sent.' };

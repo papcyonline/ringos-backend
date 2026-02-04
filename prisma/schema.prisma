@@ -111,6 +111,9 @@ model User {
   id            String    @id @default(uuid())
   email         String?   @unique
   passwordHash  String?
+  googleId      String?   @unique  // Google OAuth user ID
+  appleId       String?   @unique  // Apple Sign-In user ID
+  authProvider  String    @default("email") // "email", "google", "apple", "phone", "anonymous"
   deviceId      String?   @unique
   phoneHash     String?   @unique
   phoneLookup   String?   @unique  // SHA-256 of phone for fast lookups
@@ -135,6 +138,11 @@ model User {
   banExpiresAt  DateTime?
   flagCount     Int       @default(0)
   lastFlaggedAt DateTime?
+  // Stripe subscription
+  stripeCustomerId    String?   @unique
+  subscriptionId      String?
+  subscriptionStatus  String?   // "active", "cancelled", "past_due", "trialing"
+  subscriptionPlan    String?   // "premium", "pro", etc.
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -150,10 +158,13 @@ model User {
   blocksReceived   Block[]  @relation("BlocksReceived")
   followsInitiated Follow[] @relation("FollowsInitiated")
   followsReceived  Follow[] @relation("FollowsReceived")
+  likesInitiated   Like[]   @relation("LikesInitiated")
+  likesReceived    Like[]   @relation("LikesReceived")
   reactions        MessageReaction[]
   callLogs         CallLog[]
   notifications    Notification[]
   fcmTokens        FcmToken[]
+  voipTokens       VoipToken[]
 
   @@index([banStatus])
 }
@@ -363,6 +374,20 @@ model Follow {
   @@index([followingId])
 }
 
+model Like {
+  id        String   @id @default(uuid())
+  likerId   String
+  likedId   String
+  createdAt DateTime @default(now())
+
+  liker User @relation("LikesInitiated", fields: [likerId], references: [id], onDelete: Cascade)
+  liked User @relation("LikesReceived", fields: [likedId], references: [id], onDelete: Cascade)
+
+  @@unique([likerId, likedId])
+  @@index([likerId])
+  @@index([likedId])
+}
+
 model CallLog {
   id             String        @id @default(uuid())
   callId         String        @unique
@@ -402,6 +427,18 @@ model FcmToken {
   id        String   @id @default(uuid())
   userId    String
   token     String   @unique
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VoipToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  platform  String   // 'ios'
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

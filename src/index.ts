@@ -12,10 +12,16 @@ import { startMatchExpiryJob } from './jobs/matchExpiry';
 import { startSessionCleanupJob } from './jobs/sessionCleanup';
 import { startAvailabilityExpiryJob } from './jobs/availabilityExpiry';
 import { logger } from './shared/logger';
+import { initSentry } from './shared/sentry.service';
+import { initRedis, closeRedis } from './shared/redis.service';
 
 async function main() {
+  // Initialize error tracking first
+  initSentry();
+
   await connectDatabase();
   initializeFirebase();
+  initRedis();
 
   const server = http.createServer(app);
   const io = initializeSocket(server);
@@ -38,4 +44,17 @@ async function main() {
 main().catch((err) => {
   logger.fatal(err, 'Failed to start server');
   process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received, shutting down...');
+  await closeRedis();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  logger.info('SIGINT received, shutting down...');
+  await closeRedis();
+  process.exit(0);
 });

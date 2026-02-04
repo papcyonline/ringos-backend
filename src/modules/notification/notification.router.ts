@@ -83,4 +83,32 @@ router.delete('/fcm-token', authenticate, async (req: AuthRequest, res: Response
   }
 });
 
+// POST /voip-token - Register iOS VoIP push token
+router.post('/voip-token', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'Token is required' });
+    }
+    await notificationService.registerVoipToken(req.user!.userId, token);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /voip-token - Remove iOS VoIP push token
+router.delete('/voip-token', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'Token is required' });
+    }
+    await notificationService.removeVoipToken(token);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export { router as notificationRouter };

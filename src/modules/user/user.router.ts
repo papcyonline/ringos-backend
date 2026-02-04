@@ -7,6 +7,7 @@ import { getIO } from '../../config/socket';
 import { updatePreferenceSchema, updateAvailabilitySchema, updatePrivacySchema, updateProfileSchema } from './user.schema';
 import * as userService from './user.service';
 import * as followService from './follow.service';
+import * as likeService from './like.service';
 import { createNotification } from '../notification/notification.service';
 
 const router = Router();
@@ -213,6 +214,38 @@ router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response,
 router.delete('/:id/follow', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     await followService.unfollowUser(req.user!.userId, req.params.id);
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /:id/like - Like a user's profile
+router.post('/:id/like', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await likeService.likeUser(req.user!.userId, req.params.id);
+
+    // Send notification to the liked user
+    const liker = await userService.getProfile(req.user!.userId);
+    createNotification({
+      userId: req.params.id,
+      type: 'profile_liked',
+      title: liker.displayName,
+      body: 'Liked your profile',
+      imageUrl: liker.avatarUrl ?? undefined,
+      data: { userId: req.user!.userId },
+    }).catch(() => {}); // fire-and-forget
+
+    res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /:id/like - Unlike a user's profile
+router.delete('/:id/like', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    await likeService.unlikeUser(req.user!.userId, req.params.id);
     res.status(204).send();
   } catch (err) {
     next(err);

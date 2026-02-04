@@ -80,15 +80,20 @@ export async function getUserById(targetId: string, currentUserId: string) {
       verifiedRole: true,
       isProfilePublic: true,
       createdAt: true,
-      _count: { select: { followsReceived: true } },
+      _count: { select: { followsReceived: true, likesReceived: true } },
     },
   });
 
   if (!user) throw new NotFoundError('User not found');
 
-  const followRecord = await prisma.follow.findFirst({
-    where: { followerId: currentUserId, followingId: targetId },
-  });
+  const [followRecord, likeRecord] = await Promise.all([
+    prisma.follow.findFirst({
+      where: { followerId: currentUserId, followingId: targetId },
+    }),
+    prisma.like.findFirst({
+      where: { likerId: currentUserId, likedId: targetId },
+    }),
+  ]);
 
   const isPrivate = !user.isProfilePublic;
   return {
@@ -110,6 +115,8 @@ export async function getUserById(targetId: string, currentUserId: string) {
     isProfilePublic: user.isProfilePublic,
     followerCount: user._count.followsReceived,
     isFollowedByMe: !!followRecord,
+    likeCount: user._count.likesReceived,
+    isLikedByMe: !!likeRecord,
     createdAt: user.createdAt,
   };
 }
@@ -147,17 +154,25 @@ export async function listUsers(currentUserId: string) {
       isVerified: true,
       verifiedRole: true,
       isProfilePublic: true,
-      _count: { select: { followsReceived: true } },
+      preference: { select: { language: true } },
+      _count: { select: { followsReceived: true, likesReceived: true } },
     },
     orderBy: [{ isOnline: 'desc' }, { lastSeenAt: 'desc' }],
   });
 
-  // Get who the current user follows
-  const following = await prisma.follow.findMany({
-    where: { followerId: currentUserId },
-    select: { followingId: true },
-  });
+  // Get who the current user follows and likes
+  const [following, likes] = await Promise.all([
+    prisma.follow.findMany({
+      where: { followerId: currentUserId },
+      select: { followingId: true },
+    }),
+    prisma.like.findMany({
+      where: { likerId: currentUserId },
+      select: { likedId: true },
+    }),
+  ]);
   const followingSet = new Set(following.map((f) => f.followingId));
+  const likedSet = new Set(likes.map((l) => l.likedId));
 
   return users.map((user) => {
     const isPrivate = !user.isProfilePublic;
@@ -178,8 +193,11 @@ export async function listUsers(currentUserId: string) {
       isVerified: user.isVerified,
       verifiedRole: user.verifiedRole,
       isProfilePublic: user.isProfilePublic,
+      language: user.preference?.language ?? 'en',
       followerCount: user._count.followsReceived,
       isFollowedByMe: followingSet.has(user.id),
+      likeCount: user._count.likesReceived,
+      isLikedByMe: likedSet.has(user.id),
     };
   });
 }
