@@ -16,12 +16,17 @@ import {
 import { sendWelcomeEmail, sendPasswordResetEmail } from '../../shared/email.service';
 import { sendOtpSms } from '../../shared/sms.service';
 
-// Google OAuth client - accepts tokens from web, iOS, and Android clients
+// Google OAuth client - accepts tokens from web, iOS, and Android clients.
+// Each env var may hold a single ID or a comma-separated list (e.g. for
+// multiple Android signing keys / Firebase projects).
 const googleClientIds = [
   env.GOOGLE_CLIENT_ID_WEB,
   env.GOOGLE_CLIENT_ID_IOS,
   env.GOOGLE_CLIENT_ID_ANDROID,
-].filter(Boolean) as string[];
+]
+  .filter(Boolean)
+  .flatMap((id) => (id as string).split(',').map((s) => s.trim()))
+  .filter(Boolean);
 
 const googleClient = googleClientIds.length > 0 ? new OAuth2Client() : null;
 
