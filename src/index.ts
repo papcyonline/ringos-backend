@@ -36,7 +36,7 @@ async function main() {
   startSessionCleanupJob();
   startAvailabilityExpiryJob();
 
-  server.listen(env.PORT, () => {
+  server.listen(env.PORT, '0.0.0.0', () => {
     logger.info(`Server running on port ${env.PORT} in ${env.NODE_ENV} mode`);
   });
 }
