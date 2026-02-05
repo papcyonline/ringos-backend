@@ -115,7 +115,8 @@ router.post(
       if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
       }
-      const result = await userService.uploadAvatar(req.user!.userId, fileToAvatarUrl(req.file));
+      const avatarUrl = await fileToAvatarUrl(req.file, req.user!.userId);
+      const result = await userService.uploadAvatar(req.user!.userId, avatarUrl);
       res.json(result);
     } catch (err) {
       next(err);

@@ -92,7 +92,7 @@ router.post(
       // Validate username from multipart body via Zod
       const parsed = usernameSchema.parse(req.body);
 
-      const avatarUrl = req.file ? fileToAvatarUrl(req.file) : undefined;
+      const avatarUrl = req.file ? await fileToAvatarUrl(req.file, userId) : undefined;
       const result = await authService.setUsername(userId, parsed.username, {
         avatarUrl,
         bio: parsed.bio,

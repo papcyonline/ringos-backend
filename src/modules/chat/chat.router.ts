@@ -184,7 +184,7 @@ router.post(
       if (!req.file) {
         return res.status(400).json({ error: 'No image uploaded' });
       }
-      const imageUrl = fileToChatImageUrl(req.file);
+      const imageUrl = await fileToChatImageUrl(req.file, req.params.conversationId);
       const caption = (req.body.caption as string) || '';
       const replyToId = req.body.replyToId as string | undefined;
       const viewOnce = req.body.viewOnce === 'true';
@@ -226,7 +226,7 @@ router.post(
       if (!req.file) {
         return res.status(400).json({ error: 'No audio file uploaded' });
       }
-      const audioUrl = fileToChatAudioUrl(req.file);
+      const audioUrl = await fileToChatAudioUrl(req.file, req.params.conversationId);
       const duration = parseInt(req.body.duration as string, 10) || 0;
       const replyToId = req.body.replyToId as string | undefined;
 
@@ -336,7 +336,7 @@ router.post(
           }
         }
       }
-      const avatarUrl = req.file ? fileToAvatarUrl(req.file) : req.body.avatarUrl || undefined;
+      const avatarUrl = req.file ? await fileToAvatarUrl(req.file, req.user!.userId) : req.body.avatarUrl || undefined;
       const conversation = await groupService.createGroup(
         req.user!.userId,
         name,
@@ -366,7 +366,7 @@ router.put(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { name, description } = req.body;
-      const avatarUrl = req.file ? fileToAvatarUrl(req.file) : req.body.avatarUrl;
+      const avatarUrl = req.file ? await fileToAvatarUrl(req.file, req.user!.userId) : req.body.avatarUrl;
       const conversation = await groupService.updateGroup(
         req.params.conversationId,
         req.user!.userId,
