@@ -135,7 +135,7 @@ export async function getConversations(userId: string) {
           initiatorId: { not: userId },
         },
         orderBy: { startedAt: 'desc' },
-        select: { callType: true, startedAt: true },
+        select: { callType: true, startedAt: true, initiator: { select: { displayName: true } } },
       });
 
       return {
