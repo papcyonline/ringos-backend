@@ -6,7 +6,10 @@ export const anonymousAuthSchema = z.object({
 
 export const registerSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(6),
+  password: z.string().min(6)
+    .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+    .regex(/[0-9]/, 'Password must contain at least one digit'),
 });
 
 export const loginSchema = z.object({
@@ -44,7 +47,10 @@ export const forgotPasswordSchema = z.object({
 export const resetPasswordSchema = z.object({
   email: z.string().email(),
   code: z.string().length(6),
-  newPassword: z.string().min(6),
+  newPassword: z.string().min(6)
+    .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+    .regex(/[0-9]/, 'Password must contain at least one digit'),
 });
 
 export const googleAuthSchema = z.object({
