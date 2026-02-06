@@ -1,6 +1,32 @@
+import { Server } from 'socket.io';
+import { prisma } from '../../config/database';
+
 /**
  * Shared utilities for the chat module.
  */
+
+/**
+ * Emit a `chat:list-update` event to each participant's personal `user:<id>`
+ * room so the conversations-list screen updates in real-time even when the
+ * user is NOT inside the specific conversation room.
+ */
+export async function emitToParticipantRooms(
+  io: Server,
+  conversationId: string,
+  payload: any,
+): Promise<void> {
+  try {
+    const participants = await prisma.conversationParticipant.findMany({
+      where: { conversationId, leftAt: null },
+      select: { userId: true },
+    });
+    for (const p of participants) {
+      io.to(`user:${p.userId}`).emit('chat:list-update', payload);
+    }
+  } catch {
+    // Non-critical — conversation room broadcast already handled
+  }
+}
 
 /**
  * Format a Prisma message (with includes) into the Socket.IO broadcast payload.

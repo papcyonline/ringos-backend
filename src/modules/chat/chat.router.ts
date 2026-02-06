@@ -8,7 +8,7 @@ import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema } from './chat.schema';
 import * as chatService from './chat.service';
 import * as groupService from './group.service';
-import { formatMessagePayload } from './chat.utils';
+import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
 import { notifyChatMessage } from '../notification/notification.service';
 
 const router = Router();
@@ -83,7 +83,11 @@ router.post(
 
       // Broadcast to room so other participants see it in real-time
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', formatMessagePayload(message, req.params.conversationId));
+      const msgPayload = formatMessagePayload(message, req.params.conversationId);
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', msgPayload);
+
+      // Also notify each participant's personal room for conversation-list updates
+      emitToParticipantRooms(io, req.params.conversationId, msgPayload).catch(() => {});
 
       // Notify other participants (in-app + push)
       notifyChatMessage(
@@ -198,7 +202,11 @@ router.post(
 
       // Broadcast to room so other participants see it
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', formatMessagePayload(message, req.params.conversationId));
+      const imgPayload = formatMessagePayload(message, req.params.conversationId);
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', imgPayload);
+
+      // Also notify each participant's personal room for conversation-list updates
+      emitToParticipantRooms(io, req.params.conversationId, imgPayload).catch(() => {});
 
       // Notify other participants (in-app + push)
       notifyChatMessage(
@@ -239,7 +247,11 @@ router.post(
 
       // Broadcast to room so other participants see it
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', formatMessagePayload(message, req.params.conversationId));
+      const audioPayload = formatMessagePayload(message, req.params.conversationId);
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', audioPayload);
+
+      // Also notify each participant's personal room for conversation-list updates
+      emitToParticipantRooms(io, req.params.conversationId, audioPayload).catch(() => {});
 
       // Notify other participants (in-app + push)
       notifyChatMessage(

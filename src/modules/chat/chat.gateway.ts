@@ -3,7 +3,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { moderateContent } from '../safety/moderation.service';
 import * as chatService from './chat.service';
-import { formatMessagePayload } from './chat.utils';
+import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
 import { notifyChatMessage } from '../notification/notification.service';
 
 const VALID_EMOJIS = ['thumbsup', 'heart', 'laugh', 'wow', 'sad', 'pray'];
@@ -76,7 +76,11 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       const message = await chatService.sendMessage(conversationId, userId, cleanedContent, { replyToId });
 
       // Broadcast the message to all participants in the room
-      io.to(`conversation:${conversationId}`).emit('chat:message', formatMessagePayload(message, conversationId));
+      const gwPayload = formatMessagePayload(message, conversationId);
+      io.to(`conversation:${conversationId}`).emit('chat:message', gwPayload);
+
+      // Also notify each participant's personal room for conversation-list updates
+      emitToParticipantRooms(io, conversationId, gwPayload).catch(() => {});
 
       // Notify other participants (in-app + push)
       notifyChatMessage(
