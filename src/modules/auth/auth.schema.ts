@@ -15,7 +15,7 @@ export const loginSchema = z.object({
 });
 
 export const usernameSchema = z.object({
-  username: z.string().min(3).max(30),
+  username: z.string().min(3).max(8),
   bio: z.string().max(160).optional(),
   profession: z.string().max(80).optional(),
   gender: z.enum(['male', 'female', 'other']).optional(),
