@@ -1,5 +1,5 @@
 import { prisma } from '../../config/database';
-import { NotFoundError } from '../../shared/errors';
+import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { UpdatePreferenceInput, UpdateAvailabilityInput, UpdatePrivacyInput, UpdateProfileInput } from './user.schema';
 
 async function findUserOrThrow(userId: string) {
@@ -317,7 +317,22 @@ export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
 }
 
 export async function updateProfile(userId: string, data: UpdateProfileInput) {
-  await findUserOrThrow(userId);
+  const user = await findUserOrThrow(userId);
+
+  // Only verified users can change their display name
+  if (data.displayName && data.displayName !== user.displayName && !user.isVerified) {
+    throw new ForbiddenError('Only verified users can change their username');
+  }
+
+  // If verified and changing name, check uniqueness
+  if (data.displayName && data.displayName !== user.displayName) {
+    const { checkUsernameAvailable } = await import('../auth/auth.service');
+    const available = await checkUsernameAvailable(data.displayName, userId);
+    if (!available) {
+      throw new ForbiddenError('Username is already taken');
+    }
+  }
+
   return prisma.user.update({
     where: { id: userId },
     data,
