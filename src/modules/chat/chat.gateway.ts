@@ -199,10 +199,22 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     try {
       const { messageId, conversationId } = data;
 
-      // Broadcast to room so the sender sees double grey ticks
+      // Broadcast to conversation room
       socket.to(`conversation:${conversationId}`).emit('chat:delivered', {
         messageId,
       });
+
+      // Also emit to the message sender's personal room so they see
+      // double grey ticks even if they left the chat screen.
+      try {
+        const msg = await prisma.message.findUnique({
+          where: { id: messageId },
+          select: { senderId: true },
+        });
+        if (msg && msg.senderId !== userId) {
+          io.to(`user:${msg.senderId}`).emit('chat:delivered', { messageId });
+        }
+      } catch { /* non-critical */ }
 
       logger.debug({ messageId, userId }, 'Delivery receipt broadcast');
     } catch (error: any) {
@@ -218,10 +230,22 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       const { conversationId } = data;
       await chatService.markConversationAsRead(conversationId, userId);
 
-      socket.to(`conversation:${conversationId}`).emit('chat:read', {
-        conversationId,
-        userId,
-      });
+      const readPayload = { conversationId, userId };
+
+      // Broadcast to conversation room
+      socket.to(`conversation:${conversationId}`).emit('chat:read', readPayload);
+
+      // Also emit to all other participants' personal rooms so the
+      // sender sees blue ticks even if they left the chat screen.
+      try {
+        const participants = await prisma.conversationParticipant.findMany({
+          where: { conversationId, userId: { not: userId }, leftAt: null },
+          select: { userId: true },
+        });
+        for (const p of participants) {
+          io.to(`user:${p.userId}`).emit('chat:read', readPayload);
+        }
+      } catch { /* non-critical */ }
 
       logger.debug({ conversationId, userId }, 'Read receipt broadcast');
     } catch (error: any) {
