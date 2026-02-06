@@ -138,9 +138,22 @@ export async function getConversations(userId: string) {
         select: { callType: true, startedAt: true, initiator: { select: { displayName: true } } },
       });
 
+      // Compute delivery status for last message (same logic as chat messages)
+      const rawLast = c.messages[0] || null;
+      let lastMessage = rawLast;
+      if (rawLast && rawLast.senderId === userId) {
+        const otherParticipants = c.participants.filter((p) => p.userId !== userId);
+        const isRead = otherParticipants.some(
+          (p) => p.lastReadAt && p.lastReadAt >= rawLast.createdAt,
+        );
+        lastMessage = { ...rawLast, status: isRead ? 'read' : 'delivered' };
+      } else if (rawLast) {
+        lastMessage = { ...rawLast, status: 'sent' };
+      }
+
       return {
         ...c,
-        lastMessage: c.messages[0] || null,
+        lastMessage,
         messages: undefined,
         unreadCount,
         lastMissedCall,
