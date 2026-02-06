@@ -156,6 +156,12 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
 
   if (tokens.length === 0) return;
 
+  // Build iOS alert from data fields so the notification is visible on iOS
+  // (data-only silent pushes are not displayed by the OS).
+  const iosTitle = data.senderName || data.callerName || 'Yomeet';
+  const iosBody =
+    data.audioUrl ? 'Sent a voice message' : data.content || 'New message';
+
   const message: admin.messaging.MulticastMessage = {
     tokens: tokens.map((t) => t.token),
     data,
@@ -165,7 +171,8 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
     apns: {
       payload: {
         aps: {
-          'content-available': 1,
+          alert: { title: iosTitle, body: iosBody },
+          sound: 'default',
           'mutable-content': 1,
         },
       },
@@ -404,7 +411,7 @@ export async function notifyChatMessage(
         logger.error({ err, userId: participant.userId }, 'Failed to send voice note push');
       });
     } else {
-      // Text/image message: send with notification payload
+      // Text/image message: data-only so the client controls notification display
       const messagePayload = buildMessagePayload({
         messageId: options?.messageId,
         conversationId,
@@ -414,12 +421,7 @@ export async function notifyChatMessage(
         content: body,
         imageUrl: options?.imageUrl,
       });
-      sendPushToUser(participant.userId, {
-        title: senderName,
-        body,
-        imageUrl: senderAvatarUrl,
-        data: messagePayload,
-      }).catch((err) => {
+      sendDataPushToUser(participant.userId, messagePayload).catch((err) => {
         logger.error({ err, userId: participant.userId }, 'Failed to send chat push notification');
       });
     }
