@@ -81,6 +81,24 @@ router.post(
   },
 );
 
+router.get(
+  '/check-username',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const username = (req.query.username as string || '').trim();
+      if (username.length < 3) {
+        res.status(200).json({ available: false });
+        return;
+      }
+      const available = await authService.checkUsernameAvailable(username, req.user!.userId);
+      res.status(200).json({ available });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 router.post(
   '/username',
   authenticate,

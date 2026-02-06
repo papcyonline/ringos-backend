@@ -401,11 +401,27 @@ export async function appleAuth(idToken: string, fullName?: { givenName?: string
   };
 }
 
+export async function checkUsernameAvailable(username: string, excludeUserId?: string): Promise<boolean> {
+  const existing = await prisma.user.findFirst({
+    where: {
+      displayName: { equals: username, mode: 'insensitive' },
+      ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+    },
+    select: { id: true },
+  });
+  return !existing;
+}
+
 export async function setUsername(
   userId: string,
   username: string,
   opts?: { avatarUrl?: string; bio?: string; profession?: string; gender?: string; location?: string; availabilityNote?: string; language?: string },
 ) {
+  const available = await checkUsernameAvailable(username, userId);
+  if (!available) {
+    throw new BadRequestError('Username is already taken');
+  }
+
   const data: Record<string, unknown> = { displayName: username };
   if (opts?.avatarUrl) data.avatarUrl = opts.avatarUrl;
   if (opts?.bio) data.bio = opts.bio;
