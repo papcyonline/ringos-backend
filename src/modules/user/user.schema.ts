@@ -41,7 +41,7 @@ export type UpdatePrivacyInput = z.infer<typeof updatePrivacySchema>;
 
 export const updateProfileSchema = z.object({
   displayName: z.string().min(1).max(50).optional(),
-  bio: z.string().max(500).optional().nullable(),
+  bio: z.string().max(80).optional().nullable(),
   profession: z.string().max(100).optional().nullable(),
   gender: z.string().max(20).optional().nullable(),
   location: z.string().max(100).optional().nullable(),
