@@ -6,6 +6,8 @@ import { AuthRequest } from '../../shared/types';
 import { startSessionSchema, sendMessageSchema } from './ai.schema';
 import * as aiService from './ai.service';
 import { synthesizeSpeech } from './tts.service';
+import { promptMap } from './prompts';
+import { env } from '../../config/env';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -211,6 +213,63 @@ router.get(
     try {
       const sessions = await aiService.getSessions(req.user!.userId);
       res.json(sessions);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /realtime/token - Get ephemeral token for OpenAI Realtime WebRTC API
+router.post(
+  '/realtime/token',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { mode = 'CALM_LISTENER' } = req.body;
+      const prompt =
+        promptMap[mode as keyof typeof promptMap] ?? promptMap.CALM_LISTENER;
+      const voicePrompt = prompt.replace(
+        /RESPONSE FORMAT:[\s\S]*$/,
+        'Respond naturally in a warm, conversational tone. Keep responses short — 1 to 3 sentences max, like a real voice conversation. Do not use JSON formatting.',
+      );
+
+      const response = await fetch(
+        'https://api.openai.com/v1/realtime/sessions',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-realtime-preview',
+            voice: 'shimmer',
+            instructions: voicePrompt,
+            input_audio_transcription: { model: 'whisper-1' },
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 200,
+              create_response: true,
+              interrupt_response: true,
+            },
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return res
+          .status(response.status)
+          .json({ error: `OpenAI session creation failed: ${errorText}` });
+      }
+
+      const data = (await response.json()) as any;
+      res.json({
+        token: data.client_secret?.value,
+        expiresAt: data.client_secret?.expires_at,
+      });
     } catch (err) {
       next(err);
     }
