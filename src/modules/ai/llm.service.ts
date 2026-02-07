@@ -69,7 +69,9 @@ export async function streamAiResponse(
   // We'll classify mood separately after.
   const streamPrompt = systemPrompt.replace(
     /RESPONSE FORMAT:[\s\S]*$/,
-    'Respond naturally with your message only. Do not use JSON formatting.',
+    'Respond naturally with your message only. Do not use JSON formatting. ' +
+    'IMPORTANT: Keep your responses short and conversational — 1 to 3 sentences max, like a real voice conversation. ' +
+    'Do not write long paragraphs. Be warm but concise.',
   );
 
   const formattedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -84,13 +86,73 @@ export async function streamAiResponse(
     model: 'gpt-4o-mini',
     messages: formattedMessages,
     temperature: 0.8,
-    max_tokens: 512,
+    max_tokens: 300,
     stream: true,
   });
 
   let fullReply = '';
   for await (const chunk of stream) {
     const delta = chunk.choices[0]?.delta?.content;
+    if (delta) {
+      fullReply += delta;
+      onToken(delta);
+    }
+  }
+
+  return fullReply;
+}
+
+/**
+ * Stream an AI response from audio input — sends raw audio directly to GPT-4o
+ * (bypassing Whisper STT) for voice-to-voice conversations with minimal latency.
+ * The model hears the user's voice and generates a text reply, streamed via `onToken`.
+ */
+export async function streamAiResponseWithAudio(
+  history: LlmMessage[],
+  systemPrompt: string,
+  audioBase64: string,
+  audioFormat: string,
+  onToken: (token: string) => void,
+): Promise<string> {
+  const streamPrompt = systemPrompt.replace(
+    /RESPONSE FORMAT:[\s\S]*$/,
+    'Respond naturally with your message only. Do not use JSON formatting. ' +
+    'IMPORTANT: Keep your responses short and conversational — 1 to 3 sentences max, like a real voice conversation. ' +
+    'Do not write long paragraphs. Be warm but concise.',
+  );
+
+  const formattedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: 'system', content: streamPrompt },
+    ...history.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    })),
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'input_audio',
+          input_audio: {
+            data: audioBase64,
+            format: audioFormat,
+          },
+        } as any,
+      ],
+    },
+  ];
+
+  const stream = await openai.chat.completions.create({
+    model: 'gpt-4o-audio-preview',
+    modalities: ['text'],
+    messages: formattedMessages,
+    temperature: 0.8,
+    max_tokens: 300,
+    stream: true,
+  } as Parameters<typeof openai.chat.completions.create>[0]);
+
+  let fullReply = '';
+  for await (const chunk of stream as any) {
+    const delta = (chunk as any).choices[0]?.delta?.content;
     if (delta) {
       fullReply += delta;
       onToken(delta);

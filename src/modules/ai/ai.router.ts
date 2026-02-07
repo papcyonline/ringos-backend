@@ -113,9 +113,6 @@ router.post(
         req.user!.userId,
         req.file.buffer,
         req.file.mimetype,
-        (transcription) => {
-          res.write(`data: ${JSON.stringify({ type: 'transcription', text: transcription })}\n\n`);
-        },
         (token) => {
           res.write(`data: ${JSON.stringify({ type: 'token', text: token })}\n\n`);
         },

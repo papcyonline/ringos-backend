@@ -2,7 +2,7 @@ import { CompanionMode } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { NotFoundError, BadRequestError } from '../../shared/errors';
 import { promptMap } from './prompts';
-import { generateAiResponse, streamAiResponse, classifyMood } from './llm.service';
+import { generateAiResponse, streamAiResponse, streamAiResponseWithAudio, classifyMood } from './llm.service';
 import { transcribeAudio } from './stt.service';
 import { extractMood } from './emotion.service';
 import { logger } from '../../shared/logger';
@@ -226,7 +226,9 @@ export async function sendMessageStream(
       // Still save the message with neutral mood
       prisma.aiMessage.create({
         data: { sessionId, role: 'ASSISTANT', content: fullReply, mood: 'NEUTRAL' },
-      }).catch(() => {});
+      }).catch((dbErr) => {
+        logger.error({ dbErr, sessionId }, 'Failed to save AI message after mood classification failure');
+      });
       onDone({ mood: 'NEUTRAL', should_handoff: false });
     });
 }
@@ -250,21 +252,20 @@ export async function sendAudio(
 }
 
 /**
- * Transcribe audio then stream the AI response via SSE.
- * Runs STT in parallel with session + user DB fetches to reduce latency.
+ * Send audio directly to GPT-4o (no Whisper transcription) and stream the
+ * AI response via SSE.  This eliminates ~1-2 s of STT latency, making
+ * voice conversations feel real-time.
  */
 export async function sendAudioStream(
   sessionId: string,
   userId: string,
   audioBuffer: Buffer,
   mimeType: string | undefined,
-  onTranscription: (text: string) => void,
   onToken: (token: string) => void,
   onDone: (meta: { mood: string; should_handoff: boolean; handoff_reason?: string }) => void,
 ) {
-  // Run transcription, session fetch, and user context fetch in parallel
-  const [transcribedText, session, userContext] = await Promise.all([
-    transcribeAudio(audioBuffer, mimeType),
+  // Fetch session and user context in parallel (no STT wait!)
+  const [session, userContext] = await Promise.all([
     prisma.aiSession.findUnique({
       where: { id: sessionId },
       include: {
@@ -276,37 +277,43 @@ export async function sendAudioStream(
     _getUserContext(userId),
   ]);
 
-  if (!transcribedText.trim()) {
-    throw new BadRequestError('Could not transcribe audio. Please try again.');
-  }
-
   if (!session) throw new NotFoundError('AI session not found');
   if (session.userId !== userId) throw new NotFoundError('AI session not found');
   if (session.status === 'ENDED') throw new BadRequestError('This session has ended');
 
-  onTranscription(transcribedText);
+  // Convert audio to base64 for GPT-4o audio input
+  const audioBase64 = audioBuffer.toString('base64');
+  const audioFormat = mimeType?.includes('wav') ? 'wav'
+    : mimeType?.includes('mp3') ? 'mp3'
+    : mimeType?.includes('opus') ? 'opus'
+    : 'wav';
 
-  // Fire-and-forget: save user message
+  // Fire-and-forget: save user message placeholder
   prisma.aiMessage.create({
-    data: { sessionId, role: 'USER', content: transcribedText },
-  }).catch((err) => logger.error({ err }, 'Failed to save user message'));
+    data: { sessionId, role: 'USER', content: '[Voice message]' },
+  }).catch((err) => logger.error({ err }, 'Failed to save user voice message'));
 
-  // Build history
+  // Build history from previous messages (current message goes as audio)
   const history = session.messages.map((m) => ({
     role: m.role === 'USER' ? 'user' : 'assistant',
     content: m.content,
   }));
-  history.push({ role: 'user', content: transcribedText });
 
   // Personalise system prompt
   const basePrompt = promptMap[session.mode];
   const systemPrompt = _buildSystemPrompt(basePrompt, userContext);
 
-  // Stream the reply
-  const fullReply = await streamAiResponse(history, systemPrompt, onToken);
+  // Stream the reply — audio goes directly to GPT-4o, no transcription step
+  const fullReply = await streamAiResponseWithAudio(
+    history,
+    systemPrompt,
+    audioBase64,
+    audioFormat,
+    onToken,
+  );
 
   // Save AI response and classify mood in background
-  classifyMood(transcribedText, fullReply)
+  classifyMood('[Voice message]', fullReply)
     .then(async (meta) => {
       const mood = extractMood(meta.mood);
       await prisma.aiMessage.create({
@@ -322,7 +329,9 @@ export async function sendAudioStream(
       logger.error({ err }, 'Background mood classification failed');
       prisma.aiMessage.create({
         data: { sessionId, role: 'ASSISTANT', content: fullReply, mood: 'NEUTRAL' },
-      }).catch(() => {});
+      }).catch((dbErr) => {
+        logger.error({ dbErr, sessionId }, 'Failed to save AI message');
+      });
       onDone({ mood: 'NEUTRAL', should_handoff: false });
     });
 }
