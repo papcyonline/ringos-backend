@@ -276,10 +276,13 @@ router.post(
       }
 
       const data = (await response.json()) as any;
-      res.json({
-        token: data.client_secret?.value,
-        expiresAt: data.client_secret?.expires_at,
-      });
+      // GA returns { value, expires_at, session }; beta returns { client_secret: { value, expires_at } }
+      const token = data.value ?? data.client_secret?.value;
+      const expiresAt = data.expires_at ?? data.client_secret?.expires_at;
+      if (!token) {
+        return res.status(500).json({ error: 'No token in OpenAI response', raw: data });
+      }
+      res.json({ token, expiresAt });
     } catch (err) {
       next(err);
     }
