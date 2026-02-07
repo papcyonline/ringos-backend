@@ -2,7 +2,7 @@ import { env } from '../config/env';
 import { logger } from './logger';
 
 // Check if Metered is configured
-const isConfigured = !!(env.METERED_APP_ID && env.METERED_SECRET_KEY);
+const isConfigured = !!env.METERED_SECRET_KEY;
 
 const APP_ID = env.METERED_APP_ID || '';
 const SECRET_KEY = env.METERED_SECRET_KEY || '';
