@@ -4,6 +4,7 @@ import { appendFileSync } from 'fs';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { sendCallPush } from '../notification/notification.service';
+import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
 
 function debugLog(msg: string, data?: Record<string, unknown>) {
   const line = `[${new Date().toISOString()}] ${msg} ${data ? JSON.stringify(data) : ''}\n`;
@@ -70,6 +71,26 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
           debugLog('Cleaning stale userCallMap entry (no call found)', { userId, staleCallId });
           userCallMap.delete(userId);
         }
+      }
+
+      // Check daily call-minute limit for free users
+      const usageCheck = await checkCallMinutes(userId);
+      if (!usageCheck.allowed) {
+        socket.emit('call:error', {
+          message: 'Daily call limit reached',
+          code: 'CALL_LIMIT',
+          resetAt: usageCheck.resetAt,
+        });
+        return;
+      }
+
+      // Verify caller is a participant in the conversation
+      const participant = await prisma.conversationParticipant.findUnique({
+        where: { conversationId_userId: { conversationId, userId } },
+      });
+      if (!participant || participant.leftAt) {
+        socket.emit('call:error', { message: 'You are not a participant in this conversation' });
+        return;
       }
 
       const caller = await prisma.user.findUnique({
@@ -323,12 +344,14 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
       if (!call) return;
 
+      // Calculate duration
+      const now = new Date();
+      const durationSecs = call.answeredAt
+        ? Math.round((now.getTime() - call.answeredAt.getTime()) / 1000)
+        : undefined;
+
       // Update CallLog with endedAt and durationSecs
       try {
-        const now = new Date();
-        const durationSecs = call.answeredAt
-          ? Math.round((now.getTime() - call.answeredAt.getTime()) / 1000)
-          : undefined;
         await prisma.callLog.update({
           where: { callId },
           data: {
@@ -338,6 +361,15 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         });
       } catch (dbErr) {
         logger.error({ dbErr, callId }, 'Failed to update CallLog on end');
+      }
+
+      // Track call minutes for all participants
+      if (durationSecs !== undefined && durationSecs > 0) {
+        for (const pid of call.participantIds) {
+          addCallMinutes(pid, durationSecs).catch((err) => {
+            logger.error({ err, userId: pid, callId }, 'Failed to track call minutes');
+          });
+        }
       }
 
       // Notify all other participants
@@ -397,10 +429,21 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         logger.error({ dbErr, callId }, 'Failed to update CallLog on disconnect');
       });
 
+      // Track call minutes for all participants on disconnect
+      if (durationSecs !== undefined && durationSecs > 0) {
+        for (const pid of call.participantIds) {
+          addCallMinutes(pid, durationSecs).catch((err) => {
+            logger.error({ err, userId: pid, callId }, 'Failed to track call minutes on disconnect');
+          });
+        }
+      }
+
       // Make remaining sockets leave the call room
       io.in(`call:${callId}`).fetchSockets().then((sockets) => {
         for (const s of sockets) s.leave(`call:${callId}`);
-      }).catch(() => {});
+      }).catch((err) => {
+        logger.error({ err, callId }, 'Failed to clean up call room sockets');
+      });
 
       cleanupCall(callId);
     }

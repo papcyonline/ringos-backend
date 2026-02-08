@@ -8,6 +8,7 @@ import * as aiService from './ai.service';
 import { synthesizeSpeech } from './tts.service';
 import { promptMap } from './prompts';
 import { env } from '../../config/env';
+import { checkKoraSession, incrementKoraSession, checkKoraMessages, incrementKoraMessage } from '../../shared/usage.service';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -30,7 +31,21 @@ router.post(
   validate(startSessionSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      // Check daily session limit for free users
+      const sessionCheck = await checkKoraSession(req.user!.userId);
+      if (!sessionCheck.allowed) {
+        return res.status(403).json({
+          message: 'Daily Kora session limit reached',
+          code: 'KORA_SESSION_LIMIT',
+          resetAt: sessionCheck.resetAt,
+        });
+      }
+
       const session = await aiService.startSession(req.user!.userId, req.body.mode);
+
+      // Increment session count on success
+      await incrementKoraSession(req.user!.userId);
+
       res.status(201).json(session);
     } catch (err) {
       next(err);
@@ -63,6 +78,20 @@ router.post(
   authenticate,
   validate(sendMessageSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
+    // Check per-session message limit before opening SSE
+    const msgCheck = await checkKoraMessages(req.user!.userId, req.params.sessionId);
+    if (!msgCheck.allowed) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.write(`data: ${JSON.stringify({ type: 'error', message: 'Message limit reached for this session', code: 'KORA_MESSAGE_LIMIT' })}\n\n`);
+      res.end();
+      return;
+    }
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -71,6 +100,9 @@ router.post(
     });
 
     try {
+      // Increment message count
+      await incrementKoraMessage(req.user!.userId, req.params.sessionId);
+
       await aiService.sendMessageStream(
         req.params.sessionId,
         req.user!.userId,
@@ -225,6 +257,11 @@ router.post(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      // Voice mode runs within an already-started session (POST /sessions
+      // already checked + incremented the daily counter). No session-limit
+      // check needed here — blocking would prevent voice on the user's
+      // last allowed session because the counter was already bumped.
+
       const { mode = 'CALM_LISTENER' } = req.body;
       const prompt =
         promptMap[mode as keyof typeof promptMap] ?? promptMap.CALM_LISTENER;

@@ -2,6 +2,7 @@ import { Router, Response, NextFunction } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { AuthRequest } from '../../shared/types';
+import { logger } from '../../shared/logger';
 import { avatarUpload, fileToAvatarUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
 import { updatePreferenceSchema, updateAvailabilitySchema, updatePrivacySchema, updateProfileSchema } from './user.schema';
@@ -9,6 +10,7 @@ import * as userService from './user.service';
 import * as followService from './follow.service';
 import * as likeService from './like.service';
 import { createNotification } from '../notification/notification.service';
+import { getUsageSummary } from '../../shared/usage.service';
 
 const router = Router();
 
@@ -27,6 +29,16 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response, next: Ne
   try {
     const profile = await userService.getProfile(req.user!.userId);
     res.json(profile);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /me/usage - Get daily usage limits and current consumption
+router.get('/me/usage', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const usage = await getUsageSummary(req.user!.userId);
+    res.json(usage);
   } catch (err) {
     next(err);
   }
@@ -203,7 +215,9 @@ router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response,
       body: 'Started following you',
       imageUrl: follower.avatarUrl ?? undefined,
       data: { userId: req.user!.userId },
-    }).catch(() => {}); // fire-and-forget
+    }).catch((err) => {
+      logger.error({ err, userId: req.params.id }, 'Failed to send follow notification');
+    });
 
     res.status(201).json(result);
   } catch (err) {
@@ -235,7 +249,9 @@ router.post('/:id/like', authenticate, async (req: AuthRequest, res: Response, n
       body: 'Liked your profile',
       imageUrl: liker.avatarUrl ?? undefined,
       data: { userId: req.user!.userId },
-    }).catch(() => {}); // fire-and-forget
+    }).catch((err) => {
+      logger.error({ err, userId: req.params.id }, 'Failed to send like notification');
+    });
 
     res.status(201).json(result);
   } catch (err) {
