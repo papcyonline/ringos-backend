@@ -4,9 +4,11 @@ import * as redis from './redis.service';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const FREE_CALL_MINS = 5;
-const FREE_KORA_SESSIONS = 2;
-const FREE_KORA_MESSAGES = 3;
+// Set high to effectively disable limits until we have enough users.
+// Lower these when ready to gate free tier (e.g. 5, 2, 3).
+const FREE_CALL_MINS = 9999;
+const FREE_KORA_SESSIONS = 9999;
+const FREE_KORA_MESSAGES = 9999;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
