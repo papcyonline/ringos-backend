@@ -219,7 +219,7 @@ router.get(
   },
 );
 
-// POST /realtime/token - Get ephemeral token for OpenAI Realtime WebRTC API
+// POST /realtime/token - Get ephemeral token for Gemini Live API
 router.post(
   '/realtime/token',
   authenticate,
@@ -233,56 +233,36 @@ router.post(
         'Respond naturally in a warm, conversational tone. Keep responses short — 1 to 3 sentences max, like a real voice conversation. Do not use JSON formatting.',
       );
 
-      const response = await fetch(
-        'https://api.openai.com/v1/realtime/client_secrets',
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-            'Content-Type': 'application/json',
+      // Personalise with user context
+      const userContext = await aiService.getUserContext(req.user!.userId);
+      const systemInstruction = userContext
+        ? `${voicePrompt}\n\n${userContext}\n\nUse this information naturally in conversation when relevant — don't force it into every message, but use it the way a friend would.`
+        : voicePrompt;
+
+      // Create ephemeral Gemini token
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+      const tokenResult = await ai.authTokens.create({
+        config: {
+          uses: 1,
+          liveConnectConstraints: {
+            model: 'gemini-2.0-flash-live-001',
           },
-          body: JSON.stringify({
-            session: {
-              type: 'realtime',
-              model: 'gpt-4o-realtime-preview-2025-06-03',
-              instructions: voicePrompt,
-              audio: {
-                input: {
-                  noise_reduction: { type: 'near_field' },
-                  transcription: { model: 'whisper-1' },
-                  turn_detection: {
-                    type: 'server_vad',
-                    threshold: 0.5,
-                    prefix_padding_ms: 300,
-                    silence_duration_ms: 200,
-                    create_response: true,
-                    interrupt_response: true,
-                  },
-                },
-                output: {
-                  voice: 'shimmer',
-                },
-              },
-            },
-          }),
         },
-      );
+      });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        return res
-          .status(response.status)
-          .json({ error: `OpenAI session creation failed: ${errorText}` });
-      }
-
-      const data = (await response.json()) as any;
-      // GA returns { value, expires_at, session }; beta returns { client_secret: { value, expires_at } }
-      const token = data.value ?? data.client_secret?.value;
-      const expiresAt = data.expires_at ?? data.client_secret?.expires_at;
+      const token = (tokenResult as any).token ?? (tokenResult as any).value ?? (tokenResult as any).name;
+      const expiresAt = (tokenResult as any).expiresAt ?? (tokenResult as any).expires_at;
       if (!token) {
-        return res.status(500).json({ error: 'No token in OpenAI response', raw: data });
+        return res.status(500).json({ error: 'No token in Gemini response', raw: tokenResult });
       }
-      res.json({ token, expiresAt });
+
+      res.json({
+        token,
+        expiresAt,
+        systemInstruction,
+        voice: 'Kore',
+      });
     } catch (err) {
       next(err);
     }

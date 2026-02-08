@@ -11,7 +11,7 @@ import { logger } from '../../shared/logger';
  * Fetch full user context for injecting into Kora's system prompt.
  * Single query with includes + counts to keep latency low.
  */
-async function _getUserContext(userId: string): Promise<string> {
+export async function getUserContext(userId: string): Promise<string> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -133,7 +133,7 @@ export async function sendMessage(
   history.push({ role: 'user', content });
 
   // Get the system prompt for this mode and personalise with user context
-  const userContext = await _getUserContext(userId);
+  const userContext = await getUserContext(userId);
   const basePrompt = promptMap[session.mode];
   const systemPrompt = _buildSystemPrompt(basePrompt, userContext);
 
@@ -182,7 +182,7 @@ export async function sendMessageStream(
         },
       },
     }),
-    _getUserContext(userId),
+    getUserContext(userId),
   ]);
 
   if (!session) throw new NotFoundError('AI session not found');
@@ -274,7 +274,7 @@ export async function sendAudioStream(
         },
       },
     }),
-    _getUserContext(userId),
+    getUserContext(userId),
   ]);
 
   if (!session) throw new NotFoundError('AI session not found');

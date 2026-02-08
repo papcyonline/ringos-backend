@@ -11,11 +11,14 @@ const envSchema = z.object({
   // JWT
   JWT_SECRET: z.string(),
   JWT_REFRESH_SECRET: z.string(),
-  JWT_EXPIRES_IN: z.string().default('7d'),
-  JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
+  JWT_EXPIRES_IN: z.string().default('180d'),
+  JWT_REFRESH_EXPIRES_IN: z.string().default('365d'),
 
   // OpenAI
   OPENAI_API_KEY: z.string(),
+
+  // Google Gemini (Live Voice API)
+  GEMINI_API_KEY: z.string(),
 
   // Google OAuth
   GOOGLE_CLIENT_ID_WEB: z.string().optional(),
