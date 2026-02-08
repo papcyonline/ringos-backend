@@ -248,10 +248,11 @@ router.post(
           liveConnectConstraints: {
             model: 'gemini-2.0-flash-live-001',
           },
+          httpOptions: { apiVersion: 'v1alpha' },
         },
       });
 
-      const token = (tokenResult as any).token ?? (tokenResult as any).value ?? (tokenResult as any).name;
+      const token = (tokenResult as any).name;
       const expiresAt = (tokenResult as any).expiresAt ?? (tokenResult as any).expires_at;
       if (!token) {
         return res.status(500).json({ error: 'No token in Gemini response', raw: tokenResult });
