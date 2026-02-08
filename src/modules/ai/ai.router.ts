@@ -239,28 +239,11 @@ router.post(
         ? `${voicePrompt}\n\n${userContext}\n\nUse this information naturally in conversation when relevant — don't force it into every message, but use it the way a friend would.`
         : voicePrompt;
 
-      // Create ephemeral Gemini token
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
-      const tokenResult = await ai.authTokens.create({
-        config: {
-          uses: 1,
-          liveConnectConstraints: {
-            model: 'gemini-2.0-flash-live-001',
-          },
-          httpOptions: { apiVersion: 'v1alpha' },
-        },
-      });
-
-      const token = (tokenResult as any).name;
-      const expiresAt = (tokenResult as any).expiresAt ?? (tokenResult as any).expires_at;
-      if (!token) {
-        return res.status(500).json({ error: 'No token in Gemini response', raw: tokenResult });
-      }
-
+      // Pass API key directly — the client connects to Google's WS from the
+      // device, but the key is only transmitted over the authenticated
+      // backend→client channel, never embedded in the app binary.
       res.json({
-        token,
-        expiresAt,
+        token: env.GEMINI_API_KEY,
         systemInstruction,
         voice: 'Kore',
       });
