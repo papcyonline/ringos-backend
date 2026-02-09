@@ -61,7 +61,7 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const result = await aiService.sendMessage(
-        req.params.sessionId,
+        (req.params.sessionId as string),
         req.user!.userId,
         req.body.content,
       );
@@ -79,7 +79,7 @@ router.post(
   validate(sendMessageSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     // Check per-session message limit before opening SSE
-    const msgCheck = await checkKoraMessages(req.user!.userId, req.params.sessionId);
+    const msgCheck = await checkKoraMessages(req.user!.userId, (req.params.sessionId as string));
     if (!msgCheck.allowed) {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -101,10 +101,10 @@ router.post(
 
     try {
       // Increment message count
-      await incrementKoraMessage(req.user!.userId, req.params.sessionId);
+      await incrementKoraMessage(req.user!.userId, (req.params.sessionId as string));
 
       await aiService.sendMessageStream(
-        req.params.sessionId,
+        (req.params.sessionId as string),
         req.user!.userId,
         req.body.content,
         (token) => {
@@ -146,7 +146,7 @@ router.post(
       }
 
       await aiService.sendAudioStream(
-        req.params.sessionId,
+        (req.params.sessionId as string),
         req.user!.userId,
         req.file.buffer,
         req.file.mimetype,
@@ -180,7 +180,7 @@ router.post(
       }
 
       const result = await aiService.sendAudio(
-        req.params.sessionId,
+        (req.params.sessionId as string),
         req.user!.userId,
         req.file.buffer,
         req.file.mimetype,
@@ -221,7 +221,7 @@ router.post(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      await aiService.endSession(req.params.sessionId, req.user!.userId);
+      await aiService.endSession((req.params.sessionId as string), req.user!.userId);
       res.status(204).send();
     } catch (err) {
       next(err);
@@ -235,7 +235,7 @@ router.get(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const session = await aiService.getSession(req.params.sessionId, req.user!.userId);
+      const session = await aiService.getSession((req.params.sessionId as string), req.user!.userId);
       res.json(session);
     } catch (err) {
       next(err);

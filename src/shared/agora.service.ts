@@ -1,4 +1,4 @@
-import { RtcTokenBuilder, RtcRole, RtmTokenBuilder, RtmRole } from 'agora-token';
+import { RtcTokenBuilder, RtcRole, RtmTokenBuilder } from 'agora-token';
 import { env } from '../config/env';
 import { logger } from './logger';
 
@@ -82,11 +82,10 @@ export function generateRtmToken(options: RtmTokenOptions): string | null {
   const expirationTime = Math.floor(Date.now() / 1000) + (options.expirationSeconds || RTM_TOKEN_EXPIRATION);
 
   try {
-    const token = RtmTokenBuilder.buildToken(
+    const token = (RtmTokenBuilder as any).buildToken(
       APP_ID,
       APP_CERTIFICATE,
       options.userId,
-      RtmRole.Rtm_User,
       expirationTime
     );
 

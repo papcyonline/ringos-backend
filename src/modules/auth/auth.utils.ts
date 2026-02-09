@@ -3,11 +3,11 @@ import { env } from '../../config/env';
 import { AuthPayload } from '../../shared/types';
 
 export function generateAccessToken(payload: { userId: string; isAnonymous: boolean }): string {
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN });
+  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN } as any);
 }
 
 export function generateRefreshToken(payload: { userId: string }): string {
-  return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: env.JWT_REFRESH_EXPIRES_IN });
+  return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: env.JWT_REFRESH_EXPIRES_IN } as any);
 }
 
 export function verifyAccessToken(token: string): AuthPayload {

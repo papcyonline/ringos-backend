@@ -38,7 +38,7 @@ router.patch('/:id/read', authenticate, async (req: AuthRequest, res: Response, 
 // POST /read-conversation/:conversationId - Mark all chat notifications for a conversation as read
 router.post('/read-conversation/:conversationId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await notificationService.markConversationNotificationsAsRead(req.user!.userId, req.params.conversationId);
+    await notificationService.markConversationNotificationsAsRead(req.user!.userId, (req.params.conversationId as string));
     res.json({ success: true });
   } catch (err) {
     next(err);

@@ -142,12 +142,12 @@ export function startTransaction(name: string, op: string): Sentry.Span | undefi
 /**
  * Express error handler middleware for Sentry
  */
-export const sentryErrorHandler = Sentry.Handlers?.errorHandler?.() || ((err: any, _req: any, _res: any, next: any) => next(err));
+export const sentryErrorHandler = (Sentry as any).Handlers?.errorHandler?.() || ((err: any, _req: any, _res: any, next: any) => next(err));
 
 /**
  * Express request handler middleware for Sentry
  */
-export const sentryRequestHandler = Sentry.Handlers?.requestHandler?.() || ((_req: any, _res: any, next: any) => next());
+export const sentryRequestHandler = (Sentry as any).Handlers?.requestHandler?.() || ((_req: any, _res: any, next: any) => next());
 
 /**
  * Flush Sentry events (useful before process exit)

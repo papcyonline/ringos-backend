@@ -261,7 +261,7 @@ export async function getOrSet<T>(
   }
 
   const value = await factory();
-  await set(key, value, ttlSeconds);
+  await set(key, value as any, ttlSeconds);
   return value;
 }
 

@@ -53,7 +53,7 @@ router.delete(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const cancelled = await matchingService.cancelMatchRequest(
-        req.params.requestId,
+        (req.params.requestId as string),
         req.user!.userId,
       );
       res.json(cancelled);

@@ -3,6 +3,7 @@ import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { moderateMessage } from '../../middleware/moderation';
 import { AuthRequest } from '../../shared/types';
+import { logger } from '../../shared/logger';
 import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema } from './chat.schema';
@@ -27,6 +28,20 @@ router.get(
   },
 );
 
+// GET /conversations/groups/public - List all active groups (publicly discoverable)
+router.get(
+  '/conversations/groups/public',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const groups = await chatService.getAllGroups(req.user!.userId);
+      res.json(groups);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // GET /conversations/:conversationId - Get a single conversation
 router.get(
   '/conversations/:conversationId',
@@ -34,7 +49,7 @@ router.get(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const conversation = await chatService.getConversation(
-        req.params.conversationId,
+        (req.params.conversationId as string) as string,
         req.user!.userId,
       );
       res.json(conversation);
@@ -54,7 +69,7 @@ router.get(
       const limit = parseInt(req.query.limit as string, 10) || 50;
 
       const messages = await chatService.getMessages(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
         page,
         limit,
@@ -75,7 +90,7 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const message = await chatService.sendMessage(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
         req.body.content,
         { replyToId: req.body.replyToId },
@@ -83,20 +98,24 @@ router.post(
 
       // Broadcast to room so other participants see it in real-time
       const io = getIO();
-      const msgPayload = formatMessagePayload(message, req.params.conversationId);
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', msgPayload);
+      const msgPayload = formatMessagePayload(message, (req.params.conversationId as string));
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:message', msgPayload);
 
       // Also notify each participant's personal room for conversation-list updates
-      emitToParticipantRooms(io, req.params.conversationId, msgPayload).catch(() => {});
+      emitToParticipantRooms(io, (req.params.conversationId as string), msgPayload).catch((err) => {
+        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to emit to participant rooms');
+      });
 
       // Notify other participants (in-app + push)
       notifyChatMessage(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
         message.sender.displayName,
         message.content,
         { imageUrl: message.imageUrl ?? undefined, audioUrl: message.audioUrl ?? undefined },
-      ).catch(() => {}); // fire-and-forget
+      ).catch((err) => {
+        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send chat notification');
+      });
 
       res.status(201).json(message);
     } catch (err) {
@@ -114,14 +133,14 @@ router.put(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const message = await chatService.editMessage(
-        req.params.messageId,
+        (req.params.messageId as string),
         req.user!.userId,
         req.body.content,
       );
 
       // Broadcast edit to room
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:edited', {
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:edited', {
         messageId: message.id,
         content: message.content,
         editedAt: message.editedAt,
@@ -141,13 +160,13 @@ router.delete(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const message = await chatService.deleteMessage(
-        req.params.messageId,
+        (req.params.messageId as string),
         req.user!.userId,
       );
 
       // Broadcast deletion to room
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:deleted', {
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:deleted', {
         messageId: message.id,
         deletedAt: message.deletedAt,
       });
@@ -167,7 +186,7 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const result = await chatService.toggleReaction(
-        req.params.messageId,
+        (req.params.messageId as string),
         req.user!.userId,
         req.body.emoji,
       );
@@ -188,13 +207,13 @@ router.post(
       if (!req.file) {
         return res.status(400).json({ error: 'No image uploaded' });
       }
-      const imageUrl = await fileToChatImageUrl(req.file, req.params.conversationId);
+      const imageUrl = await fileToChatImageUrl(req.file, (req.params.conversationId as string));
       const caption = (req.body.caption as string) || '';
       const replyToId = req.body.replyToId as string | undefined;
       const viewOnce = req.body.viewOnce === 'true';
 
       const message = await chatService.sendMessage(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
         caption,
         { replyToId, imageUrl, viewOnce },
@@ -202,20 +221,24 @@ router.post(
 
       // Broadcast to room so other participants see it
       const io = getIO();
-      const imgPayload = formatMessagePayload(message, req.params.conversationId);
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', imgPayload);
+      const imgPayload = formatMessagePayload(message, (req.params.conversationId as string));
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:message', imgPayload);
 
       // Also notify each participant's personal room for conversation-list updates
-      emitToParticipantRooms(io, req.params.conversationId, imgPayload).catch(() => {});
+      emitToParticipantRooms(io, (req.params.conversationId as string), imgPayload).catch((err) => {
+        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to emit to participant rooms');
+      });
 
       // Notify other participants (in-app + push)
       notifyChatMessage(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
         message.sender.displayName,
         message.content,
         { imageUrl: message.imageUrl ?? undefined },
-      ).catch(() => {});
+      ).catch((err) => {
+        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send image notification');
+      });
 
       res.status(201).json(message);
     } catch (err) {
@@ -234,12 +257,12 @@ router.post(
       if (!req.file) {
         return res.status(400).json({ error: 'No audio file uploaded' });
       }
-      const audioUrl = await fileToChatAudioUrl(req.file, req.params.conversationId);
+      const audioUrl = await fileToChatAudioUrl(req.file, (req.params.conversationId as string));
       const duration = parseInt(req.body.duration as string, 10) || 0;
       const replyToId = req.body.replyToId as string | undefined;
 
       const message = await chatService.sendMessage(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
         '',
         { replyToId, audioUrl, audioDuration: duration },
@@ -247,20 +270,24 @@ router.post(
 
       // Broadcast to room so other participants see it
       const io = getIO();
-      const audioPayload = formatMessagePayload(message, req.params.conversationId);
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:message', audioPayload);
+      const audioPayload = formatMessagePayload(message, (req.params.conversationId as string));
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:message', audioPayload);
 
       // Also notify each participant's personal room for conversation-list updates
-      emitToParticipantRooms(io, req.params.conversationId, audioPayload).catch(() => {});
+      emitToParticipantRooms(io, (req.params.conversationId as string), audioPayload).catch((err) => {
+        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to emit to participant rooms');
+      });
 
       // Notify other participants (in-app + push)
       notifyChatMessage(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
         message.sender.displayName,
         message.content,
         { audioUrl: message.audioUrl ?? undefined },
-      ).catch(() => {});
+      ).catch((err) => {
+        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send audio notification');
+      });
 
       res.status(201).json(message);
     } catch (err) {
@@ -276,13 +303,13 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const result = await chatService.openViewOnce(
-        req.params.messageId,
+        (req.params.messageId as string),
         req.user!.userId,
       );
 
       // Notify the room that view-once was opened
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:viewOnceOpened', {
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:viewOnceOpened', {
         messageId: result.messageId,
       });
 
@@ -300,13 +327,13 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const conversation = await groupService.joinGroup(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
       );
 
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('group:members-changed', {
-        conversationId: req.params.conversationId,
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:members-changed', {
+        conversationId: (req.params.conversationId as string),
       });
 
       res.json(conversation);
@@ -380,14 +407,14 @@ router.put(
       const { name, description } = req.body;
       const avatarUrl = req.file ? await fileToAvatarUrl(req.file, req.user!.userId) : req.body.avatarUrl;
       const conversation = await groupService.updateGroup(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
         { name, avatarUrl, description },
       );
 
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('group:updated', {
-        conversationId: req.params.conversationId,
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:updated', {
+        conversationId: (req.params.conversationId as string),
       });
 
       res.json(conversation);
@@ -404,7 +431,7 @@ router.put(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const result = await groupService.toggleGroupVerified(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
       );
       res.json(result);
@@ -421,13 +448,13 @@ router.delete(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const result = await groupService.deleteGroup(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
       );
 
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('group:deleted', {
-        conversationId: req.params.conversationId,
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:deleted', {
+        conversationId: (req.params.conversationId as string),
       });
 
       res.json(result);
@@ -448,15 +475,15 @@ router.post(
         return res.status(400).json({ error: 'memberIds array is required' });
       }
       const conversation = await groupService.addMembers(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
         memberIds,
       );
 
       // Emit socket event for member changes
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('group:members-changed', {
-        conversationId: req.params.conversationId,
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:members-changed', {
+        conversationId: (req.params.conversationId as string),
       });
 
       res.json(conversation);
@@ -473,17 +500,17 @@ router.delete(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const result = await groupService.removeMember(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
-        req.params.userId,
+        (req.params.userId as string),
       );
 
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('group:members-changed', {
-        conversationId: req.params.conversationId,
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:members-changed', {
+        conversationId: (req.params.conversationId as string),
       });
-      io.to(`user:${req.params.userId}`).emit('group:removed', {
-        conversationId: req.params.conversationId,
+      io.to(`user:${(req.params.userId as string)}`).emit('group:removed', {
+        conversationId: (req.params.conversationId as string),
       });
 
       res.json(result);
@@ -500,14 +527,14 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       await chatService.markConversationAsRead(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
       );
 
       // Broadcast read receipt so the sender sees blue ticks
       const io = getIO();
-      io.to(`conversation:${req.params.conversationId}`).emit('chat:read', {
-        conversationId: req.params.conversationId,
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:read', {
+        conversationId: (req.params.conversationId as string),
         userId: req.user!.userId,
       });
 
@@ -526,7 +553,7 @@ router.post(
     try {
       const conversation = await chatService.getOrCreateDirectConversation(
         req.user!.userId,
-        req.params.userId,
+        (req.params.userId as string),
       );
       res.json(conversation);
     } catch (err) {
@@ -542,7 +569,7 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const conversation = await chatService.endConversation(
-        req.params.conversationId,
+        (req.params.conversationId as string),
         req.user!.userId,
       );
       res.json(conversation);

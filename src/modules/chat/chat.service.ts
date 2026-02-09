@@ -146,9 +146,9 @@ export async function getConversations(userId: string) {
         const isRead = otherParticipants.some(
           (p) => p.lastReadAt && p.lastReadAt >= rawLast.createdAt,
         );
-        lastMessage = { ...rawLast, status: isRead ? 'read' : 'delivered' };
+        lastMessage = { ...rawLast, status: isRead ? 'read' : 'delivered' } as any;
       } else if (rawLast) {
-        lastMessage = { ...rawLast, status: 'sent' };
+        lastMessage = { ...rawLast, status: 'sent' } as any;
       }
 
       return {
@@ -455,6 +455,42 @@ export async function endConversation(conversationId: string, userId: string) {
 
   logger.info({ conversationId, userId }, 'Conversation ended');
   return updatedConversation;
+}
+
+/**
+ * List all active GROUP conversations, visible to any authenticated user.
+ * Includes participant count and whether the requesting user is a member.
+ */
+export async function getAllGroups(userId: string) {
+  const groups = await prisma.conversation.findMany({
+    where: {
+      type: 'GROUP',
+      status: 'ACTIVE',
+    },
+    include: {
+      participants: {
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
+          },
+        },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  const results = groups.map((g) => {
+    const activeParticipants = g.participants.filter((p) => p.leftAt == null);
+    const isMember = activeParticipants.some((p) => p.userId === userId);
+    return {
+      ...g,
+      memberCount: activeParticipants.length,
+      isMember,
+    };
+  });
+
+  logger.debug({ userId, count: results.length }, 'Listed all public groups');
+  return results;
 }
 
 /**

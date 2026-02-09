@@ -7,7 +7,7 @@ import { prisma } from '../config/database';
 const isConfigured = !!env.STRIPE_SECRET_KEY;
 
 const stripe = isConfigured
-  ? new Stripe(env.STRIPE_SECRET_KEY!, { apiVersion: '2024-06-20' })
+  ? new Stripe(env.STRIPE_SECRET_KEY!, { apiVersion: '2024-06-20' as any })
   : null;
 
 if (isConfigured) {

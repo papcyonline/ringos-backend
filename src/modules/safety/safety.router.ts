@@ -57,7 +57,7 @@ router.delete(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = req.user!.userId;
-      const { blockedId } = req.params;
+      const blockedId = req.params.blockedId as string;
       const result = await safetyService.unblockUser(userId, blockedId);
       res.status(200).json(result);
     } catch (err) {

@@ -194,7 +194,7 @@ router.delete('/me', authenticate, async (req: AuthRequest, res: Response, next:
 // GET /:id - Get a user's public profile
 router.get('/:id', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const user = await userService.getUserById(req.params.id, req.user!.userId);
+    const user = await userService.getUserById((req.params.id as string), req.user!.userId);
     res.json(user);
   } catch (err) {
     next(err);
@@ -204,19 +204,19 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response, next: N
 // POST /:id/follow - Follow a user
 router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const result = await followService.followUser(req.user!.userId, req.params.id);
+    const result = await followService.followUser(req.user!.userId, (req.params.id as string));
 
     // Send notification to the followed user
     const follower = await userService.getProfile(req.user!.userId);
     createNotification({
-      userId: req.params.id,
+      userId: (req.params.id as string),
       type: 'new_follower',
       title: follower.displayName,
       body: 'Started following you',
       imageUrl: follower.avatarUrl ?? undefined,
       data: { userId: req.user!.userId },
     }).catch((err) => {
-      logger.error({ err, userId: req.params.id }, 'Failed to send follow notification');
+      logger.error({ err, userId: (req.params.id as string) }, 'Failed to send follow notification');
     });
 
     res.status(201).json(result);
@@ -228,7 +228,7 @@ router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response,
 // DELETE /:id/follow - Unfollow a user
 router.delete('/:id/follow', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await followService.unfollowUser(req.user!.userId, req.params.id);
+    await followService.unfollowUser(req.user!.userId, (req.params.id as string));
     res.status(204).send();
   } catch (err) {
     next(err);
@@ -238,19 +238,19 @@ router.delete('/:id/follow', authenticate, async (req: AuthRequest, res: Respons
 // POST /:id/like - Like a user's profile
 router.post('/:id/like', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const result = await likeService.likeUser(req.user!.userId, req.params.id);
+    const result = await likeService.likeUser(req.user!.userId, (req.params.id as string));
 
     // Send notification to the liked user
     const liker = await userService.getProfile(req.user!.userId);
     createNotification({
-      userId: req.params.id,
+      userId: (req.params.id as string),
       type: 'profile_liked',
       title: liker.displayName,
       body: 'Liked your profile',
       imageUrl: liker.avatarUrl ?? undefined,
       data: { userId: req.user!.userId },
     }).catch((err) => {
-      logger.error({ err, userId: req.params.id }, 'Failed to send like notification');
+      logger.error({ err, userId: (req.params.id as string) }, 'Failed to send like notification');
     });
 
     res.status(201).json(result);
@@ -262,7 +262,7 @@ router.post('/:id/like', authenticate, async (req: AuthRequest, res: Response, n
 // DELETE /:id/like - Unlike a user's profile
 router.delete('/:id/like', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await likeService.unlikeUser(req.user!.userId, req.params.id);
+    await likeService.unlikeUser(req.user!.userId, (req.params.id as string));
     res.status(204).send();
   } catch (err) {
     next(err);
@@ -272,7 +272,7 @@ router.delete('/:id/like', authenticate, async (req: AuthRequest, res: Response,
 // GET /:id/followers - List followers of a user
 router.get('/:id/followers', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const followers = await followService.getFollowers(req.params.id);
+    const followers = await followService.getFollowers((req.params.id as string));
     res.json(followers);
   } catch (err) {
     next(err);
@@ -282,7 +282,7 @@ router.get('/:id/followers', authenticate, async (req: AuthRequest, res: Respons
 // GET /:id/following - List who a user follows
 router.get('/:id/following', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const following = await followService.getFollowing(req.params.id);
+    const following = await followService.getFollowing((req.params.id as string));
     res.json(following);
   } catch (err) {
     next(err);
