@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { env } from '../../config/env';
+import { koraToolSchemas, executeTool, ToolResult } from './tools/kora-tools';
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
@@ -13,6 +14,11 @@ interface LlmResponse {
   mood: string;
   shouldSuggestHandoff: boolean;
   handoffReason?: string;
+}
+
+interface StreamToolOptions {
+  userId?: string;
+  onAction?: (action: ToolResult['action']) => void;
 }
 
 export async function generateAiResponse(
@@ -59,11 +65,16 @@ export async function generateAiResponse(
  * Stream an AI response token-by-token.
  * Uses a plain-text system prompt (no JSON format) for true streaming.
  * Calls `onToken` for each chunk and returns the full reply when done.
+ *
+ * When `toolOpts.userId` is provided, tools are included in the first call.
+ * If the model invokes a tool, it is executed and a second (tool-free) stream
+ * delivers the final conversational reply.
  */
 export async function streamAiResponse(
   messages: LlmMessage[],
   systemPrompt: string,
   onToken: (token: string) => void,
+  toolOpts: StreamToolOptions = {},
 ): Promise<string> {
   // Strip JSON format instructions from the system prompt for streaming.
   // We'll classify mood separately after.
@@ -82,16 +93,101 @@ export async function streamAiResponse(
     })),
   ];
 
+  const includeTools = !!toolOpts.userId;
+
+  // ── First streaming call (may include tools) ──
   const stream = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: formattedMessages,
     temperature: 0.8,
     max_tokens: 300,
     stream: true,
+    ...(includeTools ? { tools: koraToolSchemas, tool_choice: 'auto' as const } : {}),
   });
 
   let fullReply = '';
+  // Accumulate tool_calls deltas
+  const toolCallMap: Record<number, { id: string; name: string; args: string }> = {};
+
   for await (const chunk of stream) {
+    const choice = chunk.choices[0];
+    if (!choice) continue;
+
+    // Content tokens
+    const delta = choice.delta?.content;
+    if (delta) {
+      fullReply += delta;
+      onToken(delta);
+    }
+
+    // Tool call deltas
+    const toolCalls = (choice.delta as any)?.tool_calls as
+      | Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
+      | undefined;
+    if (toolCalls) {
+      for (const tc of toolCalls) {
+        if (!toolCallMap[tc.index]) {
+          toolCallMap[tc.index] = { id: tc.id ?? '', name: '', args: '' };
+        }
+        if (tc.id) toolCallMap[tc.index].id = tc.id;
+        if (tc.function?.name) toolCallMap[tc.index].name += tc.function.name;
+        if (tc.function?.arguments) toolCallMap[tc.index].args += tc.function.arguments;
+      }
+    }
+  }
+
+  // ── If no tool calls, we're done ──
+  const pendingCalls = Object.values(toolCallMap);
+  if (pendingCalls.length === 0 || !toolOpts.userId) {
+    return fullReply;
+  }
+
+  // ── Execute tool(s) and do a second stream ──
+  const assistantToolCallMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
+    role: 'assistant',
+    content: null,
+    tool_calls: pendingCalls.map((tc) => ({
+      id: tc.id,
+      type: 'function' as const,
+      function: { name: tc.name, arguments: tc.args },
+    })),
+  };
+
+  const toolResultMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+
+  for (const tc of pendingCalls) {
+    let parsedArgs: Record<string, unknown> = {};
+    try { parsedArgs = JSON.parse(tc.args || '{}'); } catch { /* empty args */ }
+
+    const result = await executeTool(tc.name, parsedArgs, toolOpts.userId!);
+
+    toolResultMessages.push({
+      role: 'tool',
+      tool_call_id: tc.id,
+      content: result.llmContext,
+    } as any);
+
+    // Emit action to frontend
+    toolOpts.onAction?.(result.action);
+  }
+
+  // Second call — NO tools (prevents recursion)
+  const secondMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    ...formattedMessages,
+    assistantToolCallMsg,
+    ...toolResultMessages,
+  ];
+
+  const secondStream = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: secondMessages,
+    temperature: 0.8,
+    max_tokens: 300,
+    stream: true,
+  });
+
+  fullReply = '';
+  for await (const chunk of secondStream) {
     const delta = chunk.choices[0]?.delta?.content;
     if (delta) {
       fullReply += delta;
@@ -106,6 +202,8 @@ export async function streamAiResponse(
  * Stream an AI response from audio input — sends raw audio directly to GPT-4o
  * (bypassing Whisper STT) for voice-to-voice conversations with minimal latency.
  * The model hears the user's voice and generates a text reply, streamed via `onToken`.
+ *
+ * Supports tool calling when `toolOpts.userId` is provided (same pattern as text).
  */
 export async function streamAiResponseWithAudio(
   history: LlmMessage[],
@@ -113,6 +211,7 @@ export async function streamAiResponseWithAudio(
   audioBase64: string,
   audioFormat: string,
   onToken: (token: string) => void,
+  toolOpts: StreamToolOptions = {},
 ): Promise<string> {
   const streamPrompt = systemPrompt.replace(
     /RESPONSE FORMAT:[\s\S]*$/,
@@ -141,6 +240,8 @@ export async function streamAiResponseWithAudio(
     },
   ];
 
+  const includeTools = !!toolOpts.userId;
+
   const stream = await openai.chat.completions.create({
     model: 'gpt-4o-audio-preview',
     modalities: ['text'],
@@ -148,11 +249,88 @@ export async function streamAiResponseWithAudio(
     temperature: 0.8,
     max_tokens: 300,
     stream: true,
+    ...(includeTools ? { tools: koraToolSchemas, tool_choice: 'auto' as const } : {}),
   } as Parameters<typeof openai.chat.completions.create>[0]);
 
   let fullReply = '';
+  const toolCallMap: Record<number, { id: string; name: string; args: string }> = {};
+
   for await (const chunk of stream as any) {
-    const delta = (chunk as any).choices[0]?.delta?.content;
+    const choice = (chunk as any).choices[0];
+    if (!choice) continue;
+
+    const delta = choice.delta?.content;
+    if (delta) {
+      fullReply += delta;
+      onToken(delta);
+    }
+
+    const toolCalls = choice.delta?.tool_calls as
+      | Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
+      | undefined;
+    if (toolCalls) {
+      for (const tc of toolCalls) {
+        if (!toolCallMap[tc.index]) {
+          toolCallMap[tc.index] = { id: tc.id ?? '', name: '', args: '' };
+        }
+        if (tc.id) toolCallMap[tc.index].id = tc.id;
+        if (tc.function?.name) toolCallMap[tc.index].name += tc.function.name;
+        if (tc.function?.arguments) toolCallMap[tc.index].args += tc.function.arguments;
+      }
+    }
+  }
+
+  const pendingCalls = Object.values(toolCallMap);
+  if (pendingCalls.length === 0 || !toolOpts.userId) {
+    return fullReply;
+  }
+
+  // ── Execute tool(s) and do a second stream ──
+  const assistantToolCallMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
+    role: 'assistant',
+    content: null,
+    tool_calls: pendingCalls.map((tc) => ({
+      id: tc.id,
+      type: 'function' as const,
+      function: { name: tc.name, arguments: tc.args },
+    })),
+  };
+
+  const toolResultMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+
+  for (const tc of pendingCalls) {
+    let parsedArgs: Record<string, unknown> = {};
+    try { parsedArgs = JSON.parse(tc.args || '{}'); } catch { /* empty args */ }
+
+    const result = await executeTool(tc.name, parsedArgs, toolOpts.userId!);
+
+    toolResultMessages.push({
+      role: 'tool',
+      tool_call_id: tc.id,
+      content: result.llmContext,
+    } as any);
+
+    toolOpts.onAction?.(result.action);
+  }
+
+  // Second call uses gpt-4o-mini (text only, no audio) — no tools
+  const secondMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    ...formattedMessages,
+    assistantToolCallMsg,
+    ...toolResultMessages,
+  ];
+
+  const secondStream = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: secondMessages,
+    temperature: 0.8,
+    max_tokens: 300,
+    stream: true,
+  });
+
+  fullReply = '';
+  for await (const chunk of secondStream) {
+    const delta = chunk.choices[0]?.delta?.content;
     if (delta) {
       fullReply += delta;
       onToken(delta);

@@ -3,6 +3,7 @@ import { prisma } from '../../config/database';
 import { NotFoundError, BadRequestError } from '../../shared/errors';
 import { promptMap } from './prompts';
 import { generateAiResponse, streamAiResponse, streamAiResponseWithAudio, classifyMood } from './llm.service';
+import { ToolResult } from './tools/kora-tools';
 import { transcribeAudio } from './stt.service';
 import { extractMood } from './emotion.service';
 import { logger } from '../../shared/logger';
@@ -171,6 +172,7 @@ export async function sendMessageStream(
   content: string,
   onToken: (token: string) => void,
   onDone: (meta: { mood: string; should_handoff: boolean; handoff_reason?: string }) => void,
+  onAction?: (action: ToolResult['action']) => void,
 ) {
   // Fetch session and user context in parallel
   const [session, userContext] = await Promise.all([
@@ -205,8 +207,11 @@ export async function sendMessageStream(
   const basePrompt = promptMap[session.mode];
   const systemPrompt = _buildSystemPrompt(basePrompt, userContext);
 
-  // Stream the reply
-  const fullReply = await streamAiResponse(history, systemPrompt, onToken);
+  // Stream the reply (with tool support)
+  const fullReply = await streamAiResponse(history, systemPrompt, onToken, {
+    userId,
+    onAction,
+  });
 
   // Save AI response and classify mood in background (don't block SSE)
   classifyMood(content, fullReply)
@@ -263,6 +268,7 @@ export async function sendAudioStream(
   mimeType: string | undefined,
   onToken: (token: string) => void,
   onDone: (meta: { mood: string; should_handoff: boolean; handoff_reason?: string }) => void,
+  onAction?: (action: ToolResult['action']) => void,
 ) {
   // Fetch session and user context in parallel (no STT wait!)
   const [session, userContext] = await Promise.all([
@@ -310,6 +316,7 @@ export async function sendAudioStream(
     audioBase64,
     audioFormat,
     onToken,
+    { userId, onAction },
   );
 
   // Save AI response and classify mood in background

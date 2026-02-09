@@ -114,6 +114,9 @@ router.post(
           res.write(`data: ${JSON.stringify({ type: 'done', ...meta })}\n\n`);
           res.end();
         },
+        (action) => {
+          res.write(`data: ${JSON.stringify({ type: 'action', actionType: action.actionType, data: action.data })}\n\n`);
+        },
       );
     } catch (err) {
       res.write(`data: ${JSON.stringify({ type: 'error', message: (err as Error).message })}\n\n`);
@@ -153,6 +156,9 @@ router.post(
         (meta) => {
           res.write(`data: ${JSON.stringify({ type: 'done', ...meta })}\n\n`);
           res.end();
+        },
+        (action) => {
+          res.write(`data: ${JSON.stringify({ type: 'action', actionType: action.actionType, data: action.data })}\n\n`);
         },
       );
     } catch (err) {
