@@ -167,8 +167,8 @@ export async function streamAiResponse(
       content: result.llmContext,
     } as any);
 
-    // Emit action to frontend
-    toolOpts.onAction?.(result.action);
+    // Emit action to frontend (wrapped in try-catch: client may have disconnected)
+    try { toolOpts.onAction?.(result.action); } catch { /* ignore SSE write errors */ }
   }
 
   // Second call — NO tools (prevents recursion)
@@ -310,7 +310,7 @@ export async function streamAiResponseWithAudio(
       content: result.llmContext,
     } as any);
 
-    toolOpts.onAction?.(result.action);
+    try { toolOpts.onAction?.(result.action); } catch { /* ignore SSE write errors */ }
   }
 
   // Second call uses gpt-4o-mini (text only, no audio) — no tools

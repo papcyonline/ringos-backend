@@ -271,8 +271,10 @@ router.post(
       const { mode = 'CALM_LISTENER' } = req.body;
       const prompt =
         promptMap[mode as keyof typeof promptMap] ?? promptMap.CALM_LISTENER;
+      // Strip both the APP ACTIONS block (tools aren't available in voice mode)
+      // and the RESPONSE FORMAT block from the voice prompt.
       const voicePrompt = prompt.replace(
-        /RESPONSE FORMAT:[\s\S]*$/,
+        /APP ACTIONS[\s\S]*$/,
         'Respond naturally in a warm, conversational tone. Keep responses short — 1 to 3 sentences max, like a real voice conversation. Do not use JSON formatting.',
       );
 
