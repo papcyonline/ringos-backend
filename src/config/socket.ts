@@ -4,6 +4,7 @@ import { env } from './env';
 import { logger } from '../shared/logger';
 import { verifyAccessToken } from '../modules/auth/auth.utils';
 import { setOnline, setOffline } from '../modules/user/user.service';
+import { prisma } from './database';
 
 let io: Server;
 
@@ -41,7 +42,13 @@ export function initializeSocket(httpServer: HttpServer): Server {
     // Set user online
     try {
       await setOnline(userId);
-      socket.broadcast.emit('user:online', { userId });
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { hideOnlineStatus: true },
+      });
+      if (!user?.hideOnlineStatus) {
+        socket.broadcast.emit('user:online', { userId });
+      }
     } catch (err) {
       logger.error({ err, userId }, 'Failed to set user online');
     }
@@ -54,10 +61,16 @@ export function initializeSocket(httpServer: HttpServer): Server {
       if (sockets.length === 0) {
         try {
           await setOffline(userId);
-          socket.broadcast.emit('user:offline', {
-            userId,
-            lastSeenAt: new Date().toISOString(),
+          const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { hideOnlineStatus: true },
           });
+          if (!user?.hideOnlineStatus) {
+            socket.broadcast.emit('user:offline', {
+              userId,
+              lastSeenAt: new Date().toISOString(),
+            });
+          }
         } catch (err) {
           logger.error({ err, userId }, 'Failed to set user offline');
         }

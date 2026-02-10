@@ -30,6 +30,7 @@ export async function getProfile(userId: string) {
       verifiedAt: true,
       verifiedRole: true,
       isProfilePublic: true,
+      hideOnlineStatus: true,
       banStatus: true,
       banExpiresAt: true,
       createdAt: true,
@@ -79,6 +80,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
       isVerified: true,
       verifiedRole: true,
       isProfilePublic: true,
+      hideOnlineStatus: true,
       createdAt: true,
       _count: { select: { followsReceived: true, likesReceived: true } },
     },
@@ -96,6 +98,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
   ]);
 
   const isPrivate = !user.isProfilePublic;
+  const hideOnline = user.hideOnlineStatus && targetId !== currentUserId;
   return {
     id: user.id,
     displayName: user.displayName,
@@ -106,8 +109,8 @@ export async function getUserById(targetId: string, currentUserId: string) {
     location: isPrivate ? null : user.location,
     status: user.status,
     availabilityNote: isPrivate ? null : user.availabilityNote,
-    isOnline: user.isOnline,
-    lastSeenAt: user.lastSeenAt,
+    isOnline: hideOnline ? false : user.isOnline,
+    lastSeenAt: hideOnline ? null : user.lastSeenAt,
     availableFor: user.availableFor,
     availableUntil: user.availableUntil,
     isVerified: user.isVerified,
@@ -154,6 +157,7 @@ export async function listUsers(currentUserId: string) {
       isVerified: true,
       verifiedRole: true,
       isProfilePublic: true,
+      hideOnlineStatus: true,
       preference: { select: { language: true } },
       _count: { select: { followsReceived: true, likesReceived: true } },
     },
@@ -176,6 +180,7 @@ export async function listUsers(currentUserId: string) {
 
   return users.map((user) => {
     const isPrivate = !user.isProfilePublic;
+    const hideOnline = user.hideOnlineStatus;
     return {
       id: user.id,
       displayName: user.displayName,
@@ -186,8 +191,8 @@ export async function listUsers(currentUserId: string) {
       location: isPrivate ? null : user.location,
       status: user.status,
       availabilityNote: isPrivate ? null : user.availabilityNote,
-      isOnline: user.isOnline,
-      lastSeenAt: user.lastSeenAt,
+      isOnline: hideOnline ? false : user.isOnline,
+      lastSeenAt: hideOnline ? null : user.lastSeenAt,
       availableFor: user.availableFor,
       availableUntil: user.availableUntil,
       isVerified: user.isVerified,
@@ -311,8 +316,11 @@ export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
   await findUserOrThrow(userId);
   return prisma.user.update({
     where: { id: userId },
-    data: { isProfilePublic: data.isProfilePublic },
-    select: { id: true, isProfilePublic: true },
+    data: {
+      ...(data.isProfilePublic !== undefined && { isProfilePublic: data.isProfilePublic }),
+      ...(data.hideOnlineStatus !== undefined && { hideOnlineStatus: data.hideOnlineStatus }),
+    },
+    select: { id: true, isProfilePublic: true, hideOnlineStatus: true },
   });
 }
 

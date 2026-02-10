@@ -34,7 +34,8 @@ export const updateAvailabilitySchema = z.object({
 export type UpdateAvailabilityInput = z.infer<typeof updateAvailabilitySchema>;
 
 export const updatePrivacySchema = z.object({
-  isProfilePublic: z.boolean(),
+  isProfilePublic: z.boolean().optional(),
+  hideOnlineStatus: z.boolean().optional(),
 });
 
 export type UpdatePrivacyInput = z.infer<typeof updatePrivacySchema>;

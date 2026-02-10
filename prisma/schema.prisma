@@ -134,6 +134,7 @@ model User {
   verifiedAt    DateTime?
   verifiedRole  String?
   isProfilePublic Boolean @default(true)
+  hideOnlineStatus Boolean @default(false)
   banStatus     BanStatus @default(NONE)
   banExpiresAt  DateTime?
   flagCount     Int       @default(0)
