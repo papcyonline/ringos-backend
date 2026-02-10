@@ -80,7 +80,9 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       io.to(`conversation:${conversationId}`).emit('chat:message', gwPayload);
 
       // Also notify each participant's personal room for conversation-list updates
-      emitToParticipantRooms(io, conversationId, gwPayload).catch(() => {});
+      emitToParticipantRooms(io, conversationId, gwPayload).catch((err) => {
+        logger.error({ err, conversationId }, 'Failed to emit to participant rooms');
+      });
 
       // Notify other participants (in-app + push)
       notifyChatMessage(
@@ -89,7 +91,9 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
         message.sender.displayName,
         message.content,
         { imageUrl: message.imageUrl ?? undefined, audioUrl: message.audioUrl ?? undefined },
-      ).catch(() => {});
+      ).catch((err) => {
+        logger.error({ err, conversationId }, 'Failed to send chat notification');
+      });
 
       logger.debug({ conversationId, userId, messageId: message.id }, 'Message broadcast to room');
     } catch (error: any) {

@@ -18,7 +18,7 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string(),
 
   // Google Gemini (Live Voice API)
-  GEMINI_API_KEY: z.string(),
+  GEMINI_API_KEY: z.string().optional(),
 
   // Google OAuth
   GOOGLE_CLIENT_ID_WEB: z.string().optional(),

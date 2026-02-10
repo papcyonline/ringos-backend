@@ -20,7 +20,7 @@ export async function transcribeAudio(
   const transcription = await openai.audio.transcriptions.create({
     model: 'whisper-1',
     file,
-    prompt: 'This is a conversation with Kora, an AI companion in the Yomeet app.',
+    prompt: 'This is a conversation with Kora in the Yomeet app.',
   });
 
   return transcription.text;
