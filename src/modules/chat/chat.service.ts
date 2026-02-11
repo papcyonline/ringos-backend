@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
+import { isBlocked } from '../safety/safety.service';
 
 const messageInclude = {
   sender: {
@@ -146,9 +147,9 @@ export async function getConversations(userId: string) {
         const isRead = otherParticipants.some(
           (p) => p.lastReadAt && p.lastReadAt >= rawLast.createdAt,
         );
-        lastMessage = { ...rawLast, status: isRead ? 'read' : 'delivered' } as any;
+        lastMessage = Object.assign({}, rawLast, { status: isRead ? 'read' : 'delivered' });
       } else if (rawLast) {
-        lastMessage = { ...rawLast, status: 'sent' } as any;
+        lastMessage = Object.assign({}, rawLast, { status: 'sent' });
       }
 
       return {
@@ -187,6 +188,12 @@ export async function markConversationAsRead(conversationId: string, userId: str
 export async function getOrCreateDirectConversation(userId: string, targetUserId: string) {
   if (userId === targetUserId) {
     throw new ForbiddenError('Cannot create a conversation with yourself');
+  }
+
+  // Check if either user has blocked the other
+  const blocked = await isBlocked(userId, targetUserId);
+  if (blocked) {
+    throw new ForbiddenError('Cannot message this user');
   }
 
   const existing = await prisma.conversation.findFirst({
@@ -269,6 +276,21 @@ export async function sendMessage(
   }
 
   await verifyParticipant(conversationId, senderId);
+
+  // For direct conversations, check if either user has blocked the other
+  if (conversation.type !== 'GROUP') {
+    const participants = await prisma.conversationParticipant.findMany({
+      where: { conversationId, leftAt: null },
+      select: { userId: true },
+    });
+    const partnerId = participants.find((p) => p.userId !== senderId)?.userId;
+    if (partnerId) {
+      const blocked = await isBlocked(senderId, partnerId);
+      if (blocked) {
+        throw new ForbiddenError('Cannot message this user');
+      }
+    }
+  }
 
   // Verify the reply target exists in this conversation
   if (replyToId) {
@@ -545,4 +567,36 @@ export async function getMessages(
     limit,
     hasMore: skip + messages.length < total,
   };
+}
+
+/**
+ * Toggle pin status for a conversation participant.
+ */
+export async function togglePin(userId: string, conversationId: string) {
+  const participant = await verifyParticipant(conversationId, userId);
+
+  const updated = await prisma.conversationParticipant.update({
+    where: { conversationId_userId: { conversationId, userId } },
+    data: { isPinned: !participant.isPinned },
+    select: { isPinned: true },
+  });
+
+  logger.debug({ conversationId, userId, isPinned: updated.isPinned }, 'Pin toggled');
+  return updated;
+}
+
+/**
+ * Toggle mute status for a conversation participant.
+ */
+export async function toggleMute(userId: string, conversationId: string) {
+  const participant = await verifyParticipant(conversationId, userId);
+
+  const updated = await prisma.conversationParticipant.update({
+    where: { conversationId_userId: { conversationId, userId } },
+    data: { isMuted: !participant.isMuted },
+    select: { isMuted: true },
+  });
+
+  logger.debug({ conversationId, userId, isMuted: updated.isMuted }, 'Mute toggled');
+  return updated;
 }

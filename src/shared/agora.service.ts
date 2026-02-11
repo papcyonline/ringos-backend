@@ -82,7 +82,7 @@ export function generateRtmToken(options: RtmTokenOptions): string | null {
   const expirationTime = Math.floor(Date.now() / 1000) + (options.expirationSeconds || RTM_TOKEN_EXPIRATION);
 
   try {
-    const token = (RtmTokenBuilder as any).buildToken(
+    const token = RtmTokenBuilder.buildToken(
       APP_ID,
       APP_CERTIFICATE,
       options.userId,

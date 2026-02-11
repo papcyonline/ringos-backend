@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { UpdatePreferenceInput, UpdateAvailabilityInput, UpdatePrivacyInput, UpdateProfileInput } from './user.schema';
+import { isBlocked } from '../safety/safety.service';
 
 async function findUserOrThrow(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -87,6 +88,14 @@ export async function getUserById(targetId: string, currentUserId: string) {
   });
 
   if (!user) throw new NotFoundError('User not found');
+
+  // Check if either user has blocked the other
+  if (currentUserId !== targetId) {
+    const blocked = await isBlocked(currentUserId, targetId);
+    if (blocked) {
+      throw new ForbiddenError('User not available');
+    }
+  }
 
   const [followRecord, likeRecord] = await Promise.all([
     prisma.follow.findFirst({

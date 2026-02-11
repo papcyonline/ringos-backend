@@ -38,8 +38,14 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Serve public static files (logo, etc.)
 app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (_req, res) => {
+  try {
+    const { prisma } = await import('./config/database');
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  } catch {
+    res.status(503).json({ status: 'unhealthy', timestamp: new Date().toISOString() });
+  }
 });
 
 app.use('/api/auth', authRouter);

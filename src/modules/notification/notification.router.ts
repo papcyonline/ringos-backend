@@ -55,6 +55,16 @@ router.post('/read-all', authenticate, async (req: AuthRequest, res: Response, n
   }
 });
 
+// DELETE /:id - Delete a single notification
+router.delete('/:id', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    await notificationService.deleteNotification(req.user!.userId, req.params.id as string);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /fcm-token - Register FCM token
 router.post('/fcm-token', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

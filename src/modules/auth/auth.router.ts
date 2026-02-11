@@ -1,9 +1,10 @@
-import { Router, Response, NextFunction } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { validate } from '../../middleware/validate';
 import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import { avatarUpload, fileToAvatarUrl } from '../../shared/upload';
+import { checkRateLimit } from '../../shared/redis.service';
 import {
   anonymousAuthSchema,
   registerSchema,
@@ -21,8 +22,24 @@ import * as authService from './auth.service';
 
 const router = Router();
 
+/**
+ * Per-route rate limiting middleware for auth endpoints.
+ */
+function authRateLimit(key: string, maxAttempts: number, windowSeconds: number) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const result = await checkRateLimit(`auth:${key}:${ip}`, maxAttempts, windowSeconds);
+    if (!result.allowed) {
+      res.status(429).json({ message: 'Too many attempts, try again later' });
+      return;
+    }
+    next();
+  };
+}
+
 router.post(
   '/register',
+  authRateLimit('register', 5, 900),
   validate(registerSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -38,6 +55,7 @@ router.post(
 
 router.post(
   '/login',
+  authRateLimit('login', 10, 900),
   validate(loginSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -158,6 +176,7 @@ router.post(
 
 router.post(
   '/verify-otp',
+  authRateLimit('verify-otp', 5, 900),
   validate(verifyOtpSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -173,6 +192,7 @@ router.post(
 
 router.post(
   '/forgot-password',
+  authRateLimit('forgot-password', 3, 3600),
   validate(forgotPasswordSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {

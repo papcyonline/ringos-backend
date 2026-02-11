@@ -520,6 +520,40 @@ router.delete(
   },
 );
 
+// PATCH /conversations/:conversationId/pin - Toggle pin
+router.patch(
+  '/conversations/:conversationId/pin',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.togglePin(
+        req.user!.userId,
+        req.params.conversationId as string,
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PATCH /conversations/:conversationId/mute - Toggle mute
+router.patch(
+  '/conversations/:conversationId/mute',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.toggleMute(
+        req.user!.userId,
+        req.params.conversationId as string,
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // POST /conversations/:conversationId/read - Mark conversation as read
 router.post(
   '/conversations/:conversationId/read',

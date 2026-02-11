@@ -40,14 +40,21 @@ export async function markAllAsRead(userId: string) {
 }
 
 export async function markConversationNotificationsAsRead(userId: string, conversationId: string) {
+  // Mark both chat_message and voice_note notifications for this conversation
   await prisma.notification.updateMany({
     where: {
       userId,
       isRead: false,
-      type: 'chat_message',
+      type: { in: ['chat_message', 'voice_note'] },
       data: { path: ['conversationId'], equals: conversationId },
     },
     data: { isRead: true },
+  });
+}
+
+export async function deleteNotification(userId: string, notificationId: string) {
+  await prisma.notification.deleteMany({
+    where: { id: notificationId, userId },
   });
 }
 

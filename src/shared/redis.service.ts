@@ -250,7 +250,7 @@ export async function checkRateLimit(
  * Get or set a cached value
  * If the key doesn't exist, calls the factory function and caches the result
  */
-export async function getOrSet<T>(
+export async function getOrSet<T extends string | Record<string, unknown>>(
   key: string,
   factory: () => Promise<T>,
   ttlSeconds: number = 300
@@ -261,7 +261,7 @@ export async function getOrSet<T>(
   }
 
   const value = await factory();
-  await set(key, value as any, ttlSeconds);
+  await set(key, value, ttlSeconds);
   return value;
 }
 

@@ -283,6 +283,8 @@ model ConversationParticipant {
   lastReadAt     DateTime?
   joinedAt       DateTime        @default(now())
   leftAt         DateTime?
+  isPinned       Boolean         @default(false)
+  isMuted        Boolean         @default(false)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)

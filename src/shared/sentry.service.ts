@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/node';
+import { Request, Response, NextFunction } from 'express';
 import { env } from '../config/env';
 import { logger } from './logger';
 
@@ -140,14 +141,19 @@ export function startTransaction(name: string, op: string): Sentry.Span | undefi
 }
 
 /**
- * Express error handler middleware for Sentry
+ * Express error handler middleware for Sentry.
+ * Uses Sentry.expressErrorHandler if available (v8+), falls back to no-op.
  */
-export const sentryErrorHandler = (Sentry as any).Handlers?.errorHandler?.() || ((err: any, _req: any, _res: any, next: any) => next(err));
+export const sentryErrorHandler: (err: Error, req: Request, res: Response, next: NextFunction) => void =
+  Sentry.expressErrorHandler
+    ? Sentry.expressErrorHandler() as (err: Error, req: Request, res: Response, next: NextFunction) => void
+    : (err: Error, _req: Request, _res: Response, next: NextFunction) => next(err);
 
 /**
- * Express request handler middleware for Sentry
+ * Express request handler middleware for Sentry.
+ * In @sentry/node v8+, request handling is automatic via init().
  */
-export const sentryRequestHandler = (Sentry as any).Handlers?.requestHandler?.() || ((_req: any, _res: any, next: any) => next());
+export const sentryRequestHandler = (_req: Request, _res: Response, next: NextFunction) => next();
 
 /**
  * Flush Sentry events (useful before process exit)

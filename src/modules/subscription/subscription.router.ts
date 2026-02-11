@@ -184,14 +184,15 @@ router.get(
       subscription = await getSubscription(user.subscriptionId);
     }
 
+    const firstItem = subscription?.items?.data?.[0];
     res.json({
       subscriptionId: user.subscriptionId,
       status: user.subscriptionStatus,
       plan: user.subscriptionPlan,
-      currentPeriodEnd: (subscription as any)?.current_period_end
-        ? new Date((subscription as any).current_period_end * 1000).toISOString()
+      currentPeriodEnd: firstItem?.current_period_end
+        ? new Date(firstItem.current_period_end * 1000).toISOString()
         : null,
-      cancelAtPeriodEnd: (subscription as any)?.cancel_at_period_end ?? false,
+      cancelAtPeriodEnd: subscription?.cancel_at_period_end ?? false,
     });
   }
 );
