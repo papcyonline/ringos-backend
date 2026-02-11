@@ -181,6 +181,25 @@ router.delete('/me/verify', authenticate, async (req: AuthRequest, res: Response
   }
 });
 
+// POST /admin/verify - Admin: verify or unverify any user by email/id/name
+router.post('/admin/verify', async (req, res: Response, next: NextFunction) => {
+  try {
+    const secret = req.headers['x-admin-secret'] as string;
+    const adminSecret = process.env.ADMIN_SECRET;
+    if (!adminSecret || secret !== adminSecret) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const { user: identifier, verified, role } = req.body;
+    if (!identifier || typeof verified !== 'boolean') {
+      return res.status(400).json({ error: 'Provide "user" (email/id/name) and "verified" (boolean)' });
+    }
+    const result = await userService.adminSetVerified(identifier, verified, role);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /me - Delete current user's account
 router.delete('/me', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

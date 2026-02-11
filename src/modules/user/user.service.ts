@@ -383,6 +383,37 @@ export async function removeVerified(userId: string) {
   });
 }
 
+export async function adminSetVerified(identifier: string, verified: boolean, role?: string) {
+  // Find user by ID, email, or displayName
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { id: identifier },
+        { email: identifier },
+        { displayName: { equals: identifier, mode: 'insensitive' } },
+      ],
+    },
+  });
+  if (!user) throw new NotFoundError('User not found');
+
+  return prisma.user.update({
+    where: { id: user.id },
+    data: {
+      isVerified: verified,
+      verifiedAt: verified ? new Date() : null,
+      verifiedRole: verified ? (role || null) : null,
+    },
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+      isVerified: true,
+      verifiedAt: true,
+      verifiedRole: true,
+    },
+  });
+}
+
 export async function deleteAccount(userId: string) {
   await findUserOrThrow(userId);
   await prisma.user.delete({ where: { id: userId } });
