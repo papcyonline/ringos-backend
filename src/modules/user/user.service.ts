@@ -336,9 +336,14 @@ export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
 export async function updateProfile(userId: string, data: UpdateProfileInput) {
   const user = await findUserOrThrow(userId);
 
-  // Only verified users can change their display name
-  if (data.displayName && data.displayName !== user.displayName && !user.isVerified) {
-    throw new ForbiddenError('Only verified users can change their username');
+  // Only verified users can change their display name or location
+  if (!user.isVerified) {
+    if (data.displayName && data.displayName !== user.displayName) {
+      throw new ForbiddenError('Only verified users can change their username');
+    }
+    if (data.location !== undefined && data.location !== user.location) {
+      throw new ForbiddenError('Only verified users can change their location');
+    }
   }
 
   // If verified and changing name, check uniqueness
