@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { BadRequestError, NotFoundError, ConflictError } from '../../shared/errors';
@@ -28,21 +29,22 @@ export async function reportUser(reporterId: string, data: ReportData): Promise<
     throw new NotFoundError('Reported user not found');
   }
 
-  // Create the report
-  const report = await prisma.report.create({
-    data: {
-      reporterId,
-      reportedId: data.reportedId,
-      reason: data.reason,
-      details: data.details,
-    },
+  // Wrap report + flag + threshold check in a transaction for consistency
+  const report = await prisma.$transaction(async (tx) => {
+    const report = await tx.report.create({
+      data: {
+        reporterId,
+        reportedId: data.reportedId,
+        reason: data.reason,
+        details: data.details,
+      },
+    });
+
+    await recordFlag(data.reportedId, tx);
+    await checkAndApplyThresholds(data.reportedId, tx);
+
+    return report;
   });
-
-  // Increment flag count on reported user
-  await recordFlag(data.reportedId);
-
-  // Check thresholds for auto-moderation
-  await checkAndApplyThresholds(data.reportedId);
 
   logger.info(
     { reportId: report.id, reporterId, reportedId: data.reportedId, reason: data.reason },
@@ -144,7 +146,6 @@ export async function getBlockedUsers(userId: string) {
         select: {
           id: true,
           displayName: true,
-          username: true,
           avatarUrl: true,
           bio: true,
           isVerified: true,
@@ -174,8 +175,9 @@ export async function isBlocked(userId1: string, userId2: string): Promise<boole
   return !!block;
 }
 
-export async function recordFlag(userId: string) {
-  await prisma.user.update({
+export async function recordFlag(userId: string, tx?: Prisma.TransactionClient) {
+  const db = tx ?? prisma;
+  await db.user.update({
     where: { id: userId },
     data: {
       flagCount: { increment: 1 },
@@ -217,13 +219,14 @@ export async function checkBanStatus(
   };
 }
 
-async function checkAndApplyThresholds(userId: string) {
+async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionClient) {
+  const db = tx ?? prisma;
   const now = new Date();
   const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
 
   // Count reports in the last 24h
-  const reportsIn24h = await prisma.report.count({
+  const reportsIn24h = await db.report.count({
     where: {
       reportedId: userId,
       createdAt: { gte: twentyFourHoursAgo },
@@ -231,7 +234,7 @@ async function checkAndApplyThresholds(userId: string) {
   });
 
   // Count reports in the last 48h
-  const reportsIn48h = await prisma.report.count({
+  const reportsIn48h = await db.report.count({
     where: {
       reportedId: userId,
       createdAt: { gte: fortyEightHoursAgo },
@@ -239,13 +242,13 @@ async function checkAndApplyThresholds(userId: string) {
   });
 
   // Count total reports
-  const totalReports = await prisma.report.count({
+  const totalReports = await db.report.count({
     where: { reportedId: userId },
   });
 
   // 5 flags in 48h → TEMP_BAN
   if (reportsIn48h >= 5) {
-    await prisma.user.update({
+    await db.user.update({
       where: { id: userId },
       data: {
         banStatus: 'TEMP_BAN',
@@ -258,7 +261,7 @@ async function checkAndApplyThresholds(userId: string) {
 
   // 3 flags in 24h → WARNING
   if (reportsIn24h >= 3) {
-    await prisma.user.update({
+    await db.user.update({
       where: { id: userId },
       data: { banStatus: 'WARNING' },
     });
@@ -268,7 +271,7 @@ async function checkAndApplyThresholds(userId: string) {
 
   // 3+ total reports → auto TEMP_BAN
   if (totalReports >= 3) {
-    await prisma.user.update({
+    await db.user.update({
       where: { id: userId },
       data: {
         banStatus: 'TEMP_BAN',

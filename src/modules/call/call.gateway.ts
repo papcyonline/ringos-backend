@@ -1,15 +1,9 @@
 import { Server, Socket } from 'socket.io';
 import { randomUUID } from 'crypto';
-import { appendFileSync } from 'fs';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { sendCallPush } from '../notification/notification.service';
 import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
-
-function debugLog(msg: string, data?: Record<string, unknown>) {
-  const line = `[${new Date().toISOString()}] ${msg} ${data ? JSON.stringify(data) : ''}\n`;
-  try { appendFileSync('/tmp/yomeet-call-debug.log', line); } catch {}
-}
 
 interface ActiveCall {
   callId: string;
@@ -50,7 +44,6 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const { conversationId, targetUserIds, isGroup, callType } = data;
       const resolvedCallType = callType ?? 'AUDIO';
 
-      debugLog('call:initiate received', { userId, conversationId, targetUserIds, callType: resolvedCallType });
       logger.info({ userId, conversationId, targetUserIds, callType: resolvedCallType }, 'call:initiate received');
 
       // Clean up any stale call entry from a previous session
@@ -59,16 +52,13 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         const staleCall = activeCalls.get(staleCallId);
         if (staleCall) {
           if (!staleCall.answeredAt) {
-            debugLog('Cleaning up stale unanswered call', { userId, staleCallId });
             cleanupCall(staleCallId);
             clearCallTimeout(staleCallId);
           } else {
-            debugLog('Blocking: user already in active call', { userId, staleCallId });
             socket.emit('call:error', { message: 'You are already in a call' });
             return;
           }
         } else {
-          debugLog('Cleaning stale userCallMap entry (no call found)', { userId, staleCallId });
           userCallMap.delete(userId);
         }
       }
@@ -135,7 +125,6 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         const targetSockets = await io.in(`user:${targetId}`).fetchSockets();
         const isOnline = targetSockets.length > 0;
 
-        debugLog('Emitting call:incoming', { targetId, socketCount: targetSockets.length, callId, isOnline });
         logger.info(
           { targetId, socketCount: targetSockets.length, callId, isOnline },
           'Emitting call:incoming to target user room'
@@ -200,7 +189,6 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
       logger.info({ userId, callId, targetUserIds, callType: resolvedCallType }, 'Call initiated');
     } catch (error) {
-      debugLog('ERROR in call:initiate', { userId, error: String(error) });
       logger.error({ error, userId }, 'Error initiating call');
       socket.emit('call:error', { message: 'Failed to initiate call' });
     }

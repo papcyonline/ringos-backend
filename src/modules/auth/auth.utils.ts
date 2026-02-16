@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { randomInt } from 'crypto';
 import { env } from '../../config/env';
 import { AuthPayload } from '../../shared/types';
 
@@ -33,8 +34,8 @@ const ANIMALS = [
 ];
 
 export function generateAnonymousName(): string {
-  const adjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-  const animal = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
-  const number = Math.floor(Math.random() * 100);
+  const adjective = ADJECTIVES[randomInt(ADJECTIVES.length)];
+  const animal = ANIMALS[randomInt(ANIMALS.length)];
+  const number = randomInt(100);
   return `${adjective} ${animal} ${number}`;
 }

@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
 import appleSignIn from 'apple-signin-auth';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
@@ -37,6 +38,23 @@ function refreshTokenExpiryDate(): Date {
   // Parse JWT_REFRESH_EXPIRES_IN default of "7d" — keep it simple: 7 days
   const days = 7;
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+}
+
+async function createTokenPair(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  isAnonymous: boolean,
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const accessToken = generateAccessToken({ userId, isAnonymous });
+  const refreshToken = generateRefreshToken({ userId });
+  await tx.refreshToken.create({
+    data: {
+      userId,
+      token: refreshToken,
+      expiresAt: refreshTokenExpiryDate(),
+    },
+  });
+  return { accessToken, refreshToken };
 }
 
 // ── OTP helpers (database-backed) ──────────────────────
@@ -84,28 +102,22 @@ function phoneToLookup(phone: string): string {
 }
 
 export async function anonymousLogin(deviceId: string) {
-  let user = await prisma.user.findUnique({ where: { deviceId } });
+  const { user, accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
+    let user = await tx.user.findUnique({ where: { deviceId } });
 
-  if (!user) {
-    user = await prisma.user.create({
-      data: {
-        deviceId,
-        displayName: generateAnonymousName(),
-        isAnonymous: true,
-      },
-    });
-    logger.info({ userId: user.id }, 'Anonymous user created');
-  }
+    if (!user) {
+      user = await tx.user.create({
+        data: {
+          deviceId,
+          displayName: generateAnonymousName(),
+          isAnonymous: true,
+        },
+      });
+      logger.info({ userId: user.id }, 'Anonymous user created');
+    }
 
-  const accessToken = generateAccessToken({ userId: user.id, isAnonymous: user.isAnonymous });
-  const refreshToken = generateRefreshToken({ userId: user.id });
-
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: refreshToken,
-      expiresAt: refreshTokenExpiryDate(),
-    },
+    const tokens = await createTokenPair(tx, user.id, user.isAnonymous);
+    return { user, ...tokens };
   });
 
   return {
@@ -122,38 +134,32 @@ export async function anonymousLogin(deviceId: string) {
 
 export async function register(rawEmail: string, password: string) {
   const email = rawEmail.toLowerCase().trim();
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
-    throw new BadRequestError('An account with this email already exists');
-  }
-
   const passwordHash = await bcrypt.hash(password, 10);
 
-  const user = await prisma.user.create({
-    data: {
-      email,
-      passwordHash,
-      displayName: generateAnonymousName(),
-      isAnonymous: false,
-    },
+  const { user, accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
+    const existing = await tx.user.findUnique({ where: { email } });
+    if (existing) {
+      throw new BadRequestError('An account with this email already exists');
+    }
+
+    const user = await tx.user.create({
+      data: {
+        email,
+        passwordHash,
+        displayName: generateAnonymousName(),
+        isAnonymous: false,
+      },
+    });
+
+    const tokens = await createTokenPair(tx, user.id, false);
+    return { user, ...tokens };
   });
 
   logger.info({ userId: user.id }, 'Email user registered');
 
-  // Send welcome email (non-blocking)
+  // Send welcome email (non-blocking) — outside transaction
   sendWelcomeEmail(email, user.displayName).catch((err) => {
     logger.error({ error: err, userId: user.id }, 'Failed to send welcome email');
-  });
-
-  const accessToken = generateAccessToken({ userId: user.id, isAnonymous: false });
-  const refreshToken = generateRefreshToken({ userId: user.id });
-
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: refreshToken,
-      expiresAt: refreshTokenExpiryDate(),
-    },
   });
 
   return {
@@ -180,15 +186,8 @@ export async function login(rawEmail: string, password: string) {
     throw new UnauthorizedError('Invalid email or password');
   }
 
-  const accessToken = generateAccessToken({ userId: user.id, isAnonymous: user.isAnonymous });
-  const refreshToken = generateRefreshToken({ userId: user.id });
-
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: refreshToken,
-      expiresAt: refreshTokenExpiryDate(),
-    },
+  const { accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
+    return createTokenPair(tx, user.id, user.isAnonymous);
   });
 
   logger.info({ userId: user.id }, 'Email user logged in');
@@ -232,58 +231,50 @@ export async function googleAuth(idToken: string) {
   const name = payload.name || generateAnonymousName();
   const avatarUrl = payload.picture || null;
 
-  // Check if user exists with this Google ID
-  let user = await prisma.user.findUnique({ where: { googleId } });
+  const { user, accessToken, refreshToken, shouldSendWelcome } = await prisma.$transaction(async (tx) => {
+    let user = await tx.user.findUnique({ where: { googleId } });
+    let shouldSendWelcome = false;
 
-  if (user) {
-    // Existing Google user - just log them in
-    logger.info({ userId: user.id }, 'Google user logged in');
-  } else {
-    // Check if user exists with same email (email/password or phone account)
-    const existingEmailUser = await prisma.user.findUnique({ where: { email } });
-
-    if (existingEmailUser) {
-      // Link Google account to existing user
-      user = await prisma.user.update({
-        where: { id: existingEmailUser.id },
-        data: {
-          googleId,
-          // Keep existing avatar if they have one, otherwise use Google's
-          avatarUrl: existingEmailUser.avatarUrl || avatarUrl,
-        },
-      });
-      logger.info({ userId: user.id }, 'Google account linked to existing email user');
+    if (user) {
+      logger.info({ userId: user.id }, 'Google user logged in');
     } else {
-      // New user - create account with Google
-      user = await prisma.user.create({
-        data: {
-          email,
-          googleId,
-          authProvider: 'google',
-          displayName: name,
-          avatarUrl,
-          isAnonymous: false,
-        },
-      });
-      logger.info({ userId: user.id }, 'New Google user registered');
+      const existingEmailUser = await tx.user.findUnique({ where: { email } });
 
-      // Send welcome email (non-blocking)
-      sendWelcomeEmail(email, name).catch((err) => {
-        logger.error({ error: err, userId: user!.id }, 'Failed to send welcome email');
-      });
+      if (existingEmailUser) {
+        user = await tx.user.update({
+          where: { id: existingEmailUser.id },
+          data: {
+            googleId,
+            avatarUrl: existingEmailUser.avatarUrl || avatarUrl,
+          },
+        });
+        logger.info({ userId: user.id }, 'Google account linked to existing email user');
+      } else {
+        user = await tx.user.create({
+          data: {
+            email,
+            googleId,
+            authProvider: 'google',
+            displayName: name,
+            avatarUrl,
+            isAnonymous: false,
+          },
+        });
+        logger.info({ userId: user.id }, 'New Google user registered');
+        shouldSendWelcome = true;
+      }
     }
-  }
 
-  const accessToken = generateAccessToken({ userId: user.id, isAnonymous: false });
-  const refreshToken = generateRefreshToken({ userId: user.id });
-
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: refreshToken,
-      expiresAt: refreshTokenExpiryDate(),
-    },
+    const tokens = await createTokenPair(tx, user.id, false);
+    return { user, ...tokens, shouldSendWelcome };
   });
+
+  // Send welcome email (non-blocking) — outside transaction
+  if (shouldSendWelcome) {
+    sendWelcomeEmail(email, name).catch((err) => {
+      logger.error({ error: err, userId: user.id }, 'Failed to send welcome email');
+    });
+  }
 
   return {
     accessToken,
@@ -295,7 +286,7 @@ export async function googleAuth(idToken: string) {
       avatarUrl: user.avatarUrl,
       isAnonymous: false,
     },
-    isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime()) < 5000, // Created within last 5 seconds
+    isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime()) < 5000,
   };
 }
 
@@ -323,69 +314,60 @@ export async function appleAuth(idToken: string, fullName?: { givenName?: string
   const appleId = payload.sub;
   const email = payload.email?.toLowerCase().trim() || null;
 
-  // Apple only sends the name on the first sign-in, so we need to handle it carefully
   const name = fullName?.givenName
     ? `${fullName.givenName}${fullName.familyName ? ' ' + fullName.familyName : ''}`.trim()
     : generateAnonymousName();
 
-  // Check if user exists with this Apple ID
-  let user = await prisma.user.findUnique({ where: { appleId } });
+  const { user, accessToken, refreshToken, welcomeEmail } = await prisma.$transaction(async (tx) => {
+    let user = await tx.user.findUnique({ where: { appleId } });
+    let welcomeEmail: string | null = null;
 
-  if (user) {
-    // Existing Apple user - just log them in
-    logger.info({ userId: user.id }, 'Apple user logged in');
-  } else if (email) {
-    // Check if user exists with same email (email/password or Google account)
-    const existingEmailUser = await prisma.user.findUnique({ where: { email } });
+    if (user) {
+      logger.info({ userId: user.id }, 'Apple user logged in');
+    } else if (email) {
+      const existingEmailUser = await tx.user.findUnique({ where: { email } });
 
-    if (existingEmailUser) {
-      // Link Apple account to existing user
-      user = await prisma.user.update({
-        where: { id: existingEmailUser.id },
-        data: { appleId },
-      });
-      logger.info({ userId: user.id }, 'Apple account linked to existing email user');
+      if (existingEmailUser) {
+        user = await tx.user.update({
+          where: { id: existingEmailUser.id },
+          data: { appleId },
+        });
+        logger.info({ userId: user.id }, 'Apple account linked to existing email user');
+      } else {
+        user = await tx.user.create({
+          data: {
+            email,
+            appleId,
+            authProvider: 'apple',
+            displayName: name,
+            isAnonymous: false,
+          },
+        });
+        logger.info({ userId: user.id }, 'New Apple user registered');
+        welcomeEmail = email;
+      }
     } else {
-      // New user - create account with Apple
-      user = await prisma.user.create({
+      user = await tx.user.create({
         data: {
-          email,
           appleId,
           authProvider: 'apple',
           displayName: name,
           isAnonymous: false,
         },
       });
-      logger.info({ userId: user.id }, 'New Apple user registered');
-
-      // Send welcome email (non-blocking)
-      sendWelcomeEmail(email, name).catch((err) => {
-        logger.error({ error: err, userId: user!.id }, 'Failed to send welcome email');
-      });
+      logger.info({ userId: user.id }, 'New Apple user registered (private email)');
     }
-  } else {
-    // Apple user with private email relay (no email shared)
-    user = await prisma.user.create({
-      data: {
-        appleId,
-        authProvider: 'apple',
-        displayName: name,
-        isAnonymous: false,
-      },
-    });
-    logger.info({ userId: user.id }, 'New Apple user registered (private email)');
-  }
 
-  const accessToken = generateAccessToken({ userId: user.id, isAnonymous: false });
-  const refreshToken = generateRefreshToken({ userId: user.id });
-
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: refreshToken,
-      expiresAt: refreshTokenExpiryDate(),
-    },
+    const tokens = await createTokenPair(tx, user.id, false);
+    return { user, ...tokens, welcomeEmail };
   });
+
+  // Send welcome email (non-blocking) — outside transaction
+  if (welcomeEmail) {
+    sendWelcomeEmail(welcomeEmail, name).catch((err) => {
+      logger.error({ error: err, userId: user.id }, 'Failed to send welcome email');
+    });
+  }
 
   return {
     accessToken,
@@ -475,7 +457,7 @@ export async function requestOtp(phone: string) {
   }
 
   // Generate 6-digit OTP
-  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const code = String(crypto.randomInt(100000, 1000000));
   await storeOtp(phone, code);
 
   // Send OTP via SMS (falls back to logging if Twilio not configured)
@@ -491,26 +473,19 @@ export async function requestOtp(phone: string) {
 export async function verifyOtp(phone: string, code: string) {
   await verifyStoredOtp(phone, code);
 
-  // Fast O(1) indexed lookup by deterministic hash
-  const lookup = phoneToLookup(phone);
-  const user = await prisma.user.findUnique({
-    where: { phoneLookup: lookup },
-    select: { id: true, displayName: true, isAnonymous: true },
-  });
+  const { user, accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
+    const lookup = phoneToLookup(phone);
+    const user = await tx.user.findUnique({
+      where: { phoneLookup: lookup },
+      select: { id: true, displayName: true, isAnonymous: true },
+    });
 
-  if (!user) {
-    throw new UnauthorizedError('User not found');
-  }
+    if (!user) {
+      throw new UnauthorizedError('User not found');
+    }
 
-  const accessToken = generateAccessToken({ userId: user.id, isAnonymous: user.isAnonymous });
-  const refreshToken = generateRefreshToken({ userId: user.id });
-
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: refreshToken,
-      expiresAt: refreshTokenExpiryDate(),
-    },
+    const tokens = await createTokenPair(tx, user.id, user.isAnonymous);
+    return { user, ...tokens };
   });
 
   return {
@@ -533,38 +508,28 @@ export async function refreshTokens(token: string) {
     throw new UnauthorizedError('Invalid refresh token');
   }
 
-  // Find and delete the old refresh token
-  const existing = await prisma.refreshToken.findUnique({ where: { token } });
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.refreshToken.findUnique({ where: { token } });
 
-  if (!existing) {
-    throw new UnauthorizedError('Refresh token not found or already used');
-  }
+    if (!existing) {
+      throw new UnauthorizedError('Refresh token not found or already used');
+    }
 
-  if (existing.expiresAt < new Date()) {
-    await prisma.refreshToken.delete({ where: { id: existing.id } });
-    throw new UnauthorizedError('Refresh token has expired');
-  }
+    if (existing.expiresAt < new Date()) {
+      await tx.refreshToken.delete({ where: { id: existing.id } });
+      throw new UnauthorizedError('Refresh token has expired');
+    }
 
-  await prisma.refreshToken.delete({ where: { id: existing.id } });
+    await tx.refreshToken.delete({ where: { id: existing.id } });
 
-  const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+    const user = await tx.user.findUnique({ where: { id: payload.userId } });
 
-  if (!user) {
-    throw new UnauthorizedError('User not found');
-  }
+    if (!user) {
+      throw new UnauthorizedError('User not found');
+    }
 
-  const accessToken = generateAccessToken({ userId: user.id, isAnonymous: user.isAnonymous });
-  const refreshToken = generateRefreshToken({ userId: user.id });
-
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: refreshToken,
-      expiresAt: refreshTokenExpiryDate(),
-    },
+    return createTokenPair(tx, user.id, user.isAnonymous);
   });
-
-  return { accessToken, refreshToken };
 }
 
 export async function requestPasswordReset(rawEmail: string) {
@@ -572,7 +537,7 @@ export async function requestPasswordReset(rawEmail: string) {
   const user = await prisma.user.findUnique({ where: { email } });
 
   if (user) {
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const code = String(crypto.randomInt(100000, 1000000));
     await storeOtp(`reset:${email}`, code);
 
     // Send OTP via email
