@@ -297,7 +297,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
    * call:signal — Relay WebRTC signaling data (offer/answer/ICE)
    * from one peer to another.
    */
-  socket.on('call:signal', (data: {
+  socket.on('call:signal', async (data: {
     callId: string;
     to: string;
     type: string;
@@ -308,7 +308,21 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const { callId, to, type, sdp, candidate } = data;
       const call = activeCalls.get(callId);
 
-      if (!call || !call.participantIds.has(userId)) return;
+      if (!call) {
+        logger.warn({ callId, userId, type }, 'call:signal dropped — call not found in activeCalls');
+        return;
+      }
+      if (!call.participantIds.has(userId)) {
+        logger.warn({ callId, userId, type }, 'call:signal dropped — sender not in participantIds');
+        return;
+      }
+
+      // Verify the target has active sockets
+      const targetSockets = await io.in(`user:${to}`).fetchSockets();
+      logger.info(
+        { callId, from: userId, to, type, targetSocketCount: targetSockets.length },
+        'Relaying call:signal',
+      );
 
       io.to(`user:${to}`).emit('call:signal', {
         callId,

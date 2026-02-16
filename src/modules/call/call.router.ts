@@ -74,4 +74,13 @@ router.get(
   }
 );
 
+// ─── Diagnostic: check if TURN is configured (no auth required) ─────────────
+router.get('/turn-status', (_req, res: Response) => {
+  res.json({
+    turnConfigured: isTurnConfigured,
+    twilioConfigured: isTwilioConfigured,
+    turnUrlCount: isTurnConfigured ? env.TURN_SERVER_URLS!.split(',').length : 0,
+  });
+});
+
 export { router as callRouter };
