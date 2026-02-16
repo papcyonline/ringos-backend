@@ -3,6 +3,7 @@ import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { prisma } from '../../config/database';
 import { liveBroadcasters } from './spotlight.gateway';
+import { userCallMap } from '../call/call.gateway';
 
 const router = Router();
 
@@ -25,7 +26,7 @@ router.get(
     }
 
     const list = Array.from(liveBroadcasters.entries())
-      .filter(([id]) => id !== userId && !blockedIds.has(id))
+      .filter(([id]) => id !== userId && !blockedIds.has(id) && !userCallMap.has(id))
       .map(([id, entry]) => ({
         userId: id,
         displayName: entry.displayName,

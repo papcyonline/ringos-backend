@@ -19,7 +19,7 @@ interface ActiveCall {
 const activeCalls = new Map<string, ActiveCall>();
 
 /** Reverse index: userId -> callId for quick lookup. */
-const userCallMap = new Map<string, string>();
+export const userCallMap = new Map<string, string>();
 
 /** Timeout handles for unanswered calls (server-side cleanup). */
 const callTimeouts = new Map<string, ReturnType<typeof setTimeout>>();

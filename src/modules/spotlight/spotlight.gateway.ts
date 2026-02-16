@@ -2,6 +2,7 @@ import { Server, Socket } from 'socket.io';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { createSpotlightLog, endSpotlightLog } from './spotlight.service';
+import { userCallMap } from '../call/call.gateway';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
       }
 
       const list = Array.from(liveBroadcasters.entries())
-        .filter(([id]) => id !== userId && !blockedIds.has(id))
+        .filter(([id]) => id !== userId && !blockedIds.has(id) && !userCallMap.has(id))
         .map(([id, entry]) => ({
           userId: id,
           displayName: entry.displayName,
