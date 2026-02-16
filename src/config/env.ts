@@ -63,15 +63,6 @@ const envSchema = z.object({
   STRIPE_PRICE_ID_MONTHLY: z.string().optional(),
   STRIPE_PRICE_ID_YEARLY: z.string().optional(),
 
-  // Agora (Voice/Video Calls) - Alternative option
-  AGORA_APP_ID: z.string().optional(),
-  AGORA_APP_CERTIFICATE: z.string().optional(),
-
-  // Metered (Voice/Video Calls) - Primary option
-  METERED_APP_ID: z.string().optional(),
-  METERED_SECRET_KEY: z.string().optional(),
-  METERED_DOMAIN: z.string().optional(),
-
   // Sentry (Error Tracking)
   SENTRY_DSN: z.string().optional(),
 
