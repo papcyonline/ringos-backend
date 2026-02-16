@@ -233,7 +233,7 @@ router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response,
       title: follower.displayName,
       body: 'Started following you',
       imageUrl: follower.avatarUrl ?? undefined,
-      data: { userId: req.user!.userId },
+      data: { userId: req.user!.userId, isVerified: follower.isVerified ?? false },
     }).catch((err) => {
       logger.error({ err, userId: (req.params.id as string) }, 'Failed to send follow notification');
     });
@@ -267,7 +267,7 @@ router.post('/:id/like', authenticate, async (req: AuthRequest, res: Response, n
       title: liker.displayName,
       body: 'Liked your profile',
       imageUrl: liker.avatarUrl ?? undefined,
-      data: { userId: req.user!.userId },
+      data: { userId: req.user!.userId, isVerified: liker.isVerified ?? false },
     }).catch((err) => {
       logger.error({ err, userId: (req.params.id as string) }, 'Failed to send like notification');
     });

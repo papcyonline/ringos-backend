@@ -141,7 +141,14 @@ export async function getBlockedUsers(userId: string) {
     where: { blockerId: userId },
     include: {
       blocked: {
-        select: { id: true, displayName: true },
+        select: {
+          id: true,
+          displayName: true,
+          username: true,
+          avatarUrl: true,
+          bio: true,
+          isVerified: true,
+        },
       },
     },
     orderBy: { createdAt: 'desc' },

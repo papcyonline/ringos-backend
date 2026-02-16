@@ -11,11 +11,40 @@ import {
 } from './fcm-payload.builder';
 
 export async function getNotifications(userId: string) {
-  return prisma.notification.findMany({
+  const notifications = await prisma.notification.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take: 100,
   });
+
+  // Enrich notifications with sender's isVerified status
+  const senderIds = new Set<string>();
+  for (const n of notifications) {
+    const data = n.data as Record<string, unknown> | null;
+    const senderId = data?.['senderId'] as string | undefined;
+    const uid = data?.['userId'] as string | undefined;
+    if (senderId) senderIds.add(senderId);
+    else if (uid) senderIds.add(uid);
+  }
+
+  if (senderIds.size > 0) {
+    const users = await prisma.user.findMany({
+      where: { id: { in: [...senderIds] } },
+      select: { id: true, isVerified: true },
+    });
+    const verifiedMap = new Map(users.map((u) => [u.id, u.isVerified]));
+
+    return notifications.map((n) => {
+      const data = (n.data as Record<string, unknown>) ?? {};
+      const senderId = (data.senderId ?? data.userId) as string | undefined;
+      if (senderId && verifiedMap.has(senderId)) {
+        return { ...n, data: { ...data, isVerified: verifiedMap.get(senderId) ?? false } };
+      }
+      return n;
+    });
+  }
+
+  return notifications;
 }
 
 export async function getUnreadCount(userId: string) {
@@ -373,12 +402,13 @@ export async function notifyChatMessage(
     body = body.substring(0, 97) + '...';
   }
 
-  // Fetch sender's avatar for notification display
+  // Fetch sender's avatar and verification status for notification display
   const sender = await prisma.user.findUnique({
     where: { id: senderId },
-    select: { avatarUrl: true },
+    select: { avatarUrl: true, isVerified: true },
   });
   const senderAvatarUrl = sender?.avatarUrl ?? undefined;
+  const senderIsVerified = sender?.isVerified ?? false;
 
   for (const participant of participants) {
     // Skip notification if the user is currently viewing this conversation
@@ -395,6 +425,7 @@ export async function notifyChatMessage(
         conversationId,
         senderId,
         senderAvatarUrl: senderAvatarUrl ?? null,
+        isVerified: senderIsVerified,
         ...(options?.audioUrl ? { audioUrl: options.audioUrl } : {}),
         ...(options?.audioDuration !== undefined ? { audioDuration: options.audioDuration } : {}),
       },
