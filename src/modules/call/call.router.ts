@@ -16,15 +16,37 @@ const STUN_SERVERS = [
 const isTwilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN);
 const isTurnConfigured = !!(env.TURN_SERVER_URLS && env.TURN_USERNAME && env.TURN_CREDENTIAL);
 
-/** Build TURN server entries from env vars. */
+/** Normalize a TURN URL: auto-prepend `turn:` if no protocol prefix. */
+function normalizeTurnUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('turn:') || trimmed.startsWith('turns:') || trimmed.startsWith('stun:')) {
+    return trimmed;
+  }
+  return `turn:${trimmed}`;
+}
+
+/** Build TURN server entries from env vars, including TCP transport variant. */
 function buildEnvTurnServers(): Array<{ urls: string; username: string; credential: string }> {
   if (!isTurnConfigured) return [];
-  const urls = env.TURN_SERVER_URLS!.split(',').map((u) => u.trim());
-  return urls.map((url) => ({
-    urls: url,
-    username: env.TURN_USERNAME!,
-    credential: env.TURN_CREDENTIAL!,
-  }));
+
+  const rawUrls = env.TURN_SERVER_URLS!.split(',').map((u) => u.trim());
+  const entries: Array<{ urls: string; username: string; credential: string }> = [];
+
+  for (const raw of rawUrls) {
+    const url = normalizeTurnUrl(raw);
+    entries.push({ urls: url, username: env.TURN_USERNAME!, credential: env.TURN_CREDENTIAL! });
+
+    // Also add TCP transport if not already specified (helps on networks that block UDP)
+    if (!url.includes('transport=')) {
+      entries.push({
+        urls: `${url}?transport=tcp`,
+        username: env.TURN_USERNAME!,
+        credential: env.TURN_CREDENTIAL!,
+      });
+    }
+  }
+
+  return entries;
 }
 
 // ─── Get Call Provider Info ──────────────────────────────────────────────────
@@ -76,10 +98,12 @@ router.get(
 
 // ─── Diagnostic: check if TURN is configured (no auth required) ─────────────
 router.get('/turn-status', (_req, res: Response) => {
+  const turnServers = buildEnvTurnServers();
   res.json({
     turnConfigured: isTurnConfigured,
     twilioConfigured: isTwilioConfigured,
-    turnUrlCount: isTurnConfigured ? env.TURN_SERVER_URLS!.split(',').length : 0,
+    turnUrlCount: turnServers.length,
+    turnUrls: turnServers.map((s) => s.urls),
   });
 });
 
