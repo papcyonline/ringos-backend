@@ -7,16 +7,25 @@ import { logger } from '../../shared/logger';
 
 const router = Router();
 
-// Free STUN-only fallback (used when Twilio is not configured)
-const STUN_ONLY_SERVERS = [
+// Free STUN servers (always included)
+const STUN_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
 ];
 
 const isTwilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN);
+const isTurnConfigured = !!(env.TURN_SERVER_URLS && env.TURN_USERNAME && env.TURN_CREDENTIAL);
+
+/** Build TURN server entries from env vars. */
+function buildEnvTurnServers(): Array<{ urls: string; username: string; credential: string }> {
+  if (!isTurnConfigured) return [];
+  const urls = env.TURN_SERVER_URLS!.split(',').map((u) => u.trim());
+  return urls.map((url) => ({
+    urls: url,
+    username: env.TURN_USERNAME!,
+    credential: env.TURN_CREDENTIAL!,
+  }));
+}
 
 // ─── Get Call Provider Info ──────────────────────────────────────────────────
 
@@ -29,27 +38,39 @@ router.get(
 );
 
 // ─── Get ICE Server Configuration ───────────────────────────────────────────
-// Returns STUN + TURN servers. When Twilio is configured, generates
-// ephemeral TURN credentials via Twilio's Network Traversal Service.
-// Falls back to free STUN-only servers otherwise.
+// Returns STUN + TURN servers. Priority:
+//   1. TURN_SERVER_URLS env vars (any TURN provider — recommended)
+//   2. Twilio NTS ephemeral credentials (if configured)
+//   3. STUN-only fallback (won't work across NATs / mobile carriers)
 
 router.get(
   '/ice-servers',
   authenticate,
   async (_req: AuthRequest, res: Response) => {
+    // 1. Custom TURN servers from env vars (highest priority)
+    if (isTurnConfigured) {
+      const servers = [...STUN_SERVERS, ...buildEnvTurnServers()];
+      logger.info({ count: servers.length }, 'Returning env-configured TURN + STUN servers');
+      res.json({ iceServers: servers });
+      return;
+    }
+
+    // 2. Twilio NTS (ephemeral TURN credentials)
     if (isTwilioConfigured) {
       try {
         const client = twilio(env.TWILIO_ACCOUNT_SID!, env.TWILIO_AUTH_TOKEN!);
         const token = await client.tokens.create();
+        logger.info('Returning Twilio NTS ICE servers');
         res.json({ iceServers: token.iceServers });
         return;
       } catch (err) {
-        logger.error({ err }, 'Failed to fetch Twilio TURN credentials, falling back to STUN');
+        logger.error({ err }, 'Twilio NTS failed — falling back to STUN-only');
       }
     }
 
-    // Fallback: STUN only
-    res.json({ iceServers: STUN_ONLY_SERVERS });
+    // 3. STUN-only fallback (will NOT work across different networks)
+    logger.warn('No TURN servers configured — calls will only work on the same network');
+    res.json({ iceServers: STUN_SERVERS });
   }
 );
 

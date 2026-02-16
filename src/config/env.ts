@@ -31,10 +31,17 @@ const envSchema = z.object({
   APPLE_KEY_ID: z.string().optional(),
   APPLE_PRIVATE_KEY: z.string().optional(),
 
-  // Twilio (SMS)
+  // Twilio (SMS + optional TURN via NTS)
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
+
+  // TURN Server (WebRTC relay — required for calls across different networks)
+  // Get free credentials from https://www.metered.ca/stun-turn or any TURN provider.
+  // Multiple URLs can be comma-separated.
+  TURN_SERVER_URLS: z.string().optional(),
+  TURN_USERNAME: z.string().optional(),
+  TURN_CREDENTIAL: z.string().optional(),
 
   // Firebase (Push Notifications)
   FIREBASE_PROJECT_ID: z.string().optional(),
