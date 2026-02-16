@@ -163,6 +163,7 @@ model User {
   likesReceived    Like[]   @relation("LikesReceived")
   reactions        MessageReaction[]
   callLogs         CallLog[]
+  spotlightLogs    SpotlightLog[]
   notifications    Notification[]
   fcmTokens        FcmToken[]
   voipTokens       VoipToken[]
@@ -447,4 +448,20 @@ model VoipToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model SpotlightLog {
+  id            String    @id @default(uuid())
+  broadcasterId String
+  note          String?
+  startedAt     DateTime  @default(now())
+  endedAt       DateTime?
+  peakViewers   Int       @default(0)
+  totalViewers  Int       @default(0)
+  connectCount  Int       @default(0)
+
+  broadcaster User @relation(fields: [broadcasterId], references: [id], onDelete: Cascade)
+
+  @@index([broadcasterId])
+  @@index([startedAt])
 }

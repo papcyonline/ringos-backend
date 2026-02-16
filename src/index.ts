@@ -8,6 +8,7 @@ import { initializeFirebase } from './config/firebase';
 import { registerChatHandlers } from './modules/chat/chat.gateway';
 import { registerMatchingHandlers } from './modules/matching/matching.gateway';
 import { registerCallHandlers } from './modules/call/call.gateway';
+import { registerSpotlightHandlers } from './modules/spotlight/spotlight.gateway';
 import { startMatchExpiryJob } from './jobs/matchExpiry';
 import { startSessionCleanupJob } from './jobs/sessionCleanup';
 import { startAvailabilityExpiryJob } from './jobs/availabilityExpiry';
@@ -30,6 +31,7 @@ async function main() {
     registerChatHandlers(io, socket);
     registerMatchingHandlers(io, socket);
     registerCallHandlers(io, socket);
+    registerSpotlightHandlers(io, socket);
   });
 
   startMatchExpiryJob();
