@@ -27,8 +27,26 @@ const callTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 /** Maximum time (ms) to wait for an answer before cleaning up server-side. */
 const CALL_TIMEOUT_MS = 60_000;
 
+/** Grace period (ms) before ending a call on disconnect. Allows brief reconnections. */
+const DISCONNECT_GRACE_MS = 10_000;
+
+/** Pending disconnect timers: userId -> { timeout, callId } */
+const disconnectGrace = new Map<string, { timeout: ReturnType<typeof setTimeout>; callId: string }>();
+
 export function registerCallHandlers(io: Server, socket: Socket): void {
   const userId: string = (socket as any).userId;
+
+  // ── Reconnection: cancel pending disconnect grace if user reconnects ──
+  const pending = disconnectGrace.get(userId);
+  if (pending) {
+    clearTimeout(pending.timeout);
+    disconnectGrace.delete(userId);
+    const call = activeCalls.get(pending.callId);
+    if (call) {
+      socket.join(`call:${pending.callId}`);
+      logger.info({ userId, callId: pending.callId }, 'User reconnected during call — grace period cancelled');
+    }
+  }
 
   /**
    * call:initiate — Start a new call. Notifies each target user
@@ -392,7 +410,10 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   });
 
   /**
-   * On disconnect, end any active call the user is in.
+   * On disconnect, start a grace period before ending the call.
+   * Mobile sockets frequently drop briefly (transport switch, background,
+   * network change). If the user reconnects within DISCONNECT_GRACE_MS,
+   * the call stays alive.
    */
   socket.on('disconnect', () => {
     const callId = userCallMap.get(userId);
@@ -401,56 +422,53 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
     const call = activeCalls.get(callId);
     if (!call) return;
 
-    if (call.isGroup && call.participantIds.size > 2) {
-      // Group call: notify others this participant left
-      call.participantIds.delete(userId);
-      userCallMap.delete(userId);
-      socket.to(`call:${callId}`).emit('call:participant-left', {
-        callId,
-        userId,
-      });
-    } else {
-      // 1-on-1 or last participant: end the call
-      socket.to(`call:${callId}`).emit('call:ended', {
-        callId,
-        endedBy: userId,
-      });
+    logger.info({ userId, callId, graceSec: DISCONNECT_GRACE_MS / 1000 }, 'User disconnected during call — starting grace period');
 
-      // Update CallLog
-      const now = new Date();
-      const durationSecs = call.answeredAt
-        ? Math.round((now.getTime() - call.answeredAt.getTime()) / 1000)
-        : undefined;
-      prisma.callLog.update({
-        where: { callId },
-        data: {
-          endedAt: now,
-          ...(durationSecs !== undefined ? { durationSecs } : {}),
-        },
-      }).catch((dbErr) => {
-        logger.error({ dbErr, callId }, 'Failed to update CallLog on disconnect');
-      });
+    const timeout = setTimeout(async () => {
+      disconnectGrace.delete(userId);
 
-      // Track call minutes for all participants on disconnect
-      if (durationSecs !== undefined && durationSecs > 0) {
-        for (const pid of call.participantIds) {
-          addCallMinutes(pid, durationSecs).catch((err) => {
-            logger.error({ err, userId: pid, callId }, 'Failed to track call minutes on disconnect');
-          });
+      // Re-check: the call might have ended normally during the grace period
+      const currentCall = activeCalls.get(callId);
+      if (!currentCall) return;
+
+      if (currentCall.isGroup && currentCall.participantIds.size > 2) {
+        currentCall.participantIds.delete(userId);
+        userCallMap.delete(userId);
+        io.to(`call:${callId}`).emit('call:participant-left', { callId, userId });
+      } else {
+        // Grace period expired — end the call
+        io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: userId });
+
+        const now = new Date();
+        const durationSecs = currentCall.answeredAt
+          ? Math.round((now.getTime() - currentCall.answeredAt.getTime()) / 1000)
+          : undefined;
+
+        prisma.callLog.update({
+          where: { callId },
+          data: { endedAt: now, ...(durationSecs !== undefined ? { durationSecs } : {}) },
+        }).catch((dbErr) => {
+          logger.error({ dbErr, callId }, 'Failed to update CallLog on disconnect grace expiry');
+        });
+
+        if (durationSecs !== undefined && durationSecs > 0) {
+          for (const pid of currentCall.participantIds) {
+            addCallMinutes(pid, durationSecs).catch((err) => {
+              logger.error({ err, userId: pid, callId }, 'Failed to track call minutes');
+            });
+          }
         }
+
+        io.in(`call:${callId}`).fetchSockets().then((sockets) => {
+          for (const s of sockets) s.leave(`call:${callId}`);
+        }).catch(() => {});
+
+        cleanupCall(callId);
+        logger.info({ userId, callId }, 'Call ended after disconnect grace period expired');
       }
+    }, DISCONNECT_GRACE_MS);
 
-      // Make remaining sockets leave the call room
-      io.in(`call:${callId}`).fetchSockets().then((sockets) => {
-        for (const s of sockets) s.leave(`call:${callId}`);
-      }).catch((err) => {
-        logger.error({ err, callId }, 'Failed to clean up call room sockets');
-      });
-
-      cleanupCall(callId);
-    }
-
-    logger.info({ userId, callId }, 'User disconnected during call');
+    disconnectGrace.set(userId, { timeout, callId });
   });
 }
 
