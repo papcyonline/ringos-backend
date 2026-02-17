@@ -65,6 +65,11 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
     }
   }
 
+  // ── spotlight:join-room — let any user join the broadcast room to receive updates ──
+  socket.on('spotlight:join-room', () => {
+    socket.join('spotlight:live');
+  });
+
   // ── spotlight:go-live ──
   socket.on('spotlight:go-live', async (data: { note?: string }) => {
     try {
