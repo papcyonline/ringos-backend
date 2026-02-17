@@ -310,8 +310,21 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
         logger.error({ dbErr, callId }, 'Failed to create CallLog for spotlight connect');
       }
 
-      // Notify both sides with callId for direct connect
-      const payload = { conversationId, viewerId: userId, broadcasterId, callId };
+      // Fetch viewer's display name for the broadcaster's call screen
+      const viewer = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { displayName: true },
+      });
+
+      // Notify both sides with callId + display names for direct connect
+      const payload = {
+        conversationId,
+        viewerId: userId,
+        broadcasterId,
+        callId,
+        viewerName: viewer?.displayName ?? 'Unknown',
+        broadcasterName: entry.displayName,
+      };
       io.to(`user:${userId}`).emit('spotlight:connect-accepted', payload);
       io.to(`user:${broadcasterId}`).emit('spotlight:connect-accepted', payload);
 
