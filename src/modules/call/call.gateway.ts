@@ -19,7 +19,12 @@ interface ActiveCall {
 const activeCalls = new Map<string, ActiveCall>();
 
 /** Reverse index: userId -> callId for quick lookup. */
-export const userCallMap = new Map<string, string>();
+const userCallMap = new Map<string, string>();
+
+/** Check whether a user is currently in an active call. */
+export function isUserInCall(userId: string): boolean {
+  return userCallMap.has(userId);
+}
 
 /** Timeout handles for unanswered calls (server-side cleanup). */
 const callTimeouts = new Map<string, ReturnType<typeof setTimeout>>();

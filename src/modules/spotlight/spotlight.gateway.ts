@@ -1,8 +1,15 @@
 import { Server, Socket } from 'socket.io';
-import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
-import { createSpotlightLog, endSpotlightLog } from './spotlight.service';
-import { userCallMap } from '../call/call.gateway';
+import {
+  createSpotlightLog,
+  endSpotlightLog,
+  getBlockedUserIds,
+  buildBroadcasterList,
+  findOrCreateConversation,
+  areUsersBlocked,
+  isUserInCall,
+} from './spotlight.service';
+import { prisma } from '../../config/database';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -18,7 +25,7 @@ interface BroadcasterEntry {
   connectCount: number;
 }
 
-// ─── In-memory state (exported for REST endpoint) ──────────
+// ─── In-memory state (exported read-only for REST endpoint) ──
 
 /** userId -> BroadcasterEntry */
 export const liveBroadcasters = new Map<string, BroadcasterEntry>();
@@ -28,6 +35,9 @@ const viewerToBroadcaster = new Map<string, string>();
 
 /** Grace period timers for disconnected users */
 const disconnectGrace = new Map<string, { timeout: ReturnType<typeof setTimeout>; role: 'broadcaster' | 'viewer' }>();
+
+/** Async guard: prevents double go-live while DB write is in-flight */
+const pendingGoLive = new Set<string>();
 
 const MAX_VIEWERS_PER_BROADCASTER = 8;
 const DISCONNECT_GRACE_MS = 10_000;
@@ -57,47 +67,57 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
   // ── spotlight:go-live ──
   socket.on('spotlight:go-live', async (data: { note?: string }) => {
     try {
+      // Async race guard
+      if (pendingGoLive.has(userId)) {
+        socket.emit('spotlight:error', { message: 'Already going live, please wait' });
+        return;
+      }
       if (liveBroadcasters.has(userId)) {
         socket.emit('spotlight:error', { message: 'Already broadcasting' });
         return;
       }
 
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { displayName: true, avatarUrl: true, bio: true },
-      });
-      if (!user) return;
+      pendingGoLive.add(userId);
+      try {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { displayName: true, avatarUrl: true, bio: true },
+        });
+        if (!user) return;
 
-      const logId = await createSpotlightLog(userId, data.note);
+        const logId = await createSpotlightLog(userId, data.note);
 
-      const entry: BroadcasterEntry = {
-        displayName: user.displayName,
-        avatarUrl: user.avatarUrl,
-        bio: user.bio,
-        note: data.note ?? null,
-        startedAt: new Date(),
-        viewerIds: new Set(),
-        logId,
-        totalViewers: 0,
-        connectCount: 0,
-      };
+        const entry: BroadcasterEntry = {
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          bio: user.bio,
+          note: data.note ?? null,
+          startedAt: new Date(),
+          viewerIds: new Set(),
+          logId,
+          totalViewers: 0,
+          connectCount: 0,
+        };
 
-      liveBroadcasters.set(userId, entry);
-      socket.join('spotlight:live');
+        liveBroadcasters.set(userId, entry);
+        socket.join('spotlight:live');
 
-      // Notify all viewers in the spotlight room about the new broadcaster
-      socket.to('spotlight:live').emit('spotlight:new-broadcaster', {
-        userId,
-        displayName: entry.displayName,
-        avatarUrl: entry.avatarUrl,
-        bio: entry.bio,
-        note: entry.note,
-        viewerCount: 0,
-        startedAt: entry.startedAt.toISOString(),
-      });
+        // Notify all viewers in the spotlight room about the new broadcaster
+        socket.to('spotlight:live').emit('spotlight:new-broadcaster', {
+          userId,
+          displayName: entry.displayName,
+          avatarUrl: entry.avatarUrl,
+          bio: entry.bio,
+          note: entry.note,
+          viewerCount: 0,
+          startedAt: entry.startedAt.toISOString(),
+        });
 
-      socket.emit('spotlight:go-live-ok', { logId });
-      logger.info({ userId, logId }, 'Broadcaster went live on Spotlight');
+        socket.emit('spotlight:go-live-ok', { logId });
+        logger.info({ userId, logId }, 'Broadcaster went live on Spotlight');
+      } finally {
+        pendingGoLive.delete(userId);
+      }
     } catch (error) {
       logger.error({ error, userId }, 'Error going live on Spotlight');
       socket.emit('spotlight:error', { message: 'Failed to go live' });
@@ -109,30 +129,11 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
     await endBroadcast(io, userId, 'self');
   });
 
-  // ── spotlight:list ──
+  // ── spotlight:list — uses DRY helpers from service ──
   socket.on('spotlight:list', async (_, callback) => {
     try {
-      // Fetch blocks for the requesting user
-      const blocks = await prisma.block.findMany({
-        where: { OR: [{ blockerId: userId }, { blockedId: userId }] },
-        select: { blockerId: true, blockedId: true },
-      });
-      const blockedIds = new Set<string>();
-      for (const b of blocks) {
-        blockedIds.add(b.blockerId === userId ? b.blockedId : b.blockerId);
-      }
-
-      const list = Array.from(liveBroadcasters.entries())
-        .filter(([id]) => id !== userId && !blockedIds.has(id) && !userCallMap.has(id))
-        .map(([id, entry]) => ({
-          userId: id,
-          displayName: entry.displayName,
-          avatarUrl: entry.avatarUrl,
-          bio: entry.bio,
-          note: entry.note,
-          viewerCount: entry.viewerIds.size,
-          startedAt: entry.startedAt.toISOString(),
-        }));
+      const blockedIds = await getBlockedUserIds(userId);
+      const list = buildBroadcasterList(liveBroadcasters, userId, blockedIds);
 
       if (typeof callback === 'function') {
         callback({ broadcasters: list });
@@ -148,7 +149,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
   });
 
   // ── spotlight:viewer-join ──
-  socket.on('spotlight:viewer-join', (data: { broadcasterId: string }) => {
+  socket.on('spotlight:viewer-join', async (data: { broadcasterId: string }) => {
     try {
       const { broadcasterId } = data;
       const entry = liveBroadcasters.get(broadcasterId);
@@ -159,6 +160,13 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
 
       if (entry.viewerIds.size >= MAX_VIEWERS_PER_BROADCASTER) {
         socket.emit('spotlight:error', { message: 'Broadcaster is full', code: 'FULL' });
+        return;
+      }
+
+      // Block check: prevent blocked users from viewing each other
+      const blocked = await areUsersBlocked(userId, broadcasterId);
+      if (blocked) {
+        socket.emit('spotlight:error', { message: 'Cannot view this broadcaster' });
         return;
       }
 
@@ -230,40 +238,30 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
         return;
       }
 
-      // Get or create 1-on-1 conversation between viewer and broadcaster
-      let conversation = await prisma.conversation.findFirst({
-        where: {
-          type: 'HUMAN_MATCHED',
-          participants: {
-            every: { userId: { in: [userId, broadcasterId] } },
-          },
-        },
-        include: { participants: true },
-      });
-
-      if (!conversation || conversation.participants.length !== 2) {
-        conversation = await prisma.conversation.create({
-          data: {
-            type: 'HUMAN_MATCHED',
-            participants: {
-              create: [
-                { userId, role: 'MEMBER' },
-                { userId: broadcasterId, role: 'MEMBER' },
-              ],
-            },
-          },
-          include: { participants: true },
-        });
+      // Block check before creating conversation
+      const blocked = await areUsersBlocked(userId, broadcasterId);
+      if (blocked) {
+        socket.emit('spotlight:error', { message: 'Cannot connect with this user' });
+        return;
       }
+
+      // Prevent connecting if either user is already in a call
+      if (isUserInCall(userId) || isUserInCall(broadcasterId)) {
+        socket.emit('spotlight:error', { message: 'User is already in a call' });
+        return;
+      }
+
+      // ACID-safe find-or-create conversation
+      const conversationId = await findOrCreateConversation(userId, broadcasterId);
 
       entry.connectCount += 1;
 
       // Notify both sides
-      const payload = { conversationId: conversation.id, viewerId: userId, broadcasterId };
+      const payload = { conversationId, viewerId: userId, broadcasterId };
       io.to(`user:${userId}`).emit('spotlight:connect-accepted', payload);
       io.to(`user:${broadcasterId}`).emit('spotlight:connect-accepted', payload);
 
-      logger.info({ viewerId: userId, broadcasterId, conversationId: conversation.id }, 'Spotlight connect initiated');
+      logger.info({ viewerId: userId, broadcasterId, conversationId }, 'Spotlight connect initiated');
     } catch (error) {
       logger.error({ error, userId }, 'Error processing spotlight connect');
       socket.emit('spotlight:error', { message: 'Failed to connect' });
