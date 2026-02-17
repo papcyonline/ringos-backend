@@ -73,7 +73,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
   // ── spotlight:go-live ──
   socket.on('spotlight:go-live', async (data: { note?: string }) => {
     try {
-      if (data?.note !== undefined && typeof data.note !== 'string') return;
+      if (data?.note != null && typeof data.note !== 'string') return;
 
       // Async race guard
       if (pendingGoLive.has(userId)) {
