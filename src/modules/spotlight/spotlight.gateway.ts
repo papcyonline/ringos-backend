@@ -18,6 +18,8 @@ interface BroadcasterEntry {
   avatarUrl: string | null;
   bio: string | null;
   note: string | null;
+  isVerified: boolean;
+  location: string | null;
   startedAt: Date;
   viewerIds: Set<string>;
   logId: string;
@@ -70,6 +72,11 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
     socket.join('spotlight:live');
   });
 
+  // ── spotlight:leave-room — stop receiving broadcast updates ──
+  socket.on('spotlight:leave-room', () => {
+    socket.leave('spotlight:live');
+  });
+
   // ── spotlight:go-live ──
   socket.on('spotlight:go-live', async (data: { note?: string }) => {
     try {
@@ -89,7 +96,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
       try {
         const user = await prisma.user.findUnique({
           where: { id: userId },
-          select: { displayName: true, avatarUrl: true, bio: true },
+          select: { displayName: true, avatarUrl: true, bio: true, isVerified: true, location: true },
         });
         if (!user) return;
 
@@ -100,6 +107,8 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
           avatarUrl: user.avatarUrl,
           bio: user.bio,
           note: data.note ?? null,
+          isVerified: user.isVerified,
+          location: user.location,
           startedAt: new Date(),
           viewerIds: new Set(),
           logId,
@@ -118,6 +127,8 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
           avatarUrl: entry.avatarUrl,
           bio: entry.bio,
           note: entry.note,
+          isVerified: entry.isVerified,
+          location: entry.location,
           viewerCount: 0,
           startedAt: entry.startedAt.toISOString(),
         });

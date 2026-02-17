@@ -56,6 +56,8 @@ interface BroadcasterListEntry {
   avatarUrl: string | null;
   bio: string | null;
   note: string | null;
+  isVerified: boolean;
+  location: string | null;
   startedAt: Date;
   viewerIds: Set<string>;
 }
@@ -70,6 +72,8 @@ export function buildBroadcasterList(
   avatarUrl: string | null;
   bio: string | null;
   note: string | null;
+  isVerified: boolean;
+  location: string | null;
   viewerCount: number;
   startedAt: string;
 }> {
@@ -81,6 +85,8 @@ export function buildBroadcasterList(
       avatarUrl: entry.avatarUrl,
       bio: entry.bio,
       note: entry.note,
+      isVerified: entry.isVerified,
+      location: entry.location,
       viewerCount: entry.viewerIds.size,
       startedAt: entry.startedAt.toISOString(),
     }));
