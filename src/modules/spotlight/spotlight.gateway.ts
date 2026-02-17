@@ -21,6 +21,7 @@ interface BroadcasterEntry {
   startedAt: Date;
   viewerIds: Set<string>;
   logId: string;
+  peakViewers: number;
   totalViewers: number;
   connectCount: number;
 }
@@ -67,6 +68,8 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
   // ── spotlight:go-live ──
   socket.on('spotlight:go-live', async (data: { note?: string }) => {
     try {
+      if (data?.note !== undefined && typeof data.note !== 'string') return;
+
       // Async race guard
       if (pendingGoLive.has(userId)) {
         socket.emit('spotlight:error', { message: 'Already going live, please wait' });
@@ -95,6 +98,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
           startedAt: new Date(),
           viewerIds: new Set(),
           logId,
+          peakViewers: 0,
           totalViewers: 0,
           connectCount: 0,
         };
@@ -151,6 +155,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
   // ── spotlight:viewer-join ──
   socket.on('spotlight:viewer-join', async (data: { broadcasterId: string }) => {
     try {
+      if (!data?.broadcasterId || typeof data.broadcasterId !== 'string') return;
       const { broadcasterId } = data;
       const entry = liveBroadcasters.get(broadcasterId);
       if (!entry) {
@@ -178,6 +183,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
 
       entry.viewerIds.add(userId);
       entry.totalViewers += 1;
+      entry.peakViewers = Math.max(entry.peakViewers, entry.viewerIds.size);
       viewerToBroadcaster.set(userId, broadcasterId);
       socket.join('spotlight:live');
 
@@ -215,6 +221,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
     candidate?: Record<string, unknown>;
   }) => {
     try {
+      if (!data?.to || typeof data.to !== 'string' || !data?.type || typeof data.type !== 'string') return;
       const { to, type, sdp, candidate } = data;
 
       io.to(`user:${to}`).emit('spotlight:signal', {
@@ -231,6 +238,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
   // ── spotlight:connect — viewer wants to video-call the broadcaster ──
   socket.on('spotlight:connect', async (data: { broadcasterId: string }) => {
     try {
+      if (!data?.broadcasterId || typeof data.broadcasterId !== 'string') return;
       const { broadcasterId } = data;
       const entry = liveBroadcasters.get(broadcasterId);
       if (!entry) {
@@ -260,6 +268,9 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
       const payload = { conversationId, viewerId: userId, broadcasterId };
       io.to(`user:${userId}`).emit('spotlight:connect-accepted', payload);
       io.to(`user:${broadcasterId}`).emit('spotlight:connect-accepted', payload);
+
+      // End the broadcast so other viewers don't see a stale feed
+      await endBroadcast(io, broadcasterId, 'connect');
 
       logger.info({ viewerId: userId, broadcasterId, conversationId }, 'Spotlight connect initiated');
     } catch (error) {
@@ -317,7 +328,7 @@ async function endBroadcast(io: Server, broadcasterId: string, reason: string): 
 
   // End the SpotlightLog
   await endSpotlightLog(entry.logId, {
-    peakViewers: entry.totalViewers,
+    peakViewers: entry.peakViewers,
     totalViewers: entry.totalViewers,
     connectCount: entry.connectCount,
   });
