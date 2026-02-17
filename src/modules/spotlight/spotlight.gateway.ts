@@ -9,6 +9,7 @@ import {
   areUsersBlocked,
   isUserInCall,
 } from './spotlight.service';
+import { createDirectCall } from '../call/call.gateway';
 import { prisma } from '../../config/database';
 
 // ─── Types ──────────────────────────────────────────────────
@@ -280,8 +281,37 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
 
       entry.connectCount += 1;
 
-      // Notify both sides
-      const payload = { conversationId, viewerId: userId, broadcasterId };
+      // Create call directly — no ringing, instant connect
+      const callId = createDirectCall({
+        conversationId,
+        initiatorId: userId,
+        participantIds: [userId, broadcasterId],
+        callType: 'VIDEO',
+      });
+
+      // Join both users' sockets to the call room for signal relay
+      const viewerSockets = await io.in(`user:${userId}`).fetchSockets();
+      for (const s of viewerSockets) s.join(`call:${callId}`);
+      const broadcasterSockets = await io.in(`user:${broadcasterId}`).fetchSockets();
+      for (const s of broadcasterSockets) s.join(`call:${callId}`);
+
+      // Create CallLog as COMPLETED (no missed-call timeout needed)
+      try {
+        await prisma.callLog.create({
+          data: {
+            callId,
+            conversationId,
+            initiatorId: userId,
+            callType: 'VIDEO',
+            status: 'COMPLETED',
+          },
+        });
+      } catch (dbErr) {
+        logger.error({ dbErr, callId }, 'Failed to create CallLog for spotlight connect');
+      }
+
+      // Notify both sides with callId for direct connect
+      const payload = { conversationId, viewerId: userId, broadcasterId, callId };
       io.to(`user:${userId}`).emit('spotlight:connect-accepted', payload);
       io.to(`user:${broadcasterId}`).emit('spotlight:connect-accepted', payload);
 

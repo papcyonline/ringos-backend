@@ -26,6 +26,34 @@ export function isUserInCall(userId: string): boolean {
   return userCallMap.has(userId);
 }
 
+/**
+ * Create a call entry that is already "answered" — no ringing phase.
+ * Used by Spotlight direct-connect to skip the incoming-call flow.
+ * Returns the generated callId.
+ */
+export function createDirectCall(params: {
+  conversationId: string;
+  initiatorId: string;
+  participantIds: string[];
+  callType: 'AUDIO' | 'VIDEO';
+}): string {
+  const callId = randomUUID();
+  const call: ActiveCall = {
+    callId,
+    conversationId: params.conversationId,
+    initiatorId: params.initiatorId,
+    participantIds: new Set(params.participantIds),
+    isGroup: false,
+    callType: params.callType,
+    answeredAt: new Date(), // Already answered — skip ringing
+  };
+  activeCalls.set(callId, call);
+  for (const pid of params.participantIds) {
+    userCallMap.set(pid, callId);
+  }
+  return callId;
+}
+
 /** Timeout handles for unanswered calls (server-side cleanup). */
 const callTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
