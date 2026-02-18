@@ -225,28 +225,30 @@ async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionCl
   const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
 
-  // Count reports in the last 24h
-  const reportsIn24h = await db.report.count({
-    where: {
-      reportedId: userId,
-      createdAt: { gte: twentyFourHoursAgo },
-    },
-  });
-
-  // Count reports in the last 48h
-  const reportsIn48h = await db.report.count({
-    where: {
-      reportedId: userId,
-      createdAt: { gte: fortyEightHoursAgo },
-    },
-  });
-
-  // Count total reports
+  // Count total reports (all-time, never resets — used for escalation)
   const totalReports = await db.report.count({
     where: { reportedId: userId },
   });
 
-  // 5 flags in 48h → TEMP_BAN
+  // Count reports in the last 24h and 48h
+  const reportsIn24h = await db.report.count({
+    where: { reportedId: userId, createdAt: { gte: twentyFourHoursAgo } },
+  });
+  const reportsIn48h = await db.report.count({
+    where: { reportedId: userId, createdAt: { gte: fortyEightHoursAgo } },
+  });
+
+  // 5+ total reports ever → PERMANENT_BAN (highest priority, irreversible)
+  if (totalReports >= 5) {
+    await db.user.update({
+      where: { id: userId },
+      data: { banStatus: 'PERMANENT_BAN', banExpiresAt: null },
+    });
+    logger.warn({ userId, totalReports }, 'User permanently banned: 5+ total reports');
+    return;
+  }
+
+  // 5 reports in 48h → TEMP_BAN (24h) — rapid-fire abuse pattern
   if (reportsIn48h >= 5) {
     await db.user.update({
       where: { id: userId },
@@ -255,21 +257,11 @@ async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionCl
         banExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
       },
     });
-    logger.warn({ userId, reportsIn48h }, 'User temp-banned: 5+ flags in 48h');
+    logger.warn({ userId, reportsIn48h }, 'User temp-banned: 5+ reports in 48h');
     return;
   }
 
-  // 3 flags in 24h → WARNING
-  if (reportsIn24h >= 3) {
-    await db.user.update({
-      where: { id: userId },
-      data: { banStatus: 'WARNING' },
-    });
-    logger.warn({ userId, reportsIn24h }, 'User warned: 3+ flags in 24h');
-    return;
-  }
-
-  // 3+ total reports → auto TEMP_BAN
+  // 3+ total reports → TEMP_BAN (24h)
   if (totalReports >= 3) {
     await db.user.update({
       where: { id: userId },
@@ -279,6 +271,16 @@ async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionCl
       },
     });
     logger.warn({ userId, totalReports }, 'User temp-banned: 3+ total reports');
+    return;
+  }
+
+  // 3 reports in 24h → WARNING
+  if (reportsIn24h >= 3) {
+    await db.user.update({
+      where: { id: userId },
+      data: { banStatus: 'WARNING' },
+    });
+    logger.warn({ userId, reportsIn24h }, 'User warned: 3+ reports in 24h');
     return;
   }
 }

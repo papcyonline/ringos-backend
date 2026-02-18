@@ -82,6 +82,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
       verifiedRole: true,
       isProfilePublic: true,
       hideOnlineStatus: true,
+      flagCount: true,
       createdAt: true,
       _count: { select: { followsReceived: true, likesReceived: true } },
     },
@@ -129,6 +130,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
     isFollowedByMe: !!followRecord,
     likeCount: user._count.likesReceived,
     isLikedByMe: !!likeRecord,
+    reportCount: user.flagCount,
     createdAt: user.createdAt,
   };
 }
@@ -167,6 +169,7 @@ export async function listUsers(currentUserId: string) {
       verifiedRole: true,
       isProfilePublic: true,
       hideOnlineStatus: true,
+      flagCount: true,
       preference: { select: { language: true } },
       _count: { select: { followsReceived: true, likesReceived: true } },
     },
@@ -212,6 +215,7 @@ export async function listUsers(currentUserId: string) {
       isFollowedByMe: followingSet.has(user.id),
       likeCount: user._count.likesReceived,
       isLikedByMe: likedSet.has(user.id),
+      reportCount: user.flagCount,
     };
   });
 }
