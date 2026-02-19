@@ -78,12 +78,14 @@ export async function buildBroadcasterList(
   startedAt: string;
   isLiked: boolean;
   isFollowed: boolean;
+  followerCount: number;
+  likeCount: number;
 }>> {
   const broadcasterIds = Array.from(liveBroadcasters.keys())
     .filter((id) => id !== requesterId && !blockedIds.has(id) && !isUserInCall(id));
 
-  // Batch-fetch like and follow relationships for the requester
-  const [likes, follows] = await Promise.all([
+  // Batch-fetch requester relationships + broadcaster counts in parallel
+  const [likes, follows, followerCounts, likeCounts] = await Promise.all([
     prisma.like.findMany({
       where: { likerId: requesterId, likedId: { in: broadcasterIds } },
       select: { likedId: true },
@@ -92,10 +94,22 @@ export async function buildBroadcasterList(
       where: { followerId: requesterId, followingId: { in: broadcasterIds } },
       select: { followingId: true },
     }),
+    prisma.follow.groupBy({
+      by: ['followingId'],
+      where: { followingId: { in: broadcasterIds } },
+      _count: true,
+    }),
+    prisma.like.groupBy({
+      by: ['likedId'],
+      where: { likedId: { in: broadcasterIds } },
+      _count: true,
+    }),
   ]);
 
   const likedSet = new Set(likes.map((l) => l.likedId));
   const followedSet = new Set(follows.map((f) => f.followingId));
+  const followerMap = new Map(followerCounts.map((r) => [r.followingId, r._count]));
+  const likeMap = new Map(likeCounts.map((r) => [r.likedId, r._count]));
 
   return broadcasterIds.map((id) => {
     const entry = liveBroadcasters.get(id)!;
@@ -111,6 +125,8 @@ export async function buildBroadcasterList(
       startedAt: entry.startedAt.toISOString(),
       isLiked: likedSet.has(id),
       isFollowed: followedSet.has(id),
+      followerCount: followerMap.get(id) ?? 0,
+      likeCount: likeMap.get(id) ?? 0,
     };
   });
 }
