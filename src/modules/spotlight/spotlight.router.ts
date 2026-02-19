@@ -17,7 +17,7 @@ router.get(
     try {
       const userId = req.user!.userId;
       const blockedIds = await getBlockedUserIds(userId);
-      const list = buildBroadcasterList(liveBroadcasters, userId, blockedIds);
+      const list = await buildBroadcasterList(liveBroadcasters, userId, blockedIds);
       res.json({ broadcasters: list });
     } catch (error) {
       logger.error({ error }, 'Error listing live broadcasters');

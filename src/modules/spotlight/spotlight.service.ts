@@ -62,11 +62,11 @@ interface BroadcasterListEntry {
   viewerCount: number;
 }
 
-export function buildBroadcasterList(
+export async function buildBroadcasterList(
   liveBroadcasters: Map<string, BroadcasterListEntry>,
   requesterId: string,
   blockedIds: Set<string>,
-): Array<{
+): Promise<Array<{
   userId: string;
   displayName: string;
   avatarUrl: string | null;
@@ -76,10 +76,30 @@ export function buildBroadcasterList(
   location: string | null;
   viewerCount: number;
   startedAt: string;
-}> {
-  return Array.from(liveBroadcasters.entries())
-    .filter(([id]) => id !== requesterId && !blockedIds.has(id) && !isUserInCall(id))
-    .map(([id, entry]) => ({
+  isLiked: boolean;
+  isFollowed: boolean;
+}>> {
+  const broadcasterIds = Array.from(liveBroadcasters.keys())
+    .filter((id) => id !== requesterId && !blockedIds.has(id) && !isUserInCall(id));
+
+  // Batch-fetch like and follow relationships for the requester
+  const [likes, follows] = await Promise.all([
+    prisma.like.findMany({
+      where: { likerId: requesterId, likedId: { in: broadcasterIds } },
+      select: { likedId: true },
+    }),
+    prisma.follow.findMany({
+      where: { followerId: requesterId, followingId: { in: broadcasterIds } },
+      select: { followingId: true },
+    }),
+  ]);
+
+  const likedSet = new Set(likes.map((l) => l.likedId));
+  const followedSet = new Set(follows.map((f) => f.followingId));
+
+  return broadcasterIds.map((id) => {
+    const entry = liveBroadcasters.get(id)!;
+    return {
       userId: id,
       displayName: entry.displayName,
       avatarUrl: entry.avatarUrl,
@@ -89,7 +109,10 @@ export function buildBroadcasterList(
       location: entry.location,
       viewerCount: entry.viewerCount,
       startedAt: entry.startedAt.toISOString(),
-    }));
+      isLiked: likedSet.has(id),
+      isFollowed: followedSet.has(id),
+    };
+  });
 }
 
 // ─── Find-or-create 1-on-1 conversation (ACID-safe) ────────
