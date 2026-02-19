@@ -23,6 +23,7 @@ interface BroadcasterEntry {
   location: string | null;
   startedAt: Date;
   viewerIds: Set<string>;
+  previewViewerIds: Set<string>;
   logId: string;
   peakViewers: number;
   totalViewers: number;
@@ -34,8 +35,11 @@ interface BroadcasterEntry {
 /** userId -> BroadcasterEntry */
 export const liveBroadcasters = new Map<string, BroadcasterEntry>();
 
-/** viewerUserId -> broadcasterUserId */
+/** viewerUserId -> broadcasterUserId (real viewers) */
 const viewerToBroadcaster = new Map<string, string>();
+
+/** viewerUserId -> broadcasterUserId (preview viewers — not counted toward capacity/stats) */
+const previewToBroadcaster = new Map<string, string>();
 
 /** Grace period timers for disconnected users */
 const disconnectGrace = new Map<string, { timeout: ReturnType<typeof setTimeout>; role: 'broadcaster' | 'viewer' }>();
@@ -44,6 +48,7 @@ const disconnectGrace = new Map<string, { timeout: ReturnType<typeof setTimeout>
 const pendingGoLive = new Set<string>();
 
 const MAX_VIEWERS_PER_BROADCASTER = 8;
+const MAX_PREVIEW_VIEWERS_PER_BROADCASTER = 20;
 const DISCONNECT_GRACE_MS = 10_000;
 
 // ─── Handler registration ───────────────────────────────────
@@ -112,6 +117,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
           location: user.location,
           startedAt: new Date(),
           viewerIds: new Set(),
+          previewViewerIds: new Set(),
           logId,
           peakViewers: 0,
           totalViewers: 0,
@@ -170,18 +176,14 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
   });
 
   // ── spotlight:viewer-join ──
-  socket.on('spotlight:viewer-join', async (data: { broadcasterId: string }) => {
+  socket.on('spotlight:viewer-join', async (data: { broadcasterId: string; preview?: boolean }) => {
     try {
       if (!data?.broadcasterId || typeof data.broadcasterId !== 'string') return;
       const { broadcasterId } = data;
+      const isPreview = data.preview === true;
       const entry = liveBroadcasters.get(broadcasterId);
       if (!entry) {
         socket.emit('spotlight:error', { message: 'Broadcaster not found' });
-        return;
-      }
-
-      if (entry.viewerIds.size >= MAX_VIEWERS_PER_BROADCASTER) {
-        socket.emit('spotlight:error', { message: 'Broadcaster is full', code: 'FULL' });
         return;
       }
 
@@ -192,10 +194,48 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
         return;
       }
 
-      // Clean up previous viewer connection if any
+      if (isPreview) {
+        // ── Preview join: establishes WebRTC but does not count toward capacity or stats ──
+        if (entry.previewViewerIds.size >= MAX_PREVIEW_VIEWERS_PER_BROADCASTER) {
+          return; // Silently drop — preview pool full
+        }
+
+        // Clean up any existing preview for this user on a different broadcaster
+        const prevPreview = previewToBroadcaster.get(userId);
+        if (prevPreview && prevPreview !== broadcasterId) {
+          removePreviewViewer(io, userId, prevPreview);
+        }
+
+        entry.previewViewerIds.add(userId);
+        previewToBroadcaster.set(userId, broadcasterId);
+        socket.join('spotlight:live');
+
+        // Tell broadcaster to send WebRTC offer — stream flows but user is not counted
+        io.to(`user:${broadcasterId}`).emit('spotlight:viewer-joined', {
+          viewerId: userId,
+          viewerCount: entry.viewerIds.size, // real viewer count only
+        });
+
+        logger.info({ viewerId: userId, broadcasterId }, 'Preview viewer joined spotlight');
+        return;
+      }
+
+      // ── Normal join ──
+      if (entry.viewerIds.size >= MAX_VIEWERS_PER_BROADCASTER) {
+        socket.emit('spotlight:error', { message: 'Broadcaster is full', code: 'FULL' });
+        return;
+      }
+
+      // Clean up previous real viewer connection if switching broadcasters
       const prevBroadcaster = viewerToBroadcaster.get(userId);
       if (prevBroadcaster && prevBroadcaster !== broadcasterId) {
         removeViewer(io, userId, prevBroadcaster);
+      }
+
+      // If upgrading from preview on the same broadcaster, clean preview slot first
+      if (entry.previewViewerIds.has(userId)) {
+        entry.previewViewerIds.delete(userId);
+        previewToBroadcaster.delete(userId);
       }
 
       entry.viewerIds.add(userId);
@@ -222,11 +262,52 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
     }
   });
 
+  // ── spotlight:viewer-promote — upgrade a preview connection to a real viewer ──
+  socket.on('spotlight:viewer-promote', (data: { broadcasterId: string }) => {
+    try {
+      const broadcasterId = data?.broadcasterId;
+      if (!broadcasterId || typeof broadcasterId !== 'string') return;
+
+      const entry = liveBroadcasters.get(broadcasterId);
+      if (!entry || !entry.previewViewerIds.has(userId)) return;
+
+      // Check real viewer capacity before promoting
+      if (entry.viewerIds.size >= MAX_VIEWERS_PER_BROADCASTER) {
+        socket.emit('spotlight:error', { message: 'Broadcaster is full', code: 'FULL' });
+        return;
+      }
+
+      entry.previewViewerIds.delete(userId);
+      previewToBroadcaster.delete(userId);
+
+      entry.viewerIds.add(userId);
+      entry.totalViewers += 1;
+      entry.peakViewers = Math.max(entry.peakViewers, entry.viewerIds.size);
+      viewerToBroadcaster.set(userId, broadcasterId);
+
+      // Notify broadcaster of updated real viewer count
+      io.to(`user:${broadcasterId}`).emit('spotlight:viewer-joined', {
+        viewerId: userId,
+        viewerCount: entry.viewerIds.size,
+      });
+
+      logger.info({ viewerId: userId, broadcasterId, viewerCount: entry.viewerIds.size }, 'Preview viewer promoted to real viewer');
+    } catch (error) {
+      logger.error({ error, userId }, 'Error promoting preview viewer');
+    }
+  });
+
   // ── spotlight:viewer-leave ──
-  socket.on('spotlight:viewer-leave', () => {
-    const broadcasterId = viewerToBroadcaster.get(userId);
+  socket.on('spotlight:viewer-leave', (data?: { broadcasterId?: string }) => {
+    // Remove from real viewer map
+    const broadcasterId = viewerToBroadcaster.get(userId) ?? data?.broadcasterId;
     if (broadcasterId) {
       removeViewer(io, userId, broadcasterId);
+    }
+    // Also remove from preview map if present
+    const previewBroadcasterId = previewToBroadcaster.get(userId);
+    if (previewBroadcasterId) {
+      removePreviewViewer(io, userId, previewBroadcasterId);
     }
   });
 
@@ -353,10 +434,14 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
       return;
     }
 
-    // Viewer disconnect — immediate cleanup
+    // Viewer disconnect — immediate cleanup (real + preview)
     const broadcasterId = viewerToBroadcaster.get(userId);
     if (broadcasterId) {
       removeViewer(io, userId, broadcasterId);
+    }
+    const previewBroadcasterId = previewToBroadcaster.get(userId);
+    if (previewBroadcasterId) {
+      removePreviewViewer(io, userId, previewBroadcasterId);
     }
   });
 }
@@ -375,14 +460,33 @@ function removeViewer(io: Server, viewerId: string, broadcasterId: string): void
   viewerToBroadcaster.delete(viewerId);
 }
 
+function removePreviewViewer(io: Server, viewerId: string, broadcasterId: string): void {
+  const entry = liveBroadcasters.get(broadcasterId);
+  if (entry) {
+    entry.previewViewerIds.delete(viewerId);
+    // Tell broadcaster to clean up the WebRTC peer (same event as real viewer-left)
+    io.to(`user:${broadcasterId}`).emit('spotlight:viewer-left', {
+      viewerId,
+      viewerCount: entry.viewerIds.size, // real count unchanged
+    });
+  }
+  previewToBroadcaster.delete(viewerId);
+}
+
 async function endBroadcast(io: Server, broadcasterId: string, reason: string): Promise<void> {
   const entry = liveBroadcasters.get(broadcasterId);
   if (!entry) return;
 
-  // Notify all viewers
+  // Notify all real viewers
   for (const viewerId of entry.viewerIds) {
     io.to(`user:${viewerId}`).emit('spotlight:broadcaster-left', { broadcasterId });
     viewerToBroadcaster.delete(viewerId);
+  }
+
+  // Notify all preview viewers
+  for (const viewerId of entry.previewViewerIds) {
+    io.to(`user:${viewerId}`).emit('spotlight:broadcaster-left', { broadcasterId });
+    previewToBroadcaster.delete(viewerId);
   }
 
   // End the SpotlightLog
