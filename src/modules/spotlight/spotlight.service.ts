@@ -59,7 +59,7 @@ interface BroadcasterListEntry {
   isVerified: boolean;
   location: string | null;
   startedAt: Date;
-  viewerIds: Set<string>;
+  viewerCount: number;
 }
 
 export function buildBroadcasterList(
@@ -87,7 +87,7 @@ export function buildBroadcasterList(
       note: entry.note,
       isVerified: entry.isVerified,
       location: entry.location,
-      viewerCount: entry.viewerIds.size,
+      viewerCount: entry.viewerCount,
       startedAt: entry.startedAt.toISOString(),
     }));
 }
