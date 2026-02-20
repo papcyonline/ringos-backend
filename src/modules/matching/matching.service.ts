@@ -3,6 +3,7 @@ import { logger } from '../../shared/logger';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../../shared/errors';
 import { calculateMatchScore, findBestMatch, MatchCandidate } from './matching.algorithm';
 import { CreateMatchRequestInput } from './matching.schema';
+import { getBlockedUserIds } from '../spotlight/spotlight.service';
 
 // ─── Create a new match request ─────────────────────────
 
@@ -69,19 +70,7 @@ export async function attemptMatch(request: {
   topics: string[];
 }) {
   // Find all blocked user IDs (in both directions)
-  const blocks = await prisma.block.findMany({
-    where: {
-      OR: [{ blockerId: request.userId }, { blockedId: request.userId }],
-    },
-    select: { blockerId: true, blockedId: true },
-  });
-
-  const blockedUserIds = new Set<string>();
-  for (const block of blocks) {
-    blockedUserIds.add(block.blockerId);
-    blockedUserIds.add(block.blockedId);
-  }
-  blockedUserIds.delete(request.userId); // Remove self
+  const blockedUserIds = await getBlockedUserIds(request.userId);
 
   // Find all WAITING requests excluding user's own and blocked users
   const waitingRequests = await prisma.matchRequest.findMany({

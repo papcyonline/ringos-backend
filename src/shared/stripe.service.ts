@@ -189,36 +189,43 @@ export async function handleWebhook(
 
   logger.info({ type: event.type }, 'Stripe webhook received');
 
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      const session = event.data.object as Stripe.Checkout.Session;
-      await handleCheckoutComplete(session);
-      break;
-    }
+  const webhookHandlers: Record<string, (data: any) => Promise<void>> = {
+    'checkout.session.completed': handleCheckoutComplete,
+    'customer.subscription.updated': handleSubscriptionUpdate,
+    'customer.subscription.deleted': handleSubscriptionCancelled,
+    'invoice.payment_failed': handlePaymentFailed,
+  };
 
-    case 'customer.subscription.updated': {
-      const subscription = event.data.object as Stripe.Subscription;
-      await handleSubscriptionUpdate(subscription);
-      break;
-    }
-
-    case 'customer.subscription.deleted': {
-      const subscription = event.data.object as Stripe.Subscription;
-      await handleSubscriptionCancelled(subscription);
-      break;
-    }
-
-    case 'invoice.payment_failed': {
-      const invoice = event.data.object as Stripe.Invoice;
-      await handlePaymentFailed(invoice);
-      break;
-    }
-
-    default:
-      logger.debug({ type: event.type }, 'Unhandled webhook event');
+  const handler = webhookHandlers[event.type];
+  if (handler) {
+    await handler(event.data.object);
+  } else {
+    logger.debug({ type: event.type }, 'Unhandled webhook event');
   }
 
   return { received: true, type: event.type };
+}
+
+/**
+ * Find a user by Stripe customer ID and update their data atomically.
+ */
+async function updateUserByStripeCustomer(
+  customerId: string,
+  data: Record<string, unknown>,
+): Promise<string | null> {
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.findFirst({
+      where: { stripeCustomerId: customerId },
+    });
+    if (!user) return null;
+
+    await tx.user.update({
+      where: { id: user.id },
+      data,
+    });
+
+    return user.id;
+  });
 }
 
 async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
@@ -241,61 +248,28 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
 
 async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
   const customerId = subscription.customer as string;
-
-  const user = await prisma.user.findFirst({
-    where: { stripeCustomerId: customerId },
+  const userId = await updateUserByStripeCustomer(customerId, {
+    subscriptionStatus: subscription.status,
   });
-
-  if (!user) return;
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      subscriptionStatus: subscription.status,
-    },
-  });
-
-  logger.info({ userId: user.id, status: subscription.status }, 'Subscription updated');
+  if (userId) logger.info({ userId, status: subscription.status }, 'Subscription updated');
 }
 
 async function handleSubscriptionCancelled(subscription: Stripe.Subscription) {
   const customerId = subscription.customer as string;
-
-  const user = await prisma.user.findFirst({
-    where: { stripeCustomerId: customerId },
+  const userId = await updateUserByStripeCustomer(customerId, {
+    subscriptionId: null,
+    subscriptionStatus: 'cancelled',
+    subscriptionPlan: null,
   });
-
-  if (!user) return;
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      subscriptionId: null,
-      subscriptionStatus: 'cancelled',
-      subscriptionPlan: null,
-    },
-  });
-
-  logger.info({ userId: user.id }, 'Subscription cancelled');
+  if (userId) logger.info({ userId }, 'Subscription cancelled');
 }
 
 async function handlePaymentFailed(invoice: Stripe.Invoice) {
   const customerId = invoice.customer as string;
-
-  const user = await prisma.user.findFirst({
-    where: { stripeCustomerId: customerId },
+  const userId = await updateUserByStripeCustomer(customerId, {
+    subscriptionStatus: 'past_due',
   });
-
-  if (!user) return;
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      subscriptionStatus: 'past_due',
-    },
-  });
-
-  logger.info({ userId: user.id }, 'Payment failed - subscription past due');
+  if (userId) logger.info({ userId }, 'Payment failed - subscription past due');
 }
 
 export { isConfigured as isStripeConfigured };

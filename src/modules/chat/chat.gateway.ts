@@ -8,6 +8,16 @@ import { notifyChatMessage } from '../notification/notification.service';
 
 const VALID_EMOJIS = ['thumbsup', 'heart', 'laugh', 'wow', 'sad', 'pray'];
 
+function validateMessageContent(content: unknown): { valid: true } | { valid: false; error: string } {
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    return { valid: false, error: 'Message content is required' };
+  }
+  if (content.length > 2000) {
+    return { valid: false, error: 'Message exceeds maximum length of 2000 characters' };
+  }
+  return { valid: true };
+}
+
 /**
  * Register all chat-related Socket.io event handlers on a connected socket.
  */
@@ -49,13 +59,9 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     try {
       const { conversationId, content, replyToId } = data;
 
-      if (!content || typeof content !== 'string' || content.trim().length === 0) {
-        socket.emit('chat:error', { message: 'Message content is required' });
-        return;
-      }
-
-      if (content.length > 2000) {
-        socket.emit('chat:error', { message: 'Message exceeds maximum length of 2000 characters' });
+      const validation = validateMessageContent(content);
+      if (!validation.valid) {
+        socket.emit('chat:error', { message: validation.error });
         return;
       }
 
@@ -110,13 +116,9 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     try {
       const { messageId, content } = data;
 
-      if (!content || typeof content !== 'string' || content.trim().length === 0) {
-        socket.emit('chat:error', { message: 'Message content is required' });
-        return;
-      }
-
-      if (content.length > 2000) {
-        socket.emit('chat:error', { message: 'Message exceeds maximum length of 2000 characters' });
+      const validation = validateMessageContent(content);
+      if (!validation.valid) {
+        socket.emit('chat:error', { message: validation.error });
         return;
       }
 
