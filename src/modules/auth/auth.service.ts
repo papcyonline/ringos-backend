@@ -34,6 +34,13 @@ const googleClient = googleClientIds.length > 0 ? new OAuth2Client() : null;
 // Apple Sign-In configuration
 const appleClientId = env.APPLE_CLIENT_ID;
 
+/** Fire-and-forget welcome email — logs errors instead of throwing. */
+function sendWelcomeEmailAsync(email: string, name: string, userId: string): void {
+  sendWelcomeEmail(email, name).catch((err) => {
+    logger.error({ error: err, userId }, 'Failed to send welcome email');
+  });
+}
+
 function refreshTokenExpiryDate(): Date {
   // Parse JWT_REFRESH_EXPIRES_IN default of "7d" — keep it simple: 7 days
   const days = 7;
@@ -157,10 +164,7 @@ export async function register(rawEmail: string, password: string) {
 
   logger.info({ userId: user.id }, 'Email user registered');
 
-  // Send welcome email (non-blocking) — outside transaction
-  sendWelcomeEmail(email, user.displayName).catch((err) => {
-    logger.error({ error: err, userId: user.id }, 'Failed to send welcome email');
-  });
+  sendWelcomeEmailAsync(email, user.displayName, user.id);
 
   return {
     accessToken,
@@ -204,6 +208,85 @@ export async function login(rawEmail: string, password: string) {
   };
 }
 
+/**
+ * Shared social auth flow: find user by provider ID → check email → link/create → tokens → welcome email.
+ */
+async function socialAuthFlow(params: {
+  providerId: string;
+  providerField: 'googleId' | 'appleId';
+  email: string | null;
+  name: string;
+  avatarUrl?: string | null;
+  authProvider: string;
+}) {
+  const { providerId, providerField, email, name, avatarUrl, authProvider } = params;
+
+  const { user, accessToken, refreshToken, shouldSendWelcome } = await prisma.$transaction(async (tx) => {
+    let user = await tx.user.findUnique({ where: { [providerField]: providerId } as any });
+    let shouldSendWelcome = false;
+
+    if (user) {
+      logger.info({ userId: user.id }, `${authProvider} user logged in`);
+    } else if (email) {
+      const existingEmailUser = await tx.user.findUnique({ where: { email } });
+
+      if (existingEmailUser) {
+        user = await tx.user.update({
+          where: { id: existingEmailUser.id },
+          data: {
+            [providerField]: providerId,
+            ...(avatarUrl && !existingEmailUser.avatarUrl ? { avatarUrl } : {}),
+          },
+        });
+        logger.info({ userId: user.id }, `${authProvider} account linked to existing email user`);
+      } else {
+        user = await tx.user.create({
+          data: {
+            email,
+            [providerField]: providerId,
+            authProvider,
+            displayName: name,
+            ...(avatarUrl ? { avatarUrl } : {}),
+            isAnonymous: false,
+          },
+        });
+        logger.info({ userId: user.id }, `New ${authProvider} user registered`);
+        shouldSendWelcome = true;
+      }
+    } else {
+      user = await tx.user.create({
+        data: {
+          [providerField]: providerId,
+          authProvider,
+          displayName: name,
+          isAnonymous: false,
+        },
+      });
+      logger.info({ userId: user.id }, `New ${authProvider} user registered (no email)`);
+    }
+
+    const tokens = await createTokenPair(tx, user.id, false);
+    return { user, ...tokens, shouldSendWelcome };
+  });
+
+  if (shouldSendWelcome && email) {
+    sendWelcomeEmailAsync(email, name, user.id);
+  }
+
+  return {
+    accessToken,
+    refreshToken,
+    userId: user.id,
+    user: {
+      id: user.id,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      isAnonymous: false,
+    },
+    isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime()) < 5000,
+  };
+}
+
 export async function googleAuth(idToken: string) {
   if (!googleClient || googleClientIds.length === 0) {
     throw new BadRequestError('Google Sign-In is not configured');
@@ -231,63 +314,14 @@ export async function googleAuth(idToken: string) {
   const name = payload.name || generateAnonymousName();
   const avatarUrl = payload.picture || null;
 
-  const { user, accessToken, refreshToken, shouldSendWelcome } = await prisma.$transaction(async (tx) => {
-    let user = await tx.user.findUnique({ where: { googleId } });
-    let shouldSendWelcome = false;
-
-    if (user) {
-      logger.info({ userId: user.id }, 'Google user logged in');
-    } else {
-      const existingEmailUser = await tx.user.findUnique({ where: { email } });
-
-      if (existingEmailUser) {
-        user = await tx.user.update({
-          where: { id: existingEmailUser.id },
-          data: {
-            googleId,
-            avatarUrl: existingEmailUser.avatarUrl || avatarUrl,
-          },
-        });
-        logger.info({ userId: user.id }, 'Google account linked to existing email user');
-      } else {
-        user = await tx.user.create({
-          data: {
-            email,
-            googleId,
-            authProvider: 'google',
-            displayName: name,
-            avatarUrl,
-            isAnonymous: false,
-          },
-        });
-        logger.info({ userId: user.id }, 'New Google user registered');
-        shouldSendWelcome = true;
-      }
-    }
-
-    const tokens = await createTokenPair(tx, user.id, false);
-    return { user, ...tokens, shouldSendWelcome };
+  return socialAuthFlow({
+    providerId: googleId,
+    providerField: 'googleId',
+    email,
+    name,
+    avatarUrl,
+    authProvider: 'google',
   });
-
-  // Send welcome email (non-blocking) — outside transaction
-  if (shouldSendWelcome) {
-    sendWelcomeEmail(email, name).catch((err) => {
-      logger.error({ error: err, userId: user.id }, 'Failed to send welcome email');
-    });
-  }
-
-  return {
-    accessToken,
-    refreshToken,
-    userId: user.id,
-    user: {
-      id: user.id,
-      displayName: user.displayName,
-      avatarUrl: user.avatarUrl,
-      isAnonymous: false,
-    },
-    isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime()) < 5000,
-  };
 }
 
 export async function appleAuth(idToken: string, fullName?: { givenName?: string; familyName?: string }) {
@@ -318,69 +352,13 @@ export async function appleAuth(idToken: string, fullName?: { givenName?: string
     ? `${fullName.givenName}${fullName.familyName ? ' ' + fullName.familyName : ''}`.trim()
     : generateAnonymousName();
 
-  const { user, accessToken, refreshToken, welcomeEmail } = await prisma.$transaction(async (tx) => {
-    let user = await tx.user.findUnique({ where: { appleId } });
-    let welcomeEmail: string | null = null;
-
-    if (user) {
-      logger.info({ userId: user.id }, 'Apple user logged in');
-    } else if (email) {
-      const existingEmailUser = await tx.user.findUnique({ where: { email } });
-
-      if (existingEmailUser) {
-        user = await tx.user.update({
-          where: { id: existingEmailUser.id },
-          data: { appleId },
-        });
-        logger.info({ userId: user.id }, 'Apple account linked to existing email user');
-      } else {
-        user = await tx.user.create({
-          data: {
-            email,
-            appleId,
-            authProvider: 'apple',
-            displayName: name,
-            isAnonymous: false,
-          },
-        });
-        logger.info({ userId: user.id }, 'New Apple user registered');
-        welcomeEmail = email;
-      }
-    } else {
-      user = await tx.user.create({
-        data: {
-          appleId,
-          authProvider: 'apple',
-          displayName: name,
-          isAnonymous: false,
-        },
-      });
-      logger.info({ userId: user.id }, 'New Apple user registered (private email)');
-    }
-
-    const tokens = await createTokenPair(tx, user.id, false);
-    return { user, ...tokens, welcomeEmail };
+  return socialAuthFlow({
+    providerId: appleId,
+    providerField: 'appleId',
+    email,
+    name,
+    authProvider: 'apple',
   });
-
-  // Send welcome email (non-blocking) — outside transaction
-  if (welcomeEmail) {
-    sendWelcomeEmail(welcomeEmail, name).catch((err) => {
-      logger.error({ error: err, userId: user.id }, 'Failed to send welcome email');
-    });
-  }
-
-  return {
-    accessToken,
-    refreshToken,
-    userId: user.id,
-    user: {
-      id: user.id,
-      displayName: user.displayName,
-      avatarUrl: user.avatarUrl,
-      isAnonymous: false,
-    },
-    isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime()) < 5000,
-  };
 }
 
 export async function checkUsernameAvailable(username: string, excludeUserId?: string): Promise<boolean> {

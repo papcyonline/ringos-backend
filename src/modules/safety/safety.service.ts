@@ -87,33 +87,36 @@ export async function blockUser(blockerId: string, blockedId: string) {
     throw new ConflictError('User is already blocked');
   }
 
-  // Create block record
-  const block = await prisma.block.create({
-    data: { blockerId, blockedId },
-  });
-
-  // End any active conversations between the two users
-  const sharedConversations = await prisma.conversation.findMany({
-    where: {
-      status: 'ACTIVE',
-      AND: [
-        { participants: { some: { userId: blockerId } } },
-        { participants: { some: { userId: blockedId } } },
-      ],
-    },
-  });
-
-  if (sharedConversations.length > 0) {
-    await prisma.conversation.updateMany({
-      where: { id: { in: sharedConversations.map((c) => c.id) } },
-      data: { status: 'ENDED' },
+  // Create block and end shared conversations atomically
+  const block = await prisma.$transaction(async (tx) => {
+    const block = await tx.block.create({
+      data: { blockerId, blockedId },
     });
 
-    logger.info(
-      { blockerId, blockedId, endedConversations: sharedConversations.length },
-      'Ended active conversations due to block',
-    );
-  }
+    const sharedConversations = await tx.conversation.findMany({
+      where: {
+        status: 'ACTIVE',
+        AND: [
+          { participants: { some: { userId: blockerId } } },
+          { participants: { some: { userId: blockedId } } },
+        ],
+      },
+    });
+
+    if (sharedConversations.length > 0) {
+      await tx.conversation.updateMany({
+        where: { id: { in: sharedConversations.map((c) => c.id) } },
+        data: { status: 'ENDED' },
+      });
+
+      logger.info(
+        { blockerId, blockedId, endedConversations: sharedConversations.length },
+        'Ended active conversations due to block',
+      );
+    }
+
+    return block;
+  });
 
   logger.info({ blockerId, blockedId }, 'User blocked');
 

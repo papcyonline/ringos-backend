@@ -3,6 +3,23 @@ import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { isBlocked } from '../safety/safety.service';
 
+/**
+ * Compute delivery status for a message relative to the current user.
+ * Messages from others are 'sent'; own messages are 'read' or 'delivered'
+ * based on other participants' lastReadAt timestamps.
+ */
+function computeMessageStatus(
+  msg: { senderId: string; createdAt: Date },
+  userId: string,
+  otherParticipants: { lastReadAt: Date | null }[],
+): 'sent' | 'delivered' | 'read' {
+  if (msg.senderId !== userId) return 'sent';
+  const isRead = otherParticipants.some(
+    (p) => p.lastReadAt && p.lastReadAt >= msg.createdAt,
+  );
+  return isRead ? 'read' : 'delivered';
+}
+
 const messageInclude = {
   sender: {
     select: { id: true, displayName: true },
@@ -139,17 +156,13 @@ export async function getConversations(userId: string) {
         select: { callType: true, startedAt: true, initiator: { select: { displayName: true } } },
       });
 
-      // Compute delivery status for last message (same logic as chat messages)
+      // Compute delivery status for last message
       const rawLast = c.messages[0] || null;
       let lastMessage = rawLast;
-      if (rawLast && rawLast.senderId === userId) {
+      if (rawLast) {
         const otherParticipants = c.participants.filter((p) => p.userId !== userId);
-        const isRead = otherParticipants.some(
-          (p) => p.lastReadAt && p.lastReadAt >= rawLast.createdAt,
-        );
-        lastMessage = Object.assign({}, rawLast, { status: isRead ? 'read' : 'delivered' });
-      } else if (rawLast) {
-        lastMessage = Object.assign({}, rawLast, { status: 'sent' });
+        const status = computeMessageStatus(rawLast, userId, otherParticipants);
+        lastMessage = Object.assign({}, rawLast, { status });
       }
 
       return {
@@ -546,17 +559,10 @@ export async function getMessages(
   ]);
 
   // Compute message status for messages sent by the current user
-  const data = messages.map((msg) => {
-    if (msg.senderId !== userId) return { ...msg, status: 'sent' };
-
-    const isRead = participants.some(
-      (p) => p.lastReadAt && p.lastReadAt >= msg.createdAt,
-    );
-    if (isRead) return { ...msg, status: 'read' };
-
-    // Message exists in DB so it was delivered
-    return { ...msg, status: 'delivered' };
-  });
+  const data = messages.map((msg) => ({
+    ...msg,
+    status: computeMessageStatus(msg, userId, participants),
+  }));
 
   logger.debug({ conversationId, userId, page, limit, total }, 'Fetched messages');
 

@@ -48,43 +48,33 @@ function scoreIntent(intent1: string, intent2: string): number {
 
 const MOOD_MAX = 25;
 
+// Store each mood pair once (alphabetical order). The lookup checks both directions.
 const moodMatrix: Record<string, number> = {
-  // High compatibility pairs
-  'SAD+HOPEFUL': 25,
-  'HOPEFUL+SAD': 25,
-  'HAPPY+HAPPY': 25,
-  'HAPPY+EXCITED': 25,
-  'EXCITED+HAPPY': 25,
-  'EXCITED+EXCITED': 25,
-  'LONELY+LONELY': 20,
-  'SAD+SAD': 20,
-  'ANXIOUS+NEUTRAL': 20,
-  'NEUTRAL+ANXIOUS': 20,
-  'OVERWHELMED+HOPEFUL': 22,
-  'HOPEFUL+OVERWHELMED': 22,
-  'OVERWHELMED+NEUTRAL': 18,
-  'NEUTRAL+OVERWHELMED': 18,
-  'LONELY+HOPEFUL': 22,
-  'HOPEFUL+LONELY': 22,
-  'ANGRY+NEUTRAL': 18,
-  'NEUTRAL+ANGRY': 18,
-  'TIRED+NEUTRAL': 18,
-  'NEUTRAL+TIRED': 18,
-  'NEUTRAL+NEUTRAL': 20,
-  'HOPEFUL+HOPEFUL': 25,
-  'TIRED+TIRED': 18,
-  'ANXIOUS+HOPEFUL': 22,
-  'HOPEFUL+ANXIOUS': 22,
-  'ANXIOUS+ANXIOUS': 15,
   'ANGRY+ANGRY': 12,
-  'SAD+LONELY': 18,
-  'LONELY+SAD': 18,
-  'TIRED+HOPEFUL': 20,
+  'ANGRY+NEUTRAL': 18,
+  'ANXIOUS+ANXIOUS': 15,
+  'ANXIOUS+HOPEFUL': 22,
+  'ANXIOUS+NEUTRAL': 20,
+  'EXCITED+EXCITED': 25,
+  'EXCITED+HAPPY': 25,
+  'HAPPY+HAPPY': 25,
+  'HOPEFUL+HOPEFUL': 25,
+  'HOPEFUL+LONELY': 22,
+  'HOPEFUL+OVERWHELMED': 22,
+  'HOPEFUL+SAD': 25,
   'HOPEFUL+TIRED': 20,
+  'LONELY+LONELY': 20,
+  'LONELY+SAD': 18,
+  'NEUTRAL+NEUTRAL': 20,
+  'NEUTRAL+OVERWHELMED': 18,
+  'NEUTRAL+TIRED': 18,
+  'SAD+SAD': 20,
+  'TIRED+TIRED': 18,
 };
 
 function scoreMood(mood1: string, mood2: string): number {
-  const key = `${mood1}+${mood2}`;
+  // Normalize to alphabetical order so we only need one entry per pair.
+  const key = mood1 <= mood2 ? `${mood1}+${mood2}` : `${mood2}+${mood1}`;
   return moodMatrix[key] ?? 10;
 }
 

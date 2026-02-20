@@ -15,15 +15,78 @@ interface ActiveCall {
   answeredAt?: Date;
 }
 
-/** In-memory store of active calls. */
-const activeCalls = new Map<string, ActiveCall>();
+/** Maximum time (ms) to wait for an answer before cleaning up server-side. */
+const CALL_TIMEOUT_MS = 60_000;
 
-/** Reverse index: userId -> callId for quick lookup. */
-const userCallMap = new Map<string, string>();
+/** Grace period (ms) before ending a call on disconnect. Allows brief reconnections. */
+const DISCONNECT_GRACE_MS = 10_000;
+
+/** Encapsulates all in-memory call state: active calls, user→call mapping, timeouts, and disconnect grace periods. */
+class CallStateManager {
+  /** Active calls keyed by callId. */
+  readonly calls = new Map<string, ActiveCall>();
+
+  /** Reverse index: userId → callId for quick lookup. */
+  readonly userCall = new Map<string, string>();
+
+  /** Timeout handles for unanswered calls (server-side cleanup). */
+  readonly timeouts = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Pending disconnect timers: userId → { timeout, callId }. */
+  readonly disconnectGrace = new Map<string, { timeout: ReturnType<typeof setTimeout>; callId: string }>();
+
+  isUserInCall(userId: string): boolean {
+    return this.userCall.has(userId);
+  }
+
+  getCall(callId: string): ActiveCall | undefined {
+    return this.calls.get(callId);
+  }
+
+  getUserCallId(userId: string): string | undefined {
+    return this.userCall.get(userId);
+  }
+
+  addCall(call: ActiveCall): void {
+    this.calls.set(call.callId, call);
+  }
+
+  mapUserToCall(userId: string, callId: string): void {
+    this.userCall.set(userId, callId);
+  }
+
+  unmapUser(userId: string): void {
+    this.userCall.delete(userId);
+  }
+
+  setTimeout(callId: string, timeout: ReturnType<typeof globalThis.setTimeout>): void {
+    this.timeouts.set(callId, timeout);
+  }
+
+  clearTimeout(callId: string): void {
+    const timeout = this.timeouts.get(callId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.timeouts.delete(callId);
+    }
+  }
+
+  cleanup(callId: string): void {
+    const call = this.calls.get(callId);
+    if (!call) return;
+    this.clearTimeout(callId);
+    for (const participantId of call.participantIds) {
+      this.userCall.delete(participantId);
+    }
+    this.calls.delete(callId);
+  }
+}
+
+const callState = new CallStateManager();
 
 /** Check whether a user is currently in an active call. */
 export function isUserInCall(userId: string): boolean {
-  return userCallMap.has(userId);
+  return callState.isUserInCall(userId);
 }
 
 /**
@@ -47,34 +110,22 @@ export function createDirectCall(params: {
     callType: params.callType,
     answeredAt: new Date(), // Already answered — skip ringing
   };
-  activeCalls.set(callId, call);
+  callState.addCall(call);
   for (const pid of params.participantIds) {
-    userCallMap.set(pid, callId);
+    callState.mapUserToCall(pid, callId);
   }
   return callId;
 }
-
-/** Timeout handles for unanswered calls (server-side cleanup). */
-const callTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-
-/** Maximum time (ms) to wait for an answer before cleaning up server-side. */
-const CALL_TIMEOUT_MS = 60_000;
-
-/** Grace period (ms) before ending a call on disconnect. Allows brief reconnections. */
-const DISCONNECT_GRACE_MS = 10_000;
-
-/** Pending disconnect timers: userId -> { timeout, callId } */
-const disconnectGrace = new Map<string, { timeout: ReturnType<typeof setTimeout>; callId: string }>();
 
 export function registerCallHandlers(io: Server, socket: Socket): void {
   const userId: string = (socket as any).userId;
 
   // ── Reconnection: cancel pending disconnect grace if user reconnects ──
-  const pending = disconnectGrace.get(userId);
+  const pending = callState.disconnectGrace.get(userId);
   if (pending) {
     clearTimeout(pending.timeout);
-    disconnectGrace.delete(userId);
-    const call = activeCalls.get(pending.callId);
+    callState.disconnectGrace.delete(userId);
+    const call = callState.getCall(pending.callId);
     if (call) {
       socket.join(`call:${pending.callId}`);
       logger.info({ userId, callId: pending.callId }, 'User reconnected during call — grace period cancelled');
@@ -98,19 +149,18 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       logger.info({ userId, conversationId, targetUserIds, callType: resolvedCallType }, 'call:initiate received');
 
       // Clean up any stale call entry from a previous session
-      const staleCallId = userCallMap.get(userId);
+      const staleCallId = callState.getUserCallId(userId);
       if (staleCallId) {
-        const staleCall = activeCalls.get(staleCallId);
+        const staleCall = callState.getCall(staleCallId);
         if (staleCall) {
           if (!staleCall.answeredAt) {
-            cleanupCall(staleCallId);
-            clearCallTimeout(staleCallId);
+            callState.cleanup(staleCallId);
           } else {
             socket.emit('call:error', { message: 'You are already in a call' });
             return;
           }
         } else {
-          userCallMap.delete(userId);
+          callState.unmapUser(userId);
         }
       }
 
@@ -142,7 +192,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const callId = randomUUID();
       const participantIds = new Set<string>([userId, ...targetUserIds]);
 
-      activeCalls.set(callId, {
+      callState.addCall({
         callId,
         conversationId,
         initiatorId: userId,
@@ -151,7 +201,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         callType: resolvedCallType,
       });
 
-      userCallMap.set(userId, callId);
+      callState.mapUserToCall(userId, callId);
 
       // Create CallLog with initial MISSED status
       try {
@@ -214,7 +264,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
       // Server-side timeout: clean up if nobody answers
       const timeout = setTimeout(async () => {
-        const call = activeCalls.get(callId);
+        const call = callState.getCall(callId);
         if (call && !call.answeredAt) {
           io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: 'timeout' });
           // Make all sockets leave the call room
@@ -231,12 +281,12 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
             logger.error({ dbErr, callId, conversationId }, 'Failed to bump conversation updatedAt on missed call');
           }
 
-          cleanupCall(callId);
+          callState.cleanup(callId);
           logger.info({ callId }, 'Call timed out server-side (no answer)');
         }
-        callTimeouts.delete(callId);
+        callState.timeouts.delete(callId);
       }, CALL_TIMEOUT_MS);
-      callTimeouts.set(callId, timeout);
+      callState.setTimeout(callId, timeout);
 
       logger.info({ userId, callId, targetUserIds, callType: resolvedCallType }, 'Call initiated');
     } catch (error) {
@@ -251,7 +301,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   socket.on('call:ringing', (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = activeCalls.get(callId);
+      const call = callState.getCall(callId);
       if (!call || !call.participantIds.has(userId)) return;
 
       io.to(`user:${call.initiatorId}`).emit('call:ringing', { callId });
@@ -267,17 +317,17 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   socket.on('call:answer', async (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = activeCalls.get(callId);
+      const call = callState.getCall(callId);
 
       if (!call || !call.participantIds.has(userId)) {
         socket.emit('call:error', { message: 'Call not found' });
         return;
       }
 
-      userCallMap.set(userId, callId);
+      callState.mapUserToCall(userId, callId);
       socket.join(`call:${callId}`);
       call.answeredAt = new Date();
-      clearCallTimeout(callId);
+      callState.clearTimeout(callId);
 
       // Update CallLog to COMPLETED
       try {
@@ -308,7 +358,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   socket.on('call:reject', async (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = activeCalls.get(callId);
+      const call = callState.getCall(callId);
 
       if (!call || !call.participantIds.has(userId)) return;
 
@@ -332,10 +382,10 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         // Make all sockets leave the call room
         const rejectSockets = await io.in(`call:${callId}`).fetchSockets();
         for (const s of rejectSockets) s.leave(`call:${callId}`);
-        cleanupCall(callId);
+        callState.cleanup(callId);
       } else {
         call.participantIds.delete(userId);
-        userCallMap.delete(userId);
+        callState.unmapUser(userId);
       }
 
       logger.info({ userId, callId }, 'Call rejected');
@@ -357,7 +407,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   }) => {
     try {
       const { callId, to, type, sdp, candidate } = data;
-      const call = activeCalls.get(callId);
+      const call = callState.getCall(callId);
 
       if (!call) {
         logger.warn({ callId, userId, type }, 'call:signal dropped — call not found in activeCalls');
@@ -393,7 +443,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   socket.on('call:end', async (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = activeCalls.get(callId);
+      const call = callState.getCall(callId);
 
       if (!call) return;
 
@@ -435,7 +485,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const endSockets = await io.in(`call:${callId}`).fetchSockets();
       for (const s of endSockets) s.leave(`call:${callId}`);
 
-      cleanupCall(callId);
+      callState.cleanup(callId);
       logger.info({ userId, callId }, 'Call ended');
     } catch (error) {
       logger.error({ error, userId }, 'Error ending call');
@@ -449,24 +499,24 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
    * the call stays alive.
    */
   socket.on('disconnect', () => {
-    const callId = userCallMap.get(userId);
+    const callId = callState.getUserCallId(userId);
     if (!callId) return;
 
-    const call = activeCalls.get(callId);
+    const call = callState.getCall(callId);
     if (!call) return;
 
     logger.info({ userId, callId, graceSec: DISCONNECT_GRACE_MS / 1000 }, 'User disconnected during call — starting grace period');
 
     const timeout = setTimeout(async () => {
-      disconnectGrace.delete(userId);
+      callState.disconnectGrace.delete(userId);
 
       // Re-check: the call might have ended normally during the grace period
-      const currentCall = activeCalls.get(callId);
+      const currentCall = callState.getCall(callId);
       if (!currentCall) return;
 
       if (currentCall.isGroup && currentCall.participantIds.size > 2) {
         currentCall.participantIds.delete(userId);
-        userCallMap.delete(userId);
+        callState.unmapUser(userId);
         io.to(`call:${callId}`).emit('call:participant-left', { callId, userId });
       } else {
         // Grace period expired — end the call
@@ -496,30 +546,12 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
           for (const s of sockets) s.leave(`call:${callId}`);
         }).catch(() => {});
 
-        cleanupCall(callId);
+        callState.cleanup(callId);
         logger.info({ userId, callId }, 'Call ended after disconnect grace period expired');
       }
     }, DISCONNECT_GRACE_MS);
 
-    disconnectGrace.set(userId, { timeout, callId });
+    callState.disconnectGrace.set(userId, { timeout, callId });
   });
 }
 
-function clearCallTimeout(callId: string): void {
-  const timeout = callTimeouts.get(callId);
-  if (timeout) {
-    clearTimeout(timeout);
-    callTimeouts.delete(callId);
-  }
-}
-
-function cleanupCall(callId: string): void {
-  const call = activeCalls.get(callId);
-  if (!call) return;
-
-  clearCallTimeout(callId);
-  for (const participantId of call.participantIds) {
-    userCallMap.delete(participantId);
-  }
-  activeCalls.delete(callId);
-}

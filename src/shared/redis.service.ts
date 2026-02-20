@@ -179,20 +179,6 @@ export async function incr(key: string): Promise<number | null> {
   }
 }
 
-/**
- * Decrement a counter
- */
-export async function decr(key: string): Promise<number | null> {
-  if (!redisClient) return null;
-
-  try {
-    return await redisClient.decr(key);
-  } catch (error) {
-    logger.error({ error, key }, 'Redis DECR failed');
-    return null;
-  }
-}
-
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 
 /**

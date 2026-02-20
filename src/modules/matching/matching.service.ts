@@ -129,33 +129,32 @@ export async function attemptMatch(request: {
 
   const { match, score } = result;
 
-  // Update both requests to MATCHED
-  await prisma.$transaction([
-    prisma.matchRequest.update({
+  // Update both requests to MATCHED and create conversation atomically
+  const conversation = await prisma.$transaction(async (tx) => {
+    await tx.matchRequest.update({
       where: { id: request.id },
       data: { status: 'MATCHED', matchedWith: match.userId },
-    }),
-    prisma.matchRequest.update({
+    });
+    await tx.matchRequest.update({
       where: { id: match.id },
       data: { status: 'MATCHED', matchedWith: request.userId },
-    }),
-  ]);
+    });
 
-  // Create the conversation with both participants
-  const conversation = await prisma.conversation.create({
-    data: {
-      type: 'HUMAN_MATCHED',
-      status: 'ACTIVE',
-      metadata: { matchScore: score, intent: request.intent },
-      participants: {
-        create: [{ userId: request.userId }, { userId: match.userId }],
+    return tx.conversation.create({
+      data: {
+        type: 'HUMAN_MATCHED',
+        status: 'ACTIVE',
+        metadata: { matchScore: score, intent: request.intent },
+        participants: {
+          create: [{ userId: request.userId }, { userId: match.userId }],
+        },
       },
-    },
-    include: {
-      participants: {
-        include: { user: { select: { id: true, displayName: true } } },
+      include: {
+        participants: {
+          include: { user: { select: { id: true, displayName: true } } },
+        },
       },
-    },
+    });
   });
 
   logger.info(
