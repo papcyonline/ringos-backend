@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yomeet - Email Preview</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background-color: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .preview-header {
+      text-align: center;
+      padding: 48px 20px 12px;
+    }
+    .preview-header h1 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #94a3b8;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+    .preview-header p {
+      font-size: 13px;
+      color: #475569;
+      margin-top: 8px;
+    }
+    .preview-label {
+      text-align: center;
+      padding: 40px 20px 16px;
+    }
+    .preview-label span {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      color: #16a34a;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      border: 1px solid #1e3a2f;
+      border-radius: 4px;
+      padding: 6px 16px;
+    }
+    .email-wrapper {
+      padding: 0 16px 40px;
+      display: flex;
+      justify-content: center;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="preview-header">
+    <h1>Yomeet Email Preview</h1>
+    <p>Open this file in a browser to preview email templates</p>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <!-- WELCOME EMAIL                                                             -->
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+
+  <div class="preview-label"><span>Welcome Email</span></div>
+
+  <div class="email-wrapper">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 480px; background-color: #ffffff;">
+
+      <!-- Top accent -->
+      <tr>
+        <td style="height: 3px; background-color: #16a34a; font-size: 0; line-height: 0;">&nbsp;</td>
+      </tr>
+
+      <!-- Masthead -->
+      <tr>
+        <td align="center" style="padding: 44px 40px 0;">
+          <img src="https://api.yomeet.app/public/logo.png" alt="Yomeet" width="48" height="48" style="display: block; border-radius: 10px;" />
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 16px 40px 0;">
+          <span style="font-size: 12px; font-weight: 700; color: #0f172a; letter-spacing: 3px; text-transform: uppercase;">YOMEET</span>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 12px 0 0;">
+          <table role="presentation" cellspacing="0" cellpadding="0">
+            <tr>
+              <td style="width: 32px; height: 2px; background-color: #16a34a; font-size: 0; line-height: 0;">&nbsp;</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- Body -->
+      <tr>
+        <td style="padding: 32px 40px 0;">
+
+          <h1 style="margin: 0 0 8px; font-size: 28px; font-weight: 800; color: #0f172a; text-align: center; letter-spacing: -0.5px; line-height: 1.2;">
+            Welcome, Alex.
+          </h1>
+          <p style="margin: 0 0 32px; font-size: 15px; color: #64748b; line-height: 1.6; text-align: center;">
+            Your account is set up and ready to go.
+          </p>
+
+          <p style="margin: 0 0 20px; font-size: 11px; font-weight: 700; color: #16a34a; text-transform: uppercase; letter-spacing: 2px;">
+            Getting Started
+          </p>
+
+          <!-- Step 1 -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr>
+              <td style="width: 52px; vertical-align: top; padding-top: 2px;">
+                <span style="font-size: 28px; font-weight: 800; color: #dcfce7; letter-spacing: -1px;">01</span>
+              </td>
+              <td style="vertical-align: top; padding-left: 4px;">
+                <p style="margin: 0 0 2px; font-size: 15px; font-weight: 700; color: #0f172a;">Complete your profile</p>
+                <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">Add a photo and bio so others can find you</p>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin: 14px 0;">
+            <tr><td style="border-top: 1px solid #f1f5f9;"></td></tr>
+          </table>
+
+          <!-- Step 2 -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr>
+              <td style="width: 52px; vertical-align: top; padding-top: 2px;">
+                <span style="font-size: 28px; font-weight: 800; color: #dcfce7; letter-spacing: -1px;">02</span>
+              </td>
+              <td style="vertical-align: top; padding-left: 4px;">
+                <p style="margin: 0 0 2px; font-size: 15px; font-weight: 700; color: #0f172a;">Chat with Kora</p>
+                <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">Your AI companion is ready to talk anytime</p>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin: 14px 0;">
+            <tr><td style="border-top: 1px solid #f1f5f9;"></td></tr>
+          </table>
+
+          <!-- Step 3 -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 28px;">
+            <tr>
+              <td style="width: 52px; vertical-align: top; padding-top: 2px;">
+                <span style="font-size: 28px; font-weight: 800; color: #dcfce7; letter-spacing: -1px;">03</span>
+              </td>
+              <td style="vertical-align: top; padding-left: 4px;">
+                <p style="margin: 0 0 2px; font-size: 15px; font-weight: 700; color: #0f172a;">Go live on Spotlight</p>
+                <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">Broadcast yourself and connect face-to-face</p>
+              </td>
+            </tr>
+          </table>
+
+          <p style="margin: 0 0 20px; font-size: 11px; font-weight: 700; color: #16a34a; text-transform: uppercase; letter-spacing: 2px; text-align: center;">
+            Download
+          </p>
+
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 8px;">
+            <tr>
+              <td align="center">
+                <table role="presentation" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td style="padding: 0 6px;">
+                      <a href="https://apps.apple.com/app/yomeet" target="_blank" style="text-decoration: none;">
+                        <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83" alt="Download on the App Store" width="130" height="38" style="display: block; border: 0;" />
+                      </a>
+                    </td>
+                    <td style="padding: 0 6px;">
+                      <a href="https://play.google.com/store/apps/details?id=com.yomeet.app" target="_blank" style="text-decoration: none;">
+                        <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" width="130" height="38" style="display: block; border: 0;" />
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+
+        </td>
+      </tr>
+
+      <!-- Social -->
+      <tr>
+        <td style="padding: 32px 40px 0;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr><td style="border-top: 1px solid #e5e7eb;"></td></tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 24px 40px 6px;">
+          <p style="margin: 0; font-size: 15px; font-weight: 700; color: #16a34a;">@yomeetapp</p>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 12px 40px 0;">
+          <table role="presentation" cellspacing="0" cellpadding="0">
+            <tr>
+              <!-- Facebook -->
+              <td style="padding: 0 5px;">
+                <a href="https://facebook.com/yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/facebook/ffffff" alt="Facebook" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <!-- Instagram -->
+              <td style="padding: 0 5px;">
+                <a href="https://instagram.com/yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/instagram/ffffff" alt="Instagram" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <!-- X -->
+              <td style="padding: 0 5px;">
+                <a href="https://x.com/yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/x/ffffff" alt="X" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <!-- LinkedIn -->
+              <td style="padding: 0 5px;">
+                <a href="https://linkedin.com/company/yomeet" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/linkedin/ffffff" alt="LinkedIn" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <!-- YouTube -->
+              <td style="padding: 0 5px;">
+                <a href="https://youtube.com/@yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/youtube/ffffff" alt="YouTube" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <!-- TikTok -->
+              <td style="padding: 0 5px;">
+                <a href="https://tiktok.com/@yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/tiktok/ffffff" alt="TikTok" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- Footer -->
+      <tr>
+        <td style="padding: 24px 40px 0;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr><td style="border-top: 1px solid #e5e7eb;"></td></tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 20px 40px;">
+          <p style="margin: 0 0 6px; font-size: 12px; color: #9ca3af; line-height: 1.5;">
+            You received this email because you created a Yomeet account.
+          </p>
+          <p style="margin: 0; font-size: 11px; color: #cbd5e1;">
+            &copy; 2026 Yomeet Inc.
+          </p>
+        </td>
+      </tr>
+
+      <!-- Bottom accent -->
+      <tr>
+        <td style="height: 3px; background-color: #16a34a; font-size: 0; line-height: 0;">&nbsp;</td>
+      </tr>
+
+    </table>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <!-- PASSWORD RESET EMAIL                                                      -->
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+
+  <div class="preview-label"><span>Password Reset Email</span></div>
+
+  <div class="email-wrapper">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 480px; background-color: #ffffff;">
+
+      <!-- Top accent -->
+      <tr>
+        <td style="height: 3px; background-color: #16a34a; font-size: 0; line-height: 0;">&nbsp;</td>
+      </tr>
+
+      <!-- Masthead -->
+      <tr>
+        <td align="center" style="padding: 44px 40px 0;">
+          <img src="https://api.yomeet.app/public/logo.png" alt="Yomeet" width="48" height="48" style="display: block; border-radius: 10px;" />
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 16px 40px 0;">
+          <span style="font-size: 12px; font-weight: 700; color: #0f172a; letter-spacing: 3px; text-transform: uppercase;">YOMEET</span>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 12px 0 0;">
+          <table role="presentation" cellspacing="0" cellpadding="0">
+            <tr>
+              <td style="width: 32px; height: 2px; background-color: #16a34a; font-size: 0; line-height: 0;">&nbsp;</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- Body -->
+      <tr>
+        <td style="padding: 32px 40px 0;">
+
+          <h1 style="margin: 0 0 8px; font-size: 28px; font-weight: 800; color: #0f172a; text-align: center; letter-spacing: -0.5px; line-height: 1.2;">
+            Reset your password
+          </h1>
+          <p style="margin: 0 0 32px; font-size: 15px; color: #64748b; line-height: 1.6; text-align: center;">
+            Enter this code to set a new password for your account.
+          </p>
+
+          <!-- OTP -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 12px;">
+            <tr>
+              <td align="center">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td align="center" style="background-color: #0f172a; border-radius: 8px; padding: 28px 20px;">
+                      <span style="font-size: 36px; font-weight: 700; color: #ffffff; letter-spacing: 10px; font-family: 'SF Mono', Monaco, 'Courier New', monospace;">847291</span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+
+          <p style="margin: 0 0 28px; font-size: 13px; color: #b45309; font-weight: 600; text-align: center; letter-spacing: 0.3px;">
+            Expires in 5 minutes
+          </p>
+
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 20px;">
+            <tr><td style="border-top: 1px solid #f1f5f9;"></td></tr>
+          </table>
+
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 8px;">
+            <tr>
+              <td style="border-left: 3px solid #16a34a; padding: 14px 16px; background-color: #f8fafc; border-radius: 0 6px 6px 0;">
+                <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">
+                  <strong style="color: #0f172a;">Didn't request this?</strong> You can safely ignore this email. Your password won't change.
+                </p>
+              </td>
+            </tr>
+          </table>
+
+        </td>
+      </tr>
+
+      <!-- Social -->
+      <tr>
+        <td style="padding: 32px 40px 0;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr><td style="border-top: 1px solid #e5e7eb;"></td></tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 24px 40px 6px;">
+          <p style="margin: 0; font-size: 15px; font-weight: 700; color: #16a34a;">@yomeetapp</p>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 12px 40px 0;">
+          <table role="presentation" cellspacing="0" cellpadding="0">
+            <tr>
+              <td style="padding: 0 5px;">
+                <a href="https://facebook.com/yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/facebook/ffffff" alt="Facebook" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <td style="padding: 0 5px;">
+                <a href="https://instagram.com/yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/instagram/ffffff" alt="Instagram" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <td style="padding: 0 5px;">
+                <a href="https://x.com/yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/x/ffffff" alt="X" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <td style="padding: 0 5px;">
+                <a href="https://linkedin.com/company/yomeet" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/linkedin/ffffff" alt="LinkedIn" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <td style="padding: 0 5px;">
+                <a href="https://youtube.com/@yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/youtube/ffffff" alt="YouTube" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+              <td style="padding: 0 5px;">
+                <a href="https://tiktok.com/@yomeetapp" target="_blank" style="text-decoration: none;">
+                  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                    <td style="width: 32px; height: 32px; background-color: #16a34a; border-radius: 50%; text-align: center; vertical-align: middle; line-height: 32px;">
+                      <img src="https://cdn.simpleicons.org/tiktok/ffffff" alt="TikTok" width="14" height="14" style="display: inline-block; vertical-align: middle;" />
+                    </td>
+                  </tr></table>
+                </a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- Footer -->
+      <tr>
+        <td style="padding: 24px 40px 0;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr><td style="border-top: 1px solid #e5e7eb;"></td></tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 20px 40px;">
+          <p style="margin: 0 0 6px; font-size: 12px; color: #9ca3af; line-height: 1.5;">
+            You received this email because a password reset was requested for your account.
+          </p>
+          <p style="margin: 0; font-size: 11px; color: #cbd5e1;">
+            &copy; 2026 Yomeet Inc.
+          </p>
+        </td>
+      </tr>
+
+      <!-- Bottom accent -->
+      <tr>
+        <td style="height: 3px; background-color: #16a34a; font-size: 0; line-height: 0;">&nbsp;</td>
+      </tr>
+
+    </table>
+  </div>
+
+  <div style="height: 60px;"></div>
+
+</body>
+</html>
