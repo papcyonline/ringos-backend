@@ -139,8 +139,7 @@ model User {
   banExpiresAt  DateTime?
   flagCount     Int       @default(0)
   lastFlaggedAt DateTime?
-  // Stripe subscription
-  stripeCustomerId    String?   @unique
+  // Subscription (managed by RevenueCat)
   subscriptionId      String?
   subscriptionStatus  String?   // "active", "cancelled", "past_due", "trialing"
   subscriptionPlan    String?   // "premium", "pro", etc.

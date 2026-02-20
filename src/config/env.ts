@@ -64,12 +64,6 @@ const envSchema = z.object({
   AWS_REGION: z.string().optional(),
   AWS_S3_BUCKET: z.string().optional(),
 
-  // Stripe (Payments)
-  STRIPE_SECRET_KEY: z.string().optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  STRIPE_PRICE_ID_MONTHLY: z.string().optional(),
-  STRIPE_PRICE_ID_YEARLY: z.string().optional(),
-
   // Sentry (Error Tracking)
   SENTRY_DSN: z.string().optional(),
 
