@@ -1,7 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
-import { moderateContent } from '../safety/moderation.service';
+import { moderateContentLocal, moderateContent } from '../safety/moderation.service';
 import * as chatService from './chat.service';
 import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
 import { notifyChatMessage } from '../notification/notification.service';
@@ -65,18 +65,13 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
         return;
       }
 
-      // Moderate content before saving
-      let cleanedContent = content;
-      try {
-        const moderationResult = await moderateContent(content);
-        if (moderationResult.flagged) {
-          socket.emit('chat:error', { message: 'Message contains inappropriate content' });
-          return;
-        }
-        cleanedContent = moderationResult.cleaned;
-      } catch (moderationError) {
-        logger.warn({ moderationError, userId, conversationId }, 'Content moderation failed, proceeding with original content');
+      // Fast local moderation (keyword filter + PII stripping) — instant, no network calls
+      const localMod = moderateContentLocal(content);
+      if (localMod.flagged) {
+        socket.emit('chat:error', { message: 'Message contains inappropriate content' });
+        return;
       }
+      const cleanedContent = localMod.cleaned;
 
       // Save the message via the service
       const message = await chatService.sendMessage(conversationId, userId, cleanedContent, { replyToId });
@@ -99,6 +94,24 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
         { imageUrl: message.imageUrl ?? undefined, audioUrl: message.audioUrl ?? undefined },
       ).catch((err) => {
         logger.error({ err, conversationId }, 'Failed to send chat notification');
+      });
+
+      // Run full OpenAI moderation in the background — if flagged, retroactively remove
+      moderateContent(cleanedContent).then(async (fullResult) => {
+        if (fullResult.flagged) {
+          logger.warn({ messageId: message.id, reason: fullResult.reason }, 'Message retroactively flagged by OpenAI');
+          try {
+            await chatService.deleteMessage(message.id, userId);
+            io.to(`conversation:${conversationId}`).emit('chat:deleted', {
+              messageId: message.id,
+              deletedAt: new Date(),
+            });
+          } catch (deleteErr) {
+            logger.error({ deleteErr, messageId: message.id }, 'Failed to retroactively delete flagged message');
+          }
+        }
+      }).catch((moderationError) => {
+        logger.warn({ moderationError, userId, conversationId }, 'Background content moderation failed');
       });
 
       logger.debug({ conversationId, userId, messageId: message.id }, 'Message broadcast to room');
@@ -260,15 +273,16 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
   });
 
   /**
-   * chat:typing - Broadcast typing indicator to the room (excluding sender).
+   * chat:typing - Broadcast typing/recording indicator to the room (excluding sender).
    */
-  socket.on('chat:typing', (data: { conversationId: string }) => {
+  socket.on('chat:typing', (data: { conversationId: string; activity?: string }) => {
     try {
-      const { conversationId } = data;
+      const { conversationId, activity } = data;
 
       socket.to(`conversation:${conversationId}`).emit('chat:typing', {
         conversationId,
         userId,
+        activity: activity ?? 'typing',
       });
     } catch (error) {
       logger.error({ error, userId }, 'Error broadcasting typing indicator');

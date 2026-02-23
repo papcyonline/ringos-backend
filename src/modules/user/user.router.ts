@@ -14,11 +14,13 @@ import { getUsageSummary } from '../../shared/usage.service';
 
 const router = Router();
 
-// GET / - List all users with presence info (excludes current user and blocked)
+// GET / - List users with presence info (excludes current user and blocked), paginated
 router.get('/', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const users = await userService.listUsers(req.user!.userId);
-    res.json(users);
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 50));
+    const result = await userService.listUsers(req.user!.userId, page, limit);
+    res.json(result);
   } catch (err) {
     next(err);
   }

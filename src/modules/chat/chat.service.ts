@@ -129,51 +129,107 @@ export async function getConversations(userId: string) {
     orderBy: { updatedAt: 'desc' },
   });
 
-  // Compute unread counts and last missed calls per conversation
-  const results = await Promise.all(
-    conversations.map(async (c) => {
-      const myParticipant = c.participants.find((p) => p.userId === userId);
-      const lastReadAt = myParticipant?.lastReadAt;
+  // Batch unread counts and missed calls instead of N+1 per-conversation queries
+  const conversationIds = conversations.map((c) => c.id);
 
-      // Unread count: messages after lastReadAt not sent by me
-      const unreadCount = await prisma.message.count({
-        where: {
-          conversationId: c.id,
-          senderId: { not: userId },
-          deletedAt: null,
-          ...(lastReadAt ? { createdAt: { gt: lastReadAt } } : {}),
-        },
-      });
+  // Build per-conversation lastReadAt lookup
+  const lastReadAtMap = new Map<string, Date | null>();
+  for (const c of conversations) {
+    const myParticipant = c.participants.find((p) => p.userId === userId);
+    lastReadAtMap.set(c.id, myParticipant?.lastReadAt ?? null);
+  }
 
-      // Last missed call where user is NOT the initiator
-      const lastMissedCall = await prisma.callLog.findFirst({
-        where: {
-          conversationId: c.id,
-          status: 'MISSED',
-          initiatorId: { not: userId },
-        },
-        orderBy: { startedAt: 'desc' },
-        select: { callType: true, startedAt: true, initiator: { select: { displayName: true } } },
-      });
+  // 1) Batch unread counts: one groupBy query for all conversations
+  const unreadGroups = await prisma.message.groupBy({
+    by: ['conversationId'],
+    _count: { id: true },
+    where: {
+      conversationId: { in: conversationIds },
+      senderId: { not: userId },
+      deletedAt: null,
+    },
+  });
 
-      // Compute delivery status for last message
-      const rawLast = c.messages[0] || null;
-      let lastMessage = rawLast;
-      if (rawLast) {
-        const otherParticipants = c.participants.filter((p) => p.userId !== userId);
-        const status = computeMessageStatus(rawLast, userId, otherParticipants);
-        lastMessage = Object.assign({}, rawLast, { status });
+  // For conversations with a lastReadAt, we need a second groupBy with the createdAt filter.
+  // Split into two sets: those with lastReadAt (need filtered count) and those without.
+  const idsWithLastRead = conversationIds.filter((id) => lastReadAtMap.get(id) != null);
+
+  let filteredUnreadMap = new Map<string, number>();
+  if (idsWithLastRead.length > 0) {
+    // For conversations with lastReadAt, count only messages after that timestamp.
+    // We need per-conversation filtering, but we can still batch by fetching all unread
+    // messages for these conversations and filtering in JS (much cheaper than N queries).
+    const unreadMessages = await prisma.message.findMany({
+      where: {
+        conversationId: { in: idsWithLastRead },
+        senderId: { not: userId },
+        deletedAt: null,
+      },
+      select: { conversationId: true, createdAt: true },
+    });
+
+    for (const msg of unreadMessages) {
+      const lastRead = lastReadAtMap.get(msg.conversationId);
+      if (lastRead && msg.createdAt > lastRead) {
+        filteredUnreadMap.set(msg.conversationId, (filteredUnreadMap.get(msg.conversationId) ?? 0) + 1);
       }
+    }
+  }
 
-      return {
-        ...c,
-        lastMessage,
-        messages: undefined,
-        unreadCount,
-        lastMissedCall,
-      };
-    }),
-  );
+  // For conversations without lastReadAt, use the groupBy totals
+  const unreadCountMap = new Map<string, number>();
+  for (const g of unreadGroups) {
+    unreadCountMap.set(g.conversationId, g._count.id);
+  }
+
+  // 2) Batch missed calls: one query for all conversations
+  const missedCalls = await prisma.callLog.findMany({
+    where: {
+      conversationId: { in: conversationIds },
+      status: 'MISSED',
+      initiatorId: { not: userId },
+    },
+    orderBy: { startedAt: 'desc' },
+    select: { conversationId: true, callType: true, startedAt: true, initiator: { select: { displayName: true } } },
+  });
+
+  // Pick latest missed call per conversation
+  const missedCallMap = new Map<string, typeof missedCalls[0]>();
+  for (const call of missedCalls) {
+    if (!missedCallMap.has(call.conversationId)) {
+      missedCallMap.set(call.conversationId, call);
+    }
+  }
+
+  // 3) Assemble results
+  const results = conversations.map((c) => {
+    const hasLastRead = lastReadAtMap.get(c.id) != null;
+    const unreadCount = hasLastRead
+      ? (filteredUnreadMap.get(c.id) ?? 0)
+      : (unreadCountMap.get(c.id) ?? 0);
+
+    const missedCall = missedCallMap.get(c.id) ?? null;
+    const lastMissedCall = missedCall
+      ? { callType: missedCall.callType, startedAt: missedCall.startedAt, initiator: missedCall.initiator }
+      : null;
+
+    // Compute delivery status for last message
+    const rawLast = c.messages[0] || null;
+    let lastMessage = rawLast;
+    if (rawLast) {
+      const otherParticipants = c.participants.filter((p) => p.userId !== userId);
+      const status = computeMessageStatus(rawLast, userId, otherParticipants);
+      lastMessage = Object.assign({}, rawLast, { status });
+    }
+
+    return {
+      ...c,
+      lastMessage,
+      messages: undefined,
+      unreadCount,
+      lastMissedCall,
+    };
+  });
 
   logger.debug({ userId, count: results.length }, 'Listed conversations');
   return results;
@@ -276,63 +332,81 @@ export async function sendMessage(
   },
 ) {
   const { replyToId, imageUrl, viewOnce, audioUrl, audioDuration } = options ?? {};
-  const conversation = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-  });
+
+  // Run conversation lookup and participant verification in parallel
+  const [conversation, participant] = await Promise.all([
+    prisma.conversation.findUnique({ where: { id: conversationId } }),
+    prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId, userId: senderId } },
+    }),
+  ]);
 
   if (!conversation) {
     throw new NotFoundError('Conversation not found');
   }
-
   if (conversation.status !== 'ACTIVE') {
     throw new ForbiddenError('Conversation is no longer active');
   }
+  if (!participant) {
+    throw new ForbiddenError('You are not a participant in this conversation');
+  }
 
-  await verifyParticipant(conversationId, senderId);
+  // Run block check and reply verification in parallel
+  const parallelChecks: Promise<void>[] = [];
 
-  // For direct conversations, check if either user has blocked the other
   if (conversation.type !== 'GROUP') {
-    const participants = await prisma.conversationParticipant.findMany({
-      where: { conversationId, leftAt: null },
-      select: { userId: true },
-    });
-    const partnerId = participants.find((p) => p.userId !== senderId)?.userId;
-    if (partnerId) {
-      const blocked = await isBlocked(senderId, partnerId);
-      if (blocked) {
-        throw new ForbiddenError('Cannot message this user');
-      }
-    }
+    parallelChecks.push(
+      prisma.conversationParticipant.findMany({
+        where: { conversationId, leftAt: null },
+        select: { userId: true },
+      }).then(async (participants) => {
+        const partnerId = participants.find((p) => p.userId !== senderId)?.userId;
+        if (partnerId) {
+          const blocked = await isBlocked(senderId, partnerId);
+          if (blocked) {
+            throw new ForbiddenError('Cannot message this user');
+          }
+        }
+      }),
+    );
   }
 
-  // Verify the reply target exists in this conversation
   if (replyToId) {
-    const replyTarget = await prisma.message.findFirst({
-      where: { id: replyToId, conversationId },
-    });
-    if (!replyTarget) {
-      throw new NotFoundError('Reply target message not found');
-    }
+    parallelChecks.push(
+      prisma.message.findFirst({
+        where: { id: replyToId, conversationId },
+      }).then((replyTarget) => {
+        if (!replyTarget) {
+          throw new NotFoundError('Reply target message not found');
+        }
+      }),
+    );
   }
 
-  const message = await prisma.message.create({
-    data: {
-      conversationId,
-      senderId,
-      content,
-      replyToId: replyToId || undefined,
-      imageUrl: imageUrl || undefined,
-      viewOnce: viewOnce || false,
-      audioUrl: audioUrl || undefined,
-      audioDuration: audioDuration ?? undefined,
-    },
-    include: messageInclude,
-  });
+  if (parallelChecks.length > 0) {
+    await Promise.all(parallelChecks);
+  }
 
-  await prisma.conversation.update({
-    where: { id: conversationId },
-    data: { updatedAt: new Date() },
-  });
+  // Create message and update conversation timestamp in parallel
+  const [message] = await Promise.all([
+    prisma.message.create({
+      data: {
+        conversationId,
+        senderId,
+        content,
+        replyToId: replyToId || undefined,
+        imageUrl: imageUrl || undefined,
+        viewOnce: viewOnce || false,
+        audioUrl: audioUrl || undefined,
+        audioDuration: audioDuration ?? undefined,
+      },
+      include: messageInclude,
+    }),
+    prisma.conversation.update({
+      where: { id: conversationId },
+      data: { updatedAt: new Date() },
+    }),
+  ]);
 
   logger.debug({ conversationId, senderId, messageId: message.id }, 'Message sent');
   return message;

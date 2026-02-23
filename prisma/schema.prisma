@@ -168,6 +168,7 @@ model User {
   voipTokens       VoipToken[]
 
   @@index([banStatus])
+  @@index([isOnline, lastSeenAt])
 }
 
 model UserPreference {
@@ -317,6 +318,7 @@ model Message {
   reactions    MessageReaction[]
 
   @@index([conversationId, createdAt])
+  @@index([conversationId, senderId, deletedAt, createdAt])
 }
 
 model MessageReaction {
@@ -407,6 +409,7 @@ model CallLog {
 
   @@index([conversationId])
   @@index([initiatorId])
+  @@index([conversationId, status, startedAt])
 }
 
 model Notification {

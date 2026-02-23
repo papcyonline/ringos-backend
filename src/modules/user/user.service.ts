@@ -135,7 +135,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
   };
 }
 
-export async function listUsers(currentUserId: string) {
+export async function listUsers(currentUserId: string, page = 1, limit = 50) {
   const blocks = await prisma.block.findMany({
     where: {
       OR: [{ blockerId: currentUserId }, { blockedId: currentUserId }],
@@ -147,34 +147,43 @@ export async function listUsers(currentUserId: string) {
     b.blockerId === currentUserId ? b.blockedId : b.blockerId,
   );
 
-  const users = await prisma.user.findMany({
-    where: {
-      id: { notIn: [currentUserId, ...blockedIds] },
-    },
-    select: {
-      id: true,
-      displayName: true,
-      avatarUrl: true,
-      bio: true,
-      profession: true,
-      gender: true,
-      location: true,
-      status: true,
-      availabilityNote: true,
-      isOnline: true,
-      lastSeenAt: true,
-      availableFor: true,
-      availableUntil: true,
-      isVerified: true,
-      verifiedRole: true,
-      isProfilePublic: true,
-      hideOnlineStatus: true,
-      flagCount: true,
-      preference: { select: { language: true } },
-      _count: { select: { followsReceived: true, likesReceived: true } },
-    },
-    orderBy: [{ isOnline: 'desc' }, { lastSeenAt: 'desc' }],
-  });
+  const skip = (page - 1) * limit;
+
+  const userWhere = {
+    id: { notIn: [currentUserId, ...blockedIds] },
+  };
+
+  const [users, total] = await Promise.all([
+    prisma.user.findMany({
+      where: userWhere,
+      select: {
+        id: true,
+        displayName: true,
+        avatarUrl: true,
+        bio: true,
+        profession: true,
+        gender: true,
+        location: true,
+        status: true,
+        availabilityNote: true,
+        isOnline: true,
+        lastSeenAt: true,
+        availableFor: true,
+        availableUntil: true,
+        isVerified: true,
+        verifiedRole: true,
+        isProfilePublic: true,
+        hideOnlineStatus: true,
+        flagCount: true,
+        preference: { select: { language: true } },
+        _count: { select: { followsReceived: true, likesReceived: true } },
+      },
+      orderBy: [{ isOnline: 'desc' }, { lastSeenAt: 'desc' }],
+      skip,
+      take: limit,
+    }),
+    prisma.user.count({ where: userWhere }),
+  ]);
 
   // Get who the current user follows and likes
   const [following, likes] = await Promise.all([
@@ -190,7 +199,7 @@ export async function listUsers(currentUserId: string) {
   const followingSet = new Set(following.map((f) => f.followingId));
   const likedSet = new Set(likes.map((l) => l.likedId));
 
-  return users.map((user) => {
+  const data = users.map((user) => {
     const isPrivate = !user.isProfilePublic;
     const hideOnline = user.hideOnlineStatus;
     return {
@@ -218,6 +227,8 @@ export async function listUsers(currentUserId: string) {
       reportCount: user.flagCount,
     };
   });
+
+  return { users: data, total, page, limit };
 }
 
 export async function updateAvailability(userId: string, data: UpdateAvailabilityInput) {

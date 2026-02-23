@@ -25,43 +25,62 @@ const PII_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /@[A-Za-z0-9_]{1,30}\b/g, label: 'handle' },
 ];
 
-export async function moderateContent(
+/**
+ * Fast, synchronous-safe local moderation: banned keywords + PII stripping.
+ * Use this on the critical send path to avoid blocking on external APIs.
+ */
+export function moderateContentLocal(
   text: string,
-): Promise<{ flagged: boolean; reason?: string; cleaned: string }> {
+): { flagged: boolean; reason?: string; cleaned: string } {
   let flagged = false;
   let reason: string | undefined;
 
-  // Step 1: OpenAI Moderation API
-  try {
-    const modResult = await openai.moderations.create({ input: text });
-    const result = modResult.results[0];
-    if (result.flagged) {
+  // Keyword filter (instant)
+  for (const pattern of BANNED_KEYWORDS) {
+    if (pattern.test(text)) {
       flagged = true;
-      const flaggedCategories = Object.entries(result.categories)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      reason = `OpenAI moderation flagged: ${flaggedCategories.join(', ')}`;
-    }
-  } catch {
-    // If OpenAI API fails, continue with other checks
-  }
-
-  // Step 2: Custom keyword filter
-  if (!flagged) {
-    for (const pattern of BANNED_KEYWORDS) {
-      if (pattern.test(text)) {
-        flagged = true;
-        reason = 'Content matched banned keyword filter';
-        break;
-      }
+      reason = 'Content matched banned keyword filter';
+      break;
     }
   }
 
-  // Step 3: PII stripping (always applied regardless of flag status)
+  // PII stripping (always applied)
   let cleaned = text;
   for (const { pattern } of PII_PATTERNS) {
     cleaned = cleaned.replace(pattern, '[removed]');
   }
 
   return { flagged, reason, cleaned };
+}
+
+/**
+ * Full moderation: local checks + OpenAI Moderation API.
+ * Call this in the background after the message is already saved & broadcast.
+ */
+export async function moderateContent(
+  text: string,
+): Promise<{ flagged: boolean; reason?: string; cleaned: string }> {
+  // Run local checks first
+  const local = moderateContentLocal(text);
+  if (local.flagged) return local;
+
+  // OpenAI Moderation API
+  try {
+    const modResult = await openai.moderations.create({ input: text });
+    const result = modResult.results[0];
+    if (result.flagged) {
+      const flaggedCategories = Object.entries(result.categories)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+      return {
+        flagged: true,
+        reason: `OpenAI moderation flagged: ${flaggedCategories.join(', ')}`,
+        cleaned: local.cleaned,
+      };
+    }
+  } catch {
+    // If OpenAI API fails, allow the message (local check already passed)
+  }
+
+  return local;
 }
