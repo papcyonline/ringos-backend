@@ -84,10 +84,10 @@ async function execFindPeople(
   userId: string,
 ): Promise<ToolResult> {
   const limit = args.limit ?? 5;
-  const allUsers = await listUsers(userId);
+  const result = await listUsers(userId, 1, limit);
 
   // Prefer online users, then recently seen
-  const people = allUsers.slice(0, limit).map((u) => ({
+  const people = result.users.slice(0, limit).map((u: any) => ({
     id: u.id,
     displayName: u.displayName,
     avatarUrl: u.avatarUrl,
