@@ -40,6 +40,9 @@ const disconnectGrace = new Map<string, ReturnType<typeof setTimeout>>();
 /** Async guard: prevents double go-live while DB write is in-flight */
 const pendingGoLive = new Set<string>();
 
+/** Async guard: prevents two viewers connecting to the same broadcaster simultaneously */
+const pendingConnect = new Set<string>();
+
 const DISCONNECT_GRACE_MS = 10_000;
 
 // ─── Handler registration ────────────────────────────────────
@@ -181,64 +184,82 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
         return;
       }
 
-      const blocked = await areUsersBlocked(userId, broadcasterId);
-      if (blocked) {
-        socket.emit('spotlight:error', { message: 'Cannot connect with this user' });
+      // Claim this broadcaster atomically (sync) before any async work.
+      // If another viewer already claimed them, bail out.
+      if (pendingConnect.has(broadcasterId)) {
+        socket.emit('spotlight:error', { message: 'Broadcaster is connecting with someone else' });
         return;
       }
-
-      if (isUserInCall(userId) || isUserInCall(broadcasterId)) {
-        socket.emit('spotlight:error', { message: 'User is already in a call' });
-        return;
-      }
-
-      const conversationId = await findOrCreateConversation(userId, broadcasterId);
-      entry.connectCount += 1;
-
-      const callId = createDirectCall({
-        conversationId,
-        initiatorId: userId,
-        participantIds: [userId, broadcasterId],
-        callType: 'VIDEO',
-      });
-
-      const viewerSockets = await io.in(`user:${userId}`).fetchSockets();
-      for (const s of viewerSockets) s.join(`call:${callId}`);
-      const broadcasterSockets = await io.in(`user:${broadcasterId}`).fetchSockets();
-      for (const s of broadcasterSockets) s.join(`call:${callId}`);
+      pendingConnect.add(broadcasterId);
 
       try {
-        await prisma.callLog.create({
-          data: {
-            callId,
-            conversationId,
-            initiatorId: userId,
-            callType: 'VIDEO',
-            status: 'COMPLETED',
-          },
+        const blocked = await areUsersBlocked(userId, broadcasterId);
+        if (blocked) {
+          socket.emit('spotlight:error', { message: 'Cannot connect with this user' });
+          return;
+        }
+
+        if (isUserInCall(userId) || isUserInCall(broadcasterId)) {
+          socket.emit('spotlight:error', { message: 'User is already in a call' });
+          return;
+        }
+
+        // Double-check broadcaster is still live (may have ended during async gap)
+        if (!liveBroadcasters.has(broadcasterId)) {
+          socket.emit('spotlight:error', { message: 'Broadcaster went offline' });
+          return;
+        }
+
+        const conversationId = await findOrCreateConversation(userId, broadcasterId);
+        entry.connectCount += 1;
+
+        const callId = createDirectCall({
+          conversationId,
+          initiatorId: userId,
+          participantIds: [userId, broadcasterId],
+          callType: 'VIDEO',
         });
-      } catch (dbErr) {
-        logger.error({ dbErr, callId }, 'Failed to create CallLog for spotlight connect');
+
+        const viewerSockets = await io.in(`user:${userId}`).fetchSockets();
+        for (const s of viewerSockets) s.join(`call:${callId}`);
+        const broadcasterSockets = await io.in(`user:${broadcasterId}`).fetchSockets();
+        for (const s of broadcasterSockets) s.join(`call:${callId}`);
+
+        try {
+          await prisma.callLog.create({
+            data: {
+              callId,
+              conversationId,
+              initiatorId: userId,
+              callType: 'VIDEO',
+              status: 'COMPLETED',
+            },
+          });
+        } catch (dbErr) {
+          logger.error({ dbErr, callId }, 'Failed to create CallLog for spotlight connect');
+        }
+
+        const viewer = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { displayName: true },
+        });
+
+        const payload = {
+          conversationId,
+          viewerId: userId,
+          broadcasterId,
+          callId,
+          viewerName: viewer?.displayName ?? 'Unknown',
+          broadcasterName: entry.displayName,
+        };
+        io.to(`user:${userId}`).emit('spotlight:connect-accepted', payload);
+        io.to(`user:${broadcasterId}`).emit('spotlight:connect-accepted', payload);
+
+        await endBroadcast(io, broadcasterId, 'connect');
+        logger.info({ viewerId: userId, broadcasterId, conversationId }, 'Spotlight connect initiated');
+      } finally {
+        pendingConnect.delete(broadcasterId);
       }
-
-      const viewer = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { displayName: true },
-      });
-
-      const payload = {
-        conversationId,
-        viewerId: userId,
-        broadcasterId,
-        callId,
-        viewerName: viewer?.displayName ?? 'Unknown',
-        broadcasterName: entry.displayName,
-      };
-      io.to(`user:${userId}`).emit('spotlight:connect-accepted', payload);
-      io.to(`user:${broadcasterId}`).emit('spotlight:connect-accepted', payload);
-
-      await endBroadcast(io, broadcasterId, 'connect');
-      logger.info({ viewerId: userId, broadcasterId, conversationId }, 'Spotlight connect initiated');
     } catch (error) {
       logger.error({ error, userId }, 'Error processing spotlight connect');
       socket.emit('spotlight:error', { message: 'Failed to connect' });
