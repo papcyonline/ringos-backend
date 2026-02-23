@@ -232,7 +232,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         );
 
         if (isOnline) {
-          // User is online - send via socket
+          // User is online — send via socket
           io.to(`user:${targetId}`).emit('call:incoming', {
             callId,
             conversationId,
@@ -244,19 +244,20 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
               .filter((id) => id !== targetId)
               .map((id) => ({ userId: id })),
           });
-        } else {
-          // User is offline - send push notification
-          sendCallPush(targetId, {
-            callId,
-            conversationId,
-            callType: resolvedCallType,
-            callerId: userId,
-            callerName: caller?.displayName ?? 'Unknown',
-            callerAvatar: caller?.avatarUrl,
-          }).catch((err) => {
-            logger.error({ err, targetId, callId }, 'Failed to send call push notification');
-          });
         }
+
+        // Always send push (even if online — socket may not reach suspended/background apps).
+        // Fire-and-forget so it doesn't slow down the socket path.
+        sendCallPush(targetId, {
+          callId,
+          conversationId,
+          callType: resolvedCallType,
+          callerId: userId,
+          callerName: caller?.displayName ?? 'Unknown',
+          callerAvatar: caller?.avatarUrl,
+        }).catch((err) => {
+          logger.error({ err, targetId, callId }, 'Failed to send call push notification');
+        });
       }
 
       // Confirm to the initiator

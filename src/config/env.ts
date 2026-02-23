@@ -48,6 +48,12 @@ const envSchema = z.object({
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
   FIREBASE_PRIVATE_KEY: z.string().optional(),
 
+  // APNs (iOS VoIP Push)
+  APNS_KEY_ID: z.string().optional(),
+  APNS_TEAM_ID: z.string().optional(),
+  APNS_KEY: z.string().optional(),           // base64-encoded .p8 key content
+  APNS_PRODUCTION: z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1').default('false'),
+
   // Resend (Email)
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),

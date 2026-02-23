@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import { prisma } from '../../config/database';
 import { getIO } from '../../config/socket';
 import { getFirebaseApp } from '../../config/firebase';
+import { sendVoipPush } from '../../config/apns';
 import { logger } from '../../shared/logger';
 import {
   buildCallPayload,
@@ -314,10 +315,13 @@ export async function sendCallPush(
         priority: 'high',
         ttl: 60000, // 60 seconds
       },
-      // iOS devices with FCM token will also receive this as a fallback
+      // iOS devices with FCM token — include alert + sound so the notification is visible
       apns: {
+        headers: { 'apns-priority': '10' },
         payload: {
           aps: {
+            alert: { title: payload.callerName, body: 'Incoming call' },
+            sound: 'default',
             'content-available': 1,
           },
         },
@@ -332,20 +336,35 @@ export async function sendCallPush(
     }
   }
 
-  // Note: iOS VoIP push (PushKit) requires a separate APNs connection
-  // which should be handled through a dedicated VoIP push provider
-  // For now, log that VoIP tokens exist for future implementation
+  // Send iOS VoIP push via APNs (PushKit → CallKit)
   const voipTokens = await prisma.voipToken.findMany({
     where: { userId },
     select: { token: true },
   });
 
   if (voipTokens.length > 0) {
-    logger.info(
-      { userId, tokenCount: voipTokens.length, callId: payload.callId },
-      'VoIP tokens found - iOS VoIP push should be sent via APNs'
-    );
-    // TODO: Implement APNs VoIP push using node-apn or similar library
+    const voipPayload = {
+      callId: payload.callId,
+      conversationId: payload.conversationId,
+      callType: payload.callType,
+      callerId: payload.callerId,
+      callerName: payload.callerName,
+      callerAvatar: payload.callerAvatar ?? null,
+    };
+
+    for (const { token } of voipTokens) {
+      sendVoipPush(token, voipPayload)
+        .then((result) => {
+          if (result.unregistered) {
+            prisma.voipToken.deleteMany({ where: { token } }).catch((err) => {
+              logger.error({ err, token }, 'Failed to delete unregistered VoIP token');
+            });
+          }
+        })
+        .catch((err) => {
+          logger.error({ err, userId, callId: payload.callId }, 'Failed to send VoIP push');
+        });
+    }
   }
 }
 
