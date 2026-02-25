@@ -11,8 +11,11 @@ export function moderateMessage(field = 'content') {
       if (!text || typeof text !== 'string') return next();
 
       const result = await moderateContent(text);
-      if (result.flagged) {
+      if (result.flagged && result.severity === 'hard') {
         return next(new BadRequestError('Message contains inappropriate content', 'CONTENT_FLAGGED'));
+      }
+      if (result.flagged && result.severity === 'soft') {
+        logger.info({ userId: req.user?.userId, reason: result.reason }, 'Soft-warned content allowed through');
       }
       req.body[field] = result.cleaned;
       next();

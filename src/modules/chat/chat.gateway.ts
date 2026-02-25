@@ -67,7 +67,7 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
 
       // Fast local moderation (keyword filter + PII stripping) — instant, no network calls
       const localMod = moderateContentLocal(content);
-      if (localMod.flagged) {
+      if (localMod.flagged && localMod.severity === 'hard') {
         socket.emit('chat:error', { message: 'Message contains inappropriate content' });
         return;
       }

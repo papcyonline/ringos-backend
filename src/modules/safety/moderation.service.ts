@@ -3,20 +3,23 @@ import { env } from '../../config/env';
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
-const BANNED_KEYWORDS: RegExp[] = [
+const HARD_BANNED: RegExp[] = [
   /\bn[i1]gg[ae3]r?\b/i,
   /\bf[a@]gg?[o0]t\b/i,
   /\bk[i1]ke\b/i,
   /\bsp[i1]c\b/i,
   /\bch[i1]nk\b/i,
   /\btr[a@]nn[yi1]e?\b/i,
-  /\bwh[o0]re\b/i,
-  /\bc[u\x75]nt\b/i,
   /\br[a@]pe\b/i,
   /\bk[i1]ll\s*y[o0]urs[e3]lf\b/i,
   /\bkys\b/i,
-  /\bslut\b/i,
   /\bretard(ed)?\b/i,
+];
+
+const SOFT_WARNED: RegExp[] = [
+  /\bwh[o0]re\b/i,
+  /\bc[u\x75]nt\b/i,
+  /\bslut\b/i,
 ];
 
 const PII_PATTERNS: { pattern: RegExp; label: string }[] = [
@@ -31,16 +34,30 @@ const PII_PATTERNS: { pattern: RegExp; label: string }[] = [
  */
 export function moderateContentLocal(
   text: string,
-): { flagged: boolean; reason?: string; cleaned: string } {
+): { flagged: boolean; severity?: 'hard' | 'soft'; reason?: string; cleaned: string } {
   let flagged = false;
+  let severity: 'hard' | 'soft' | undefined;
   let reason: string | undefined;
 
-  // Keyword filter (instant)
-  for (const pattern of BANNED_KEYWORDS) {
+  // Hard-banned keyword filter (instant reject)
+  for (const pattern of HARD_BANNED) {
     if (pattern.test(text)) {
       flagged = true;
-      reason = 'Content matched banned keyword filter';
+      severity = 'hard';
+      reason = 'Content matched hard-banned keyword filter';
       break;
+    }
+  }
+
+  // Soft-warned keyword filter (allow through, frontend already warned user)
+  if (!flagged) {
+    for (const pattern of SOFT_WARNED) {
+      if (pattern.test(text)) {
+        flagged = true;
+        severity = 'soft';
+        reason = 'Content matched soft-warned keyword filter';
+        break;
+      }
     }
   }
 
@@ -50,7 +67,7 @@ export function moderateContentLocal(
     cleaned = cleaned.replace(pattern, '[removed]');
   }
 
-  return { flagged, reason, cleaned };
+  return { flagged, severity, reason, cleaned };
 }
 
 /**
@@ -59,7 +76,7 @@ export function moderateContentLocal(
  */
 export async function moderateContent(
   text: string,
-): Promise<{ flagged: boolean; reason?: string; cleaned: string }> {
+): Promise<{ flagged: boolean; severity?: 'hard' | 'soft'; reason?: string; cleaned: string }> {
   // Run local checks first
   const local = moderateContentLocal(text);
   if (local.flagged) return local;
@@ -74,6 +91,7 @@ export async function moderateContent(
         .map(([k]) => k);
       return {
         flagged: true,
+        severity: 'hard',
         reason: `OpenAI moderation flagged: ${flaggedCategories.join(', ')}`,
         cleaned: local.cleaned,
       };
