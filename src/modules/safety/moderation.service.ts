@@ -17,9 +17,16 @@ const HARD_BANNED: RegExp[] = [
 ];
 
 const SOFT_WARNED: RegExp[] = [
-  /\bwh[o0]re\b/i,
-  /\bc[u\x75]nt\b/i,
-  /\bslut\b/i,
+  /\bf[u\x75]ck(ing|ed|er|ers)?\b/i,
+  /\bsh[i1]t(ty)?\b/i,
+  /\bbullsh[i1]t\b/i,
+  /\bb[i1]tch(es)?\b/i,
+  /\bass(hole|holes)?\b/i,
+  /\bbastard(s)?\b/i,
+  /\bd[i1]ck(s)?\b/i,
+  /\bwh[o0]re(s)?\b/i,
+  /\bc[u\x75]nt(s)?\b/i,
+  /\bslut(s)?\b/i,
 ];
 
 const PII_PATTERNS: { pattern: RegExp; label: string }[] = [
