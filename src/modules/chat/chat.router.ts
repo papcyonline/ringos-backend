@@ -376,12 +376,18 @@ router.post(
         }
       }
       const avatarUrl = req.file ? await fileToAvatarUrl(req.file, req.user!.userId) : req.body.avatarUrl || undefined;
+      // Parse isPublic: accept boolean or string "true"/"false" (from FormData)
+      const rawIsPublic = req.body.isPublic;
+      const isPublic = rawIsPublic !== undefined
+        ? (typeof rawIsPublic === 'boolean' ? rawIsPublic : rawIsPublic === 'true')
+        : undefined;
       const conversation = await groupService.createGroup(
         req.user!.userId,
         name,
         memberIds,
         avatarUrl,
         description,
+        isPublic,
       );
       res.status(201).json(conversation);
     } catch (err) {
@@ -406,10 +412,15 @@ router.put(
     try {
       const { name, description } = req.body;
       const avatarUrl = req.file ? await fileToAvatarUrl(req.file, req.user!.userId) : req.body.avatarUrl;
+      // Parse isPublic: accept boolean or string "true"/"false" (from FormData)
+      const rawIsPublic = req.body.isPublic;
+      const isPublic = rawIsPublic !== undefined
+        ? (typeof rawIsPublic === 'boolean' ? rawIsPublic : rawIsPublic === 'true')
+        : undefined;
       const conversation = await groupService.updateGroup(
         (req.params.conversationId as string),
         req.user!.userId,
-        { name, avatarUrl, description },
+        { name, avatarUrl, description, isPublic },
       );
 
       const io = getIO();

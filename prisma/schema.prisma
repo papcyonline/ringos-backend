@@ -266,6 +266,7 @@ model Conversation {
   name        String?
   description String?
   avatarUrl   String?
+  isPublic    Boolean            @default(true)
   isVerified  Boolean            @default(false)
   metadata  Json?
   createdAt DateTime           @default(now())

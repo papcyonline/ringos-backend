@@ -575,6 +575,7 @@ export async function getAllGroups(userId: string) {
     where: {
       type: 'GROUP',
       status: 'ACTIVE',
+      isPublic: true,
     },
     include: {
       participants: {

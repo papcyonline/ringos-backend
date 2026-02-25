@@ -11,6 +11,7 @@ export async function createGroup(
   memberIds: string[],
   avatarUrl?: string,
   description?: string,
+  isPublic?: boolean,
 ) {
   // Ensure creator is not in memberIds (they're added separately as ADMIN)
   const uniqueMembers = [...new Set(memberIds.filter((id) => id !== creatorId))];
@@ -22,6 +23,7 @@ export async function createGroup(
       name,
       description: description || null,
       avatarUrl: avatarUrl || null,
+      isPublic: isPublic !== undefined ? isPublic : true,
       participants: {
         create: [
           { userId: creatorId, role: 'ADMIN' },
@@ -50,7 +52,7 @@ export async function createGroup(
 export async function updateGroup(
   conversationId: string,
   userId: string,
-  updates: { name?: string; avatarUrl?: string; description?: string },
+  updates: { name?: string; avatarUrl?: string; description?: string; isPublic?: boolean },
 ) {
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId } },
@@ -69,6 +71,7 @@ export async function updateGroup(
       ...(updates.name !== undefined ? { name: updates.name } : {}),
       ...(updates.description !== undefined ? { description: updates.description } : {}),
       ...(updates.avatarUrl !== undefined ? { avatarUrl: updates.avatarUrl } : {}),
+      ...(updates.isPublic !== undefined ? { isPublic: updates.isPublic } : {}),
     },
     include: {
       participants: {
@@ -232,6 +235,11 @@ export async function joinGroup(conversationId: string, userId: string) {
 
   if (conversation.status !== 'ACTIVE') {
     throw new ForbiddenError('This group is no longer active');
+  }
+
+  // Private groups can only be joined via explicit invite (addMembers)
+  if (!conversation.isPublic) {
+    throw new ForbiddenError('This is a private group. You must be invited to join.');
   }
 
   // Check if user already has a participant record
