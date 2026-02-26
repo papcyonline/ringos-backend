@@ -34,14 +34,15 @@ export async function translateMessage(
       },
     });
 
+    // Language field can be comma-separated (e.g. "en,fr"), so split and flatten
     const targetLanguages = [
       ...new Set(
         participants
-          .map((p) => p.user.preference?.language ?? 'en')
+          .flatMap((p) => (p.user.preference?.language ?? 'en').split(',').map((l: string) => l.trim()).filter(Boolean))
       ),
     ];
 
-    // If everyone speaks the same language, skip translation
+    // If everyone speaks the same single language, skip translation
     if (targetLanguages.length <= 1) return;
 
     const langList = targetLanguages.join(', ');
