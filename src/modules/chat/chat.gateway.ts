@@ -4,6 +4,7 @@ import { logger } from '../../shared/logger';
 import { moderateContentLocal, moderateContent } from '../safety/moderation.service';
 import * as chatService from './chat.service';
 import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
+import { translateMessage } from './translation.service';
 import { notifyChatMessage } from '../notification/notification.service';
 
 const VALID_EMOJIS = ['thumbsup', 'heart', 'laugh', 'wow', 'sad', 'pray'];
@@ -95,6 +96,11 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       ).catch((err) => {
         logger.error({ err, conversationId }, 'Failed to send chat notification');
       });
+
+      // Auto-translate in background
+      if (cleanedContent) {
+        translateMessage(message.id, conversationId, cleanedContent).catch(() => {});
+      }
 
       // Run full OpenAI moderation in the background — if flagged, retroactively remove
       moderateContent(cleanedContent).then(async (fullResult) => {

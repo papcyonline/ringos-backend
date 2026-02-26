@@ -54,6 +54,7 @@ export function formatMessagePayload(message: any, conversationId: string) {
           senderName: message.replyTo.sender?.displayName ?? (message.replyTo as any).sender?.displayName,
         }
       : null,
+    metadata: message.metadata,
     editedAt: message.editedAt,
     deletedAt: message.deletedAt,
     reactions: message.reactions.map((r: any) => ({

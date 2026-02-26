@@ -10,6 +10,7 @@ import { sendMessageSchema, editMessageSchema, reactMessageSchema } from './chat
 import * as chatService from './chat.service';
 import * as groupService from './group.service';
 import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
+import { translateMessage } from './translation.service';
 import { notifyChatMessage } from '../notification/notification.service';
 
 const router = Router();
@@ -116,6 +117,11 @@ router.post(
       ).catch((err) => {
         logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send chat notification');
       });
+
+      // Auto-translate in background
+      if (message.content) {
+        translateMessage(message.id, (req.params.conversationId as string), message.content).catch(() => {});
+      }
 
       res.status(201).json(message);
     } catch (err) {
@@ -239,6 +245,11 @@ router.post(
       ).catch((err) => {
         logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send image notification');
       });
+
+      // Auto-translate caption in background
+      if (message.content) {
+        translateMessage(message.id, (req.params.conversationId as string), message.content).catch(() => {});
+      }
 
       res.status(201).json(message);
     } catch (err) {
