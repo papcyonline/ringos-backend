@@ -100,7 +100,7 @@ export async function getConversations(userId: string) {
   const conversations = await prisma.conversation.findMany({
     where: {
       participants: {
-        some: { userId },
+        some: { userId, leftAt: null },
       },
     },
     include: {
