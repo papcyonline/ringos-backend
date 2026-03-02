@@ -8,6 +8,37 @@ import { prisma } from './database';
 
 let io: Server;
 
+// ── Per-user socket event rate limiting ─────────────────────────────────
+// Sliding window: max events per window per user.
+const SOCKET_RATE_LIMIT_WINDOW_MS = 10_000; // 10 seconds
+const SOCKET_RATE_LIMIT_MAX = 50;           // 50 events per window
+
+const userEventCounts = new Map<string, { count: number; resetAt: number }>();
+
+/** Returns true if the event should be allowed, false if rate-limited. */
+function checkSocketRateLimit(userId: string): boolean {
+  const now = Date.now();
+  let entry = userEventCounts.get(userId);
+  if (!entry || now >= entry.resetAt) {
+    entry = { count: 1, resetAt: now + SOCKET_RATE_LIMIT_WINDOW_MS };
+    userEventCounts.set(userId, entry);
+    return true;
+  }
+  entry.count++;
+  if (entry.count > SOCKET_RATE_LIMIT_MAX) {
+    return false;
+  }
+  return true;
+}
+
+// Clean up stale entries every 60 seconds to prevent memory leak.
+setInterval(() => {
+  const now = Date.now();
+  for (const [uid, entry] of userEventCounts) {
+    if (now >= entry.resetAt) userEventCounts.delete(uid);
+  }
+}, 60_000);
+
 export function initializeSocket(httpServer: HttpServer): Server {
   const corsOrigin = env.CORS_ORIGIN === '*' ? '*' : env.CORS_ORIGIN.split(',').map((o) => o.trim());
 
@@ -20,6 +51,7 @@ export function initializeSocket(httpServer: HttpServer): Server {
     pingInterval: 25000,
   });
 
+  // Auth middleware
   io.use(async (socket: Socket, next) => {
     try {
       const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.replace('Bearer ', '');
@@ -38,6 +70,16 @@ export function initializeSocket(httpServer: HttpServer): Server {
     const userId = (socket as any).userId;
     socket.join(`user:${userId}`);
     logger.info({ userId, socketId: socket.id }, 'Socket connected');
+
+    // Per-event rate limiting — drops events that exceed the threshold
+    socket.use((packet, next) => {
+      if (!checkSocketRateLimit(userId)) {
+        const eventName = packet[0];
+        logger.warn({ userId, event: eventName }, 'Socket event rate-limited');
+        return next(new Error('Rate limit exceeded'));
+      }
+      next();
+    });
 
     // Set user online
     try {

@@ -147,6 +147,12 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const { conversationId, targetUserIds, isGroup, callType } = data;
       const resolvedCallType = callType ?? 'AUDIO';
 
+      // Validate targetUserIds bounds
+      if (!Array.isArray(targetUserIds) || targetUserIds.length === 0 || targetUserIds.length > 20) {
+        socket.emit('call:error', { message: 'Invalid number of participants (1-20)' });
+        return;
+      }
+
       logger.info({ userId, conversationId, targetUserIds, callType: resolvedCallType }, 'call:initiate received');
 
       // Clean up any stale call entry from a previous session
