@@ -13,6 +13,7 @@ export interface CallPayload {
   callerId: string;
   callerName: string;
   callerAvatar: string;
+  isGroup: string;
 }
 
 export interface VoiceNotePayload {
@@ -48,6 +49,7 @@ export function buildCallPayload(data: {
   callerId: string;
   callerName: string;
   callerAvatar?: string | null;
+  isGroup?: boolean;
 }): Record<string, string> {
   return {
     type: 'incoming_call',
@@ -57,6 +59,7 @@ export function buildCallPayload(data: {
     callerId: data.callerId,
     callerName: data.callerName,
     callerAvatar: data.callerAvatar ?? '',
+    isGroup: String(data.isGroup ?? false),
   };
 }
 

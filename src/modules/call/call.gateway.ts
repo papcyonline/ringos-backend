@@ -4,6 +4,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { sendCallPush } from '../notification/notification.service';
 import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
+import { generateCallToken, LIVEKIT_URL } from './call.livekit';
 
 interface ActiveCall {
   callId: string;
@@ -220,6 +221,13 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
       socket.join(`call:${callId}`);
 
+      // Fetch display names for all participants (for call UI)
+      const participantUsers = await prisma.user.findMany({
+        where: { id: { in: Array.from(participantIds) } },
+        select: { id: true, displayName: true, avatarUrl: true },
+      });
+      const userMap = new Map(participantUsers.map((u) => [u.id, u]));
+
       // Notify each target user
       for (const targetId of targetUserIds) {
         // Check if target has active sockets in their room
@@ -240,9 +248,14 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
             callType: resolvedCallType,
             callerName: caller?.displayName ?? 'Unknown',
             callerAvatar: caller?.avatarUrl ?? null,
+            callerId: userId,
             participants: Array.from(participantIds)
               .filter((id) => id !== targetId)
-              .map((id) => ({ userId: id })),
+              .map((id) => ({
+                userId: id,
+                displayName: userMap.get(id)?.displayName ?? 'Unknown',
+                avatarUrl: userMap.get(id)?.avatarUrl ?? null,
+              })),
           });
         }
 
@@ -255,6 +268,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
           callerId: userId,
           callerName: caller?.displayName ?? 'Unknown',
           callerAvatar: caller?.avatarUrl,
+          isGroup: isGroup ?? false,
         }).catch((err) => {
           logger.error({ err, targetId, callId }, 'Failed to send call push notification');
         });
@@ -262,6 +276,18 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
       // Confirm to the initiator
       socket.emit('call:initiated', { callId, callType: resolvedCallType });
+
+      // For group calls: generate a LiveKit token for the initiator
+      if (isGroup) {
+        try {
+          const callerDisplayName = caller?.displayName ?? undefined;
+          const token = await generateCallToken(userId, callId, callerDisplayName);
+          socket.emit('call:livekit-token', { callId, token, url: LIVEKIT_URL });
+          logger.info({ userId, callId }, 'LiveKit token sent to initiator');
+        } catch (err) {
+          logger.error({ err, callId }, 'Failed to generate LiveKit token for initiator');
+        }
+      }
 
       // Server-side timeout: clean up if nobody answers
       const timeout = setTimeout(async () => {
@@ -340,11 +366,47 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         logger.error({ dbErr, callId }, 'Failed to update CallLog on answer');
       }
 
-      // Notify the initiator that the call was answered
-      io.to(`user:${call.initiatorId}`).emit('call:answered', {
-        callId,
-        userId,
+      // Fetch answerer's display info for event payloads
+      const answerer = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { displayName: true, avatarUrl: true },
       });
+
+      if (call.isGroup) {
+        // Group call: generate LiveKit token for the answering user
+        try {
+          const token = await generateCallToken(userId, callId, answerer?.displayName ?? undefined);
+          socket.emit('call:livekit-token', { callId, token, url: LIVEKIT_URL });
+          logger.info({ userId, callId }, 'LiveKit token sent to answering participant');
+        } catch (err) {
+          logger.error({ err, callId }, 'Failed to generate LiveKit token for answering participant');
+        }
+
+        // Notify the initiator with isLiveKit flag
+        io.to(`user:${call.initiatorId}`).emit('call:answered', {
+          callId,
+          userId,
+          displayName: answerer?.displayName ?? 'Unknown',
+          avatarUrl: answerer?.avatarUrl ?? null,
+          isLiveKit: true,
+        });
+
+        // Notify other already-joined participants
+        socket.to(`call:${callId}`).emit('call:participant-joined', {
+          callId,
+          userId,
+          displayName: answerer?.displayName ?? 'Unknown',
+          avatarUrl: answerer?.avatarUrl ?? null,
+        });
+      } else {
+        // 1-on-1 call: notify the initiator (P2P handshake follows)
+        io.to(`user:${call.initiatorId}`).emit('call:answered', {
+          callId,
+          userId,
+          displayName: answerer?.displayName ?? 'Unknown',
+          avatarUrl: answerer?.avatarUrl ?? null,
+        });
+      }
 
       logger.info({ userId, callId }, 'Call answered');
     } catch (error) {
@@ -419,6 +481,9 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         return;
       }
 
+      // Group calls use LiveKit SFU — no P2P signal relay needed
+      if (call.isGroup) return;
+
       // Verify the target has active sockets
       const targetSockets = await io.in(`user:${to}`).fetchSockets();
       logger.info(
@@ -435,6 +500,33 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       });
     } catch (error) {
       logger.error({ error, userId }, 'Error relaying signal');
+    }
+  });
+
+  /**
+   * call:request-token — Request a LiveKit token for a group call.
+   * Used for token refresh or late-join scenarios.
+   */
+  socket.on('call:request-token', async (data: { callId: string }) => {
+    try {
+      const { callId } = data;
+      const call = callState.getCall(callId);
+
+      if (!call || !call.participantIds.has(userId) || !call.isGroup) {
+        socket.emit('call:error', { message: 'Cannot generate token' });
+        return;
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { displayName: true },
+      });
+      const token = await generateCallToken(userId, callId, user?.displayName ?? undefined);
+      socket.emit('call:livekit-token', { callId, token, url: LIVEKIT_URL });
+      logger.info({ userId, callId }, 'LiveKit token refreshed');
+    } catch (error) {
+      logger.error({ error, userId }, 'Error generating call token');
+      socket.emit('call:error', { message: 'Failed to generate token' });
     }
   });
 

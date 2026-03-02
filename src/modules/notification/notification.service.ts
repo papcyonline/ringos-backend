@@ -294,6 +294,7 @@ export async function sendCallPush(
     callerId: string;
     callerName: string;
     callerAvatar?: string | null;
+    isGroup?: boolean;
   }
 ) {
   const app = getFirebaseApp();
@@ -350,6 +351,7 @@ export async function sendCallPush(
       callerId: payload.callerId,
       callerName: payload.callerName,
       callerAvatar: payload.callerAvatar ?? null,
+      isGroup: String(payload.isGroup ?? false),
     };
 
     for (const { token } of voipTokens) {
