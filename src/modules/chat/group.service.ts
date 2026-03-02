@@ -321,3 +321,115 @@ export async function toggleGroupVerified(conversationId: string, userId: string
   logger.info({ conversationId, userId, isVerified: updated.isVerified }, 'Group verified status toggled');
   return updated;
 }
+
+/**
+ * Update call/video settings for a group. Admin only.
+ */
+export async function updateGroupCallSettings(
+  conversationId: string,
+  userId: string,
+  settings: { callsEnabled?: boolean; videoEnabled?: boolean },
+) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+
+  if (!participant) {
+    throw new ForbiddenError('You are not a participant in this conversation');
+  }
+  if (participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can update call settings');
+  }
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+  });
+
+  if (!conversation || conversation.type !== 'GROUP') {
+    throw new NotFoundError('Group not found');
+  }
+
+  const data: Record<string, boolean> = {};
+  if (settings.callsEnabled !== undefined) data.callsEnabled = settings.callsEnabled;
+  if (settings.videoEnabled !== undefined) data.videoEnabled = settings.videoEnabled;
+
+  const updated = await prisma.conversation.update({
+    where: { id: conversationId },
+    data,
+    include: {
+      participants: {
+        where: { leftAt: null },
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+          },
+        },
+      },
+    },
+  });
+
+  logger.info({ conversationId, userId, ...settings }, 'Group call settings updated');
+  return updated;
+}
+
+/**
+ * Promote a member to admin. Requester must be admin.
+ */
+export async function makeAdmin(
+  conversationId: string,
+  requesterId: string,
+  targetUserId: string,
+) {
+  const requester = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId: requesterId } },
+  });
+
+  if (!requester) {
+    throw new ForbiddenError('You are not a participant in this conversation');
+  }
+  if (requester.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can promote members');
+  }
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+  });
+
+  if (!conversation || conversation.type !== 'GROUP') {
+    throw new NotFoundError('Group not found');
+  }
+
+  const target = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId: targetUserId } },
+  });
+
+  if (!target || target.leftAt !== null) {
+    throw new NotFoundError('Member not found in this group');
+  }
+  if (target.role === 'ADMIN') {
+    throw new ForbiddenError('User is already an admin');
+  }
+
+  await prisma.conversationParticipant.update({
+    where: { id: target.id },
+    data: { role: 'ADMIN' },
+  });
+
+  // Re-fetch with participants included
+  const updated = await prisma.conversation.findUniqueOrThrow({
+    where: { id: conversationId },
+    include: {
+      participants: {
+        where: { leftAt: null },
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+          },
+        },
+      },
+    },
+  });
+
+  logger.info({ conversationId, requesterId, targetUserId }, 'Member promoted to admin');
+  return updated;
+}

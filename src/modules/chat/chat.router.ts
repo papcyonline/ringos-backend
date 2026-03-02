@@ -463,6 +463,31 @@ router.put(
   },
 );
 
+// PUT /conversations/:id/group/call-settings - Update group call settings (admin only)
+router.put(
+  '/conversations/:conversationId/group/call-settings',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { callsEnabled, videoEnabled } = req.body;
+      const result = await groupService.updateGroupCallSettings(
+        (req.params.conversationId as string),
+        req.user!.userId,
+        { callsEnabled, videoEnabled },
+      );
+
+      const io = getIO();
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:updated', {
+        conversationId: (req.params.conversationId as string),
+      });
+
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // DELETE /conversations/:id/group - Delete a group (admin only)
 router.delete(
   '/conversations/:conversationId/group',
@@ -532,6 +557,30 @@ router.delete(
         conversationId: (req.params.conversationId as string),
       });
       io.to(`user:${(req.params.userId as string)}`).emit('group:removed', {
+        conversationId: (req.params.conversationId as string),
+      });
+
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /conversations/:id/members/:userId/role - Promote member to admin
+router.put(
+  '/conversations/:conversationId/members/:userId/role',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.makeAdmin(
+        (req.params.conversationId as string),
+        req.user!.userId,
+        (req.params.userId as string),
+      );
+
+      const io = getIO();
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:members-changed', {
         conversationId: (req.params.conversationId as string),
       });
 
