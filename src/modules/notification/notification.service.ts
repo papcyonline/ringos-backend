@@ -321,7 +321,7 @@ export async function sendCallPush(
         headers: { 'apns-priority': '10' },
         payload: {
           aps: {
-            alert: { title: payload.callerName, body: 'Incoming call' },
+            alert: { title: payload.callerName, body: payload.isGroup ? `Incoming group ${payload.callType === 'VIDEO' ? 'video' : 'audio'} call` : 'Incoming call' },
             sound: 'default',
             'content-available': 1,
           },
