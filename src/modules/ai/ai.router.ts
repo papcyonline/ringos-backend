@@ -268,7 +268,7 @@ router.post(
       // check needed here — blocking would prevent voice on the user's
       // last allowed session because the counter was already bumped.
 
-      const { mode = 'CALM_LISTENER' } = req.body;
+      const { mode = 'CALM_LISTENER', language } = req.body;
       const prompt =
         promptMap[mode as keyof typeof promptMap] ?? promptMap.CALM_LISTENER;
       // Strip both the APP ACTIONS block (tools aren't available in voice mode)
@@ -280,9 +280,21 @@ router.post(
 
       // Personalise with user context
       const userContext = await aiService.getUserContext(req.user!.userId);
+
+      // Language instruction — tell Gemini which language to speak
+      const langMap: Record<string, string> = {
+        en: 'English', fr: 'French', es: 'Spanish', de: 'German',
+        ar: 'Arabic', nl: 'Dutch', pt: 'Portuguese', zh: 'Chinese',
+        hi: 'Hindi', it: 'Italian',
+      };
+      const langName = langMap[language as string] || '';
+      const langInstruction = langName
+        ? `\n\nIMPORTANT: You MUST speak and respond ONLY in ${langName}. All your responses must be in ${langName}.`
+        : '';
+
       const systemInstruction = userContext
-        ? `${voicePrompt}\n\n${userContext}\n\nUse this information naturally in conversation when relevant — don't force it into every message, but use it the way a friend would.`
-        : voicePrompt;
+        ? `${voicePrompt}\n\n${userContext}\n\nUse this information naturally in conversation when relevant — don't force it into every message, but use it the way a friend would.${langInstruction}`
+        : `${voicePrompt}${langInstruction}`;
 
       // Pass API key directly — the client connects to Google's WS from the
       // device, but the key is only transmitted over the authenticated
