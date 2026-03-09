@@ -206,10 +206,15 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
       priority: 'high',
     },
     apns: {
+      headers: {
+        'apns-priority': '10',
+        'apns-push-type': 'alert',
+      },
       payload: {
         aps: {
           alert: { title: iosTitle, body: iosBody },
           sound: 'default',
+          'content-available': 1,
           'mutable-content': 1,
         },
       },
@@ -258,6 +263,10 @@ async function sendPushToUser(userId: string, payload: {
       },
     },
     apns: {
+      headers: {
+        'apns-priority': '10',
+        'apns-push-type': 'alert',
+      },
       payload: {
         aps: {
           alert: {
@@ -266,6 +275,7 @@ async function sendPushToUser(userId: string, payload: {
           },
           sound: 'default',
           badge: 1,
+          'content-available': 1,
           'mutable-content': 1,
         },
       },
