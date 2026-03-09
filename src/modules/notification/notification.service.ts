@@ -193,17 +193,27 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
 
   if (tokens.length === 0) return;
 
-  // Build iOS alert from data fields so the notification is visible on iOS
-  // (data-only silent pushes are not displayed by the OS).
-  const iosTitle = data.senderName || data.callerName || 'Yomeet';
-  const iosBody =
+  // Build alert title/body from data fields so the notification is visible
+  // when the app is killed or in the background (OS displays it directly).
+  const notifTitle = data.senderName || data.callerName || 'Yomeet';
+  const notifBody =
     data.audioUrl ? 'Sent a voice message' : data.content || 'New message';
+
+  // Pick the correct Android notification channel based on message type.
+  const androidChannelId =
+    data.type === 'voice_note' ? 'yomeet_voice_notes' : 'yomeet_messages';
 
   const message: admin.messaging.MulticastMessage = {
     tokens: tokens.map((t) => t.token),
     data,
     android: {
       priority: 'high',
+      notification: {
+        channelId: androidChannelId,
+        title: notifTitle,
+        body: notifBody,
+        sound: 'default',
+      },
     },
     apns: {
       headers: {
@@ -212,7 +222,7 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
       },
       payload: {
         aps: {
-          alert: { title: iosTitle, body: iosBody },
+          alert: { title: notifTitle, body: notifBody },
           sound: 'default',
           'content-available': 1,
           'mutable-content': 1,
