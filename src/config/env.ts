@@ -14,8 +14,8 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('1h'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
 
-  // OpenAI (no longer used for AI features, kept optional for legacy)
-  OPENAI_API_KEY: z.string().optional(),
+  // OpenAI (text chat, mood classification)
+  OPENAI_API_KEY: z.string(),
 
   // Google Gemini (all AI features: text, voice, TTS, STT)
   GEMINI_API_KEY: z.string(),
