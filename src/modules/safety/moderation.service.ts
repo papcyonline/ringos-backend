@@ -1,7 +1,9 @@
-import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 import { env } from '../../config/env';
 
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const gemini = env.GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: env.GEMINI_API_KEY })
+  : null;
 
 const HARD_BANNED: RegExp[] = [
   /\bn[i1]gg[ae3]r?\b/i,
@@ -78,7 +80,7 @@ export function moderateContentLocal(
 }
 
 /**
- * Full moderation: local checks + OpenAI Moderation API.
+ * Full moderation: local checks + Gemini safety check.
  * Call this in the background after the message is already saved & broadcast.
  */
 export async function moderateContent(
@@ -88,23 +90,34 @@ export async function moderateContent(
   const local = moderateContentLocal(text);
   if (local.flagged) return local;
 
-  // OpenAI Moderation API
-  try {
-    const modResult = await openai.moderations.create({ input: text });
-    const result = modResult.results[0];
-    if (result.flagged) {
-      const flaggedCategories = Object.entries(result.categories)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      return {
-        flagged: true,
-        severity: 'hard',
-        reason: `OpenAI moderation flagged: ${flaggedCategories.join(', ')}`,
-        cleaned: local.cleaned,
-      };
+  // Gemini-based content moderation
+  if (gemini) {
+    try {
+      const response = await gemini.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: `Analyze this message for harmful content (hate speech, harassment, threats, sexual content, self-harm). Reply ONLY with JSON: {"flagged":false} or {"flagged":true,"categories":["category1"]}\n\nMessage: "${text}"`,
+        config: {
+          temperature: 0,
+          maxOutputTokens: 100,
+          responseMimeType: 'application/json',
+        },
+      });
+
+      const raw = response.text?.trim() ?? '';
+      const cleaned = raw.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+      const result = JSON.parse(cleaned);
+      if (result.flagged) {
+        const categories = result.categories?.join(', ') ?? 'harmful content';
+        return {
+          flagged: true,
+          severity: 'hard',
+          reason: `AI moderation flagged: ${categories}`,
+          cleaned: local.cleaned,
+        };
+      }
+    } catch {
+      // If Gemini API fails, allow the message (local check already passed)
     }
-  } catch {
-    // If OpenAI API fails, allow the message (local check already passed)
   }
 
   return local;

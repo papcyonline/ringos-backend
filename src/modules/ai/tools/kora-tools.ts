@@ -1,67 +1,39 @@
-import OpenAI from 'openai';
+import { Type } from '@google/genai';
 import { listUsers } from '../../user/user.service';
 import { getConversations } from '../../chat/chat.service';
 import { getNotifications } from '../../notification/notification.service';
 
-// ─── Tool Schemas (OpenAI function-calling format) ──────────────────
+// ─── Tool Declarations (Gemini function-calling format) ──────────────
 
-export const koraToolSchemas: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+export const koraToolDeclarations = [
   {
-    type: 'function',
-    function: {
-      name: 'find_people',
-      description:
-        'Find people the user can talk to on Yomeet. Use when the user wants someone to talk to, wants company, or asks who is online.',
-      parameters: {
-        type: 'object',
-        properties: {
-          limit: {
-            type: 'number',
-            description: 'Max number of people to return (default 5)',
-          },
+    name: 'find_people',
+    description:
+      'Find people the user can talk to on Yomeet. Use when the user wants someone to talk to, wants company, or asks who is online.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        limit: {
+          type: Type.NUMBER,
+          description: 'Max number of people to return (default 5)',
         },
-        required: [],
       },
     },
   },
   {
-    type: 'function',
-    function: {
-      name: 'get_unread_messages',
-      description:
-        'Check the user\'s unread messages and conversations. Use when the user asks about messages, who wrote them, or wants to check their inbox.',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: [],
-      },
-    },
+    name: 'get_unread_messages',
+    description:
+      'Check the user\'s unread messages and conversations. Use when the user asks about messages, who wrote them, or wants to check their inbox.',
   },
   {
-    type: 'function',
-    function: {
-      name: 'get_notifications',
-      description:
-        'Get the user\'s unread notifications. Use when the user asks about notifications, what they missed, or who liked/followed them.',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: [],
-      },
-    },
+    name: 'get_notifications',
+    description:
+      'Get the user\'s unread notifications. Use when the user asks about notifications, what they missed, or who liked/followed them.',
   },
   {
-    type: 'function',
-    function: {
-      name: 'start_matching',
-      description:
-        'Navigate the user to the matching screen to find someone to connect with. Use when the user explicitly wants to be matched with someone.',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: [],
-      },
-    },
+    name: 'start_matching',
+    description:
+      'Navigate the user to the matching screen to find someone to connect with. Use when the user explicitly wants to be matched with someone.',
   },
 ];
 

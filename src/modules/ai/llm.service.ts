@@ -1,8 +1,9 @@
-import OpenAI from 'openai';
+import { GoogleGenAI, Type, FunctionCallingConfigMode } from '@google/genai';
 import { env } from '../../config/env';
-import { koraToolSchemas, executeTool, ToolResult } from './tools/kora-tools';
+import { koraToolDeclarations, executeTool, ToolResult } from './tools/kora-tools';
 
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const gemini = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY! });
+const MODEL = 'gemini-2.0-flash';
 
 interface LlmMessage {
   role: string;
@@ -25,26 +26,27 @@ export async function generateAiResponse(
   messages: LlmMessage[],
   systemPrompt: string,
 ): Promise<LlmResponse> {
-  const formattedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: 'system', content: systemPrompt },
-    ...messages.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    })),
-  ];
+  const contents = messages.map((m) => ({
+    role: m.role === 'user' ? 'user' as const : 'model' as const,
+    parts: [{ text: m.content }],
+  }));
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: formattedMessages,
-    temperature: 0.8,
-    max_tokens: 1024,
-    response_format: { type: 'json_object' },
+  const response = await gemini.models.generateContent({
+    model: MODEL,
+    contents,
+    config: {
+      systemInstruction: systemPrompt,
+      temperature: 0.8,
+      maxOutputTokens: 1024,
+      responseMimeType: 'application/json',
+    },
   });
 
-  const raw = completion.choices[0]?.message?.content ?? '';
+  const raw = response.text ?? '';
 
   try {
-    const parsed = JSON.parse(raw) as LlmResponse;
+    const cleaned = raw.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+    const parsed = JSON.parse(cleaned) as LlmResponse;
     return {
       reply: parsed.reply || '',
       mood: parsed.mood || 'NEUTRAL',
@@ -52,7 +54,6 @@ export async function generateAiResponse(
       handoffReason: parsed.handoffReason || undefined,
     };
   } catch {
-    // Fallback if model returns non-JSON despite instructions
     return {
       reply: raw,
       mood: 'NEUTRAL',
@@ -62,8 +63,7 @@ export async function generateAiResponse(
 }
 
 /**
- * Stream an AI response token-by-token.
- * Uses a plain-text system prompt (no JSON format) for true streaming.
+ * Stream an AI response token-by-token using Gemini.
  * Calls `onToken` for each chunk and returns the full reply when done.
  *
  * When `toolOpts.userId` is provided, tools are included in the first call.
@@ -76,8 +76,6 @@ export async function streamAiResponse(
   onToken: (token: string) => void,
   toolOpts: StreamToolOptions = {},
 ): Promise<string> {
-  // Strip JSON format instructions from the system prompt for streaming.
-  // We'll classify mood separately after.
   const streamPrompt = systemPrompt.replace(
     /RESPONSE FORMAT:[\s\S]*$/,
     'Respond naturally with your message only. Do not use JSON formatting. ' +
@@ -85,113 +83,99 @@ export async function streamAiResponse(
     'Do not write long paragraphs. Be warm but concise.',
   );
 
-  const formattedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: 'system', content: streamPrompt },
-    ...messages.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    })),
-  ];
+  const contents = messages.map((m) => ({
+    role: m.role === 'user' ? 'user' as const : 'model' as const,
+    parts: [{ text: m.content }],
+  }));
 
   const includeTools = !!toolOpts.userId;
 
-  // ── First streaming call (may include tools) ──
-  const stream = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: formattedMessages,
-    temperature: 0.8,
-    max_tokens: 300,
-    stream: true,
-    ...(includeTools ? { tools: koraToolSchemas, tool_choice: 'auto' as const } : {}),
+  const response = await gemini.models.generateContentStream({
+    model: MODEL,
+    contents,
+    config: {
+      systemInstruction: streamPrompt,
+      temperature: 0.8,
+      maxOutputTokens: 300,
+      ...(includeTools ? {
+        tools: [{ functionDeclarations: koraToolDeclarations }],
+        toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
+      } : {}),
+    },
   });
 
   let fullReply = '';
-  // Accumulate tool_calls deltas
-  const toolCallMap: Record<number, { id: string; name: string; args: string }> = {};
+  const pendingCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
 
-  for await (const chunk of stream) {
-    const choice = chunk.choices[0];
-    if (!choice) continue;
-
-    // Content tokens
-    const delta = choice.delta?.content;
-    if (delta) {
-      fullReply += delta;
-      onToken(delta);
+  for await (const chunk of response) {
+    // Text content
+    const text = chunk.text;
+    if (text) {
+      fullReply += text;
+      onToken(text);
     }
 
-    // Tool call deltas
-    const toolCalls = (choice.delta as any)?.tool_calls as
-      | Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
-      | undefined;
-    if (toolCalls) {
-      for (const tc of toolCalls) {
-        if (!toolCallMap[tc.index]) {
-          toolCallMap[tc.index] = { id: tc.id ?? '', name: '', args: '' };
+    // Function calls
+    const parts = chunk.candidates?.[0]?.content?.parts;
+    if (parts) {
+      for (const part of parts) {
+        if (part.functionCall) {
+          pendingCalls.push({
+            name: part.functionCall.name!,
+            args: (part.functionCall.args as Record<string, unknown>) ?? {},
+          });
         }
-        if (tc.id) toolCallMap[tc.index].id = tc.id;
-        if (tc.function?.name) toolCallMap[tc.index].name += tc.function.name;
-        if (tc.function?.arguments) toolCallMap[tc.index].args += tc.function.arguments;
       }
     }
   }
 
-  // ── If no tool calls, we're done ──
-  const pendingCalls = Object.values(toolCallMap);
+  // If no tool calls, we're done
   if (pendingCalls.length === 0 || !toolOpts.userId) {
     return fullReply;
   }
 
-  // ── Execute tool(s) and do a second stream ──
-  const assistantToolCallMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
-    role: 'assistant',
-    content: null,
-    tool_calls: pendingCalls.map((tc) => ({
-      id: tc.id,
-      type: 'function' as const,
-      function: { name: tc.name, arguments: tc.args },
+  // Execute tool(s) and do a second stream
+  const toolMessages: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
+
+  // Add the model's function call as a model turn
+  toolMessages.push({
+    role: 'model',
+    parts: pendingCalls.map((tc) => ({
+      functionCall: { name: tc.name, args: tc.args },
     })),
-  };
+  });
 
-  const toolResultMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-
+  // Add tool results as a user turn
+  const toolResultParts: any[] = [];
   for (const tc of pendingCalls) {
-    let parsedArgs: Record<string, unknown> = {};
-    try { parsedArgs = JSON.parse(tc.args || '{}'); } catch { /* empty args */ }
-
-    const result = await executeTool(tc.name, parsedArgs, toolOpts.userId!);
-
-    toolResultMessages.push({
-      role: 'tool',
-      tool_call_id: tc.id,
-      content: result.llmContext,
-    } as any);
-
-    // Emit action to frontend (wrapped in try-catch: client may have disconnected)
+    const result = await executeTool(tc.name, tc.args, toolOpts.userId!);
+    toolResultParts.push({
+      functionResponse: {
+        name: tc.name,
+        response: { content: result.llmContext },
+      },
+    });
     try { toolOpts.onAction?.(result.action); } catch { /* ignore SSE write errors */ }
   }
+  toolMessages.push({ role: 'user', parts: toolResultParts });
 
   // Second call — NO tools (prevents recursion)
-  const secondMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    ...formattedMessages,
-    assistantToolCallMsg,
-    ...toolResultMessages,
-  ];
-
-  const secondStream = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: secondMessages,
-    temperature: 0.8,
-    max_tokens: 300,
-    stream: true,
+  const secondResponse = await gemini.models.generateContentStream({
+    model: MODEL,
+    contents: [...contents, ...toolMessages],
+    config: {
+      systemInstruction: streamPrompt,
+      temperature: 0.8,
+      maxOutputTokens: 300,
+    },
   });
 
   fullReply = '';
-  for await (const chunk of secondStream) {
-    const delta = chunk.choices[0]?.delta?.content;
-    if (delta) {
-      fullReply += delta;
-      onToken(delta);
+  for await (const chunk of secondResponse) {
+    const text = chunk.text;
+    if (text) {
+      fullReply += text;
+      onToken(text);
     }
   }
 
@@ -199,11 +183,8 @@ export async function streamAiResponse(
 }
 
 /**
- * Stream an AI response from audio input — sends raw audio directly to GPT-4o
- * (bypassing Whisper STT) for voice-to-voice conversations with minimal latency.
- * The model hears the user's voice and generates a text reply, streamed via `onToken`.
- *
- * Supports tool calling when `toolOpts.userId` is provided (same pattern as text).
+ * Stream an AI response from audio input — sends raw audio directly to Gemini
+ * for voice-to-voice conversations with minimal latency.
  */
 export async function streamAiResponseWithAudio(
   history: LlmMessage[],
@@ -220,120 +201,113 @@ export async function streamAiResponseWithAudio(
     'Do not write long paragraphs. Be warm but concise.',
   );
 
-  const formattedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: 'system', content: streamPrompt },
+  const mimeMap: Record<string, string> = {
+    wav: 'audio/wav',
+    mp3: 'audio/mp3',
+    opus: 'audio/opus',
+    webm: 'audio/webm',
+  };
+  const mimeType = mimeMap[audioFormat] || 'audio/wav';
+
+  const contents: Array<{ role: 'user' | 'model'; parts: any[] }> = [
     ...history.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
+      role: m.role === 'user' ? 'user' as const : 'model' as const,
+      parts: [{ text: m.content }],
     })),
     {
       role: 'user',
-      content: [
+      parts: [
         {
-          type: 'input_audio',
-          input_audio: {
+          inlineData: {
+            mimeType,
             data: audioBase64,
-            format: audioFormat,
           },
-        } as any,
+        },
       ],
     },
   ];
 
   const includeTools = !!toolOpts.userId;
 
-  const stream = await openai.chat.completions.create({
-    model: 'gpt-4o-audio-preview',
-    modalities: ['text'],
-    messages: formattedMessages,
-    temperature: 0.8,
-    max_tokens: 300,
-    stream: true,
-    ...(includeTools ? { tools: koraToolSchemas, tool_choice: 'auto' as const } : {}),
-  } as Parameters<typeof openai.chat.completions.create>[0]);
+  const response = await gemini.models.generateContentStream({
+    model: MODEL,
+    contents,
+    config: {
+      systemInstruction: streamPrompt,
+      temperature: 0.8,
+      maxOutputTokens: 300,
+      ...(includeTools ? {
+        tools: [{ functionDeclarations: koraToolDeclarations }],
+        toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
+      } : {}),
+    },
+  });
 
   let fullReply = '';
-  const toolCallMap: Record<number, { id: string; name: string; args: string }> = {};
+  const pendingCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
 
-  for await (const chunk of stream as any) {
-    const choice = (chunk as any).choices[0];
-    if (!choice) continue;
-
-    const delta = choice.delta?.content;
-    if (delta) {
-      fullReply += delta;
-      onToken(delta);
+  for await (const chunk of response) {
+    const text = chunk.text;
+    if (text) {
+      fullReply += text;
+      onToken(text);
     }
 
-    const toolCalls = choice.delta?.tool_calls as
-      | Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
-      | undefined;
-    if (toolCalls) {
-      for (const tc of toolCalls) {
-        if (!toolCallMap[tc.index]) {
-          toolCallMap[tc.index] = { id: tc.id ?? '', name: '', args: '' };
+    const parts = chunk.candidates?.[0]?.content?.parts;
+    if (parts) {
+      for (const part of parts) {
+        if (part.functionCall) {
+          pendingCalls.push({
+            name: part.functionCall.name!,
+            args: (part.functionCall.args as Record<string, unknown>) ?? {},
+          });
         }
-        if (tc.id) toolCallMap[tc.index].id = tc.id;
-        if (tc.function?.name) toolCallMap[tc.index].name += tc.function.name;
-        if (tc.function?.arguments) toolCallMap[tc.index].args += tc.function.arguments;
       }
     }
   }
 
-  const pendingCalls = Object.values(toolCallMap);
   if (pendingCalls.length === 0 || !toolOpts.userId) {
     return fullReply;
   }
 
-  // ── Execute tool(s) and do a second stream ──
-  const assistantToolCallMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
-    role: 'assistant',
-    content: null,
-    tool_calls: pendingCalls.map((tc) => ({
-      id: tc.id,
-      type: 'function' as const,
-      function: { name: tc.name, arguments: tc.args },
+  // Execute tools and second stream (same pattern as text)
+  const toolMessages: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
+  toolMessages.push({
+    role: 'model',
+    parts: pendingCalls.map((tc) => ({
+      functionCall: { name: tc.name, args: tc.args },
     })),
-  };
+  });
 
-  const toolResultMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-
+  const toolResultParts: any[] = [];
   for (const tc of pendingCalls) {
-    let parsedArgs: Record<string, unknown> = {};
-    try { parsedArgs = JSON.parse(tc.args || '{}'); } catch { /* empty args */ }
-
-    const result = await executeTool(tc.name, parsedArgs, toolOpts.userId!);
-
-    toolResultMessages.push({
-      role: 'tool',
-      tool_call_id: tc.id,
-      content: result.llmContext,
-    } as any);
-
-    try { toolOpts.onAction?.(result.action); } catch { /* ignore SSE write errors */ }
+    const result = await executeTool(tc.name, tc.args, toolOpts.userId!);
+    toolResultParts.push({
+      functionResponse: {
+        name: tc.name,
+        response: { content: result.llmContext },
+      },
+    });
+    try { toolOpts.onAction?.(result.action); } catch { /* ignore */ }
   }
+  toolMessages.push({ role: 'user', parts: toolResultParts });
 
-  // Second call uses gpt-4o-mini (text only, no audio) — no tools
-  const secondMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    ...formattedMessages,
-    assistantToolCallMsg,
-    ...toolResultMessages,
-  ];
-
-  const secondStream = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: secondMessages,
-    temperature: 0.8,
-    max_tokens: 300,
-    stream: true,
+  const secondResponse = await gemini.models.generateContentStream({
+    model: MODEL,
+    contents: [...contents, ...toolMessages],
+    config: {
+      systemInstruction: streamPrompt,
+      temperature: 0.8,
+      maxOutputTokens: 300,
+    },
   });
 
   fullReply = '';
-  for await (const chunk of secondStream) {
-    const delta = chunk.choices[0]?.delta?.content;
-    if (delta) {
-      fullReply += delta;
-      onToken(delta);
+  for await (const chunk of secondResponse) {
+    const text = chunk.text;
+    if (text) {
+      fullReply += text;
+      onToken(text);
     }
   }
 
@@ -341,32 +315,28 @@ export async function streamAiResponseWithAudio(
 }
 
 /**
- * Quick mood classification from a completed reply. Fire-and-forget friendly.
+ * Quick mood classification from a completed reply.
  */
 export async function classifyMood(
   userMessage: string,
   aiReply: string,
 ): Promise<{ mood: string; shouldSuggestHandoff: boolean; handoffReason?: string }> {
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      {
-        role: 'system',
-        content:
-          'Classify the mood of this conversation exchange. Respond with JSON: {"mood":"TAG","shouldSuggestHandoff":false,"handoffReason":""}. Mood must be one of: HAPPY, SAD, ANXIOUS, LONELY, ANGRY, NEUTRAL, EXCITED, TIRED, OVERWHELMED, HOPEFUL. Set shouldSuggestHandoff to true only if the user seems to genuinely need real human connection.',
-      },
-      {
-        role: 'user',
-        content: `User said: "${userMessage}"\nAssistant replied: "${aiReply}"`,
-      },
-    ],
-    temperature: 0,
-    max_tokens: 100,
-    response_format: { type: 'json_object' },
+  const response = await gemini.models.generateContent({
+    model: MODEL,
+    contents: `User said: "${userMessage}"\nAssistant replied: "${aiReply}"`,
+    config: {
+      systemInstruction:
+        'Classify the mood of this conversation exchange. Respond with JSON: {"mood":"TAG","shouldSuggestHandoff":false,"handoffReason":""}. Mood must be one of: HAPPY, SAD, ANXIOUS, LONELY, ANGRY, NEUTRAL, EXCITED, TIRED, OVERWHELMED, HOPEFUL. Set shouldSuggestHandoff to true only if the user seems to genuinely need real human connection.',
+      temperature: 0,
+      maxOutputTokens: 100,
+      responseMimeType: 'application/json',
+    },
   });
 
   try {
-    const parsed = JSON.parse(completion.choices[0]?.message?.content ?? '{}');
+    const raw = response.text ?? '{}';
+    const cleaned = raw.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+    const parsed = JSON.parse(cleaned);
     return {
       mood: parsed.mood || 'NEUTRAL',
       shouldSuggestHandoff: parsed.shouldSuggestHandoff ?? false,
