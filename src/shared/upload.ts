@@ -78,10 +78,29 @@ export async function fileToChatAudioUrl(file: Express.Multer.File, conversation
   return saveToDisk(file.buffer, 'uploads/audio', '/uploads/audio', path.extname(file.originalname) || '.m4a');
 }
 
+function storyMediaFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
+  const allowed = [
+    'image/jpeg', 'image/png', 'image/webp',
+    'video/mp4', 'video/quicktime', 'video/x-m4v',
+  ];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only JPEG, PNG, WebP images and MP4, MOV, M4V videos are allowed'));
+  }
+}
+
+// Keep legacy export name for backward compatibility
 export const storyImageUpload = multer({
   storage: memoryStorage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: imageFilter,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: storyMediaFilter,
+});
+
+export const storyMediaUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: storyMediaFilter,
 });
 
 export async function fileToStoryImageUrl(
@@ -102,4 +121,23 @@ export async function fileToStoryImageUrl(
   }
   const url = saveToDisk(file.buffer, 'uploads/stories', '/uploads/stories', path.extname(file.originalname) || '.jpg');
   return { secureUrl: url, publicId: '' };
+}
+
+export async function fileToStoryVideoUrl(
+  file: Express.Multer.File,
+  userId: string
+): Promise<{ secureUrl: string; publicId: string; thumbnailUrl: string | null }> {
+  if (cloudinaryService.isCloudinaryConfigured) {
+    const result = await cloudinaryService.uploadBuffer(file.buffer, {
+      folder: `yomeet/stories/${userId}`,
+      resourceType: 'video',
+    });
+    if (result) {
+      // Derive thumbnail URL: replace the video extension with .jpg
+      const thumbnailUrl = result.secureUrl.replace(/\.[^.]+$/, '.jpg');
+      return { secureUrl: result.secureUrl, publicId: result.publicId, thumbnailUrl };
+    }
+  }
+  const url = saveToDisk(file.buffer, 'uploads/stories', '/uploads/stories', path.extname(file.originalname) || '.mp4');
+  return { secureUrl: url, publicId: '', thumbnailUrl: null };
 }

@@ -2,13 +2,14 @@ import { Router, Response } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
-import { storyImageUpload } from '../../shared/upload';
+import { storyMediaUpload } from '../../shared/upload';
 import {
   createStory,
   getStoryFeed,
   markStoryViewed,
   getStoryViewers,
   deleteStory,
+  deleteSlide,
 } from './story.service';
 
 const router = Router();
@@ -35,17 +36,34 @@ router.get(
 router.post(
   '/',
   authenticate,
-  storyImageUpload.array('images', 10),
+  storyMediaUpload.array('media', 10),
   async (req: AuthRequest, res: Response) => {
     try {
       const userId = req.user!.userId;
       const files = req.files as Express.Multer.File[];
 
       if (!files || files.length === 0) {
-        return res.status(400).json({ error: 'At least one image is required' });
+        return res.status(400).json({ error: 'At least one media file is required' });
       }
 
-      const story = await createStory(userId, files);
+      // Parse slidesMetadata if provided (backward compat: treat all as IMAGE if missing)
+      let slidesMetadata: Array<{ type: 'IMAGE' | 'VIDEO' | 'TEXT'; position: number; duration?: number }> | undefined;
+      if (req.body.slidesMetadata) {
+        try {
+          slidesMetadata = JSON.parse(req.body.slidesMetadata);
+        } catch {
+          return res.status(400).json({ error: 'Invalid slidesMetadata JSON' });
+        }
+
+        // Validate slidesMetadata length matches files
+        if (slidesMetadata && slidesMetadata.length !== files.length) {
+          return res.status(400).json({
+            error: `slidesMetadata length (${slidesMetadata.length}) must match number of files (${files.length})`,
+          });
+        }
+      }
+
+      const story = await createStory(userId, files, slidesMetadata);
       res.json({ story });
     } catch (error) {
       logger.error({ error }, 'Error creating story');
@@ -91,6 +109,32 @@ router.get(
     } catch (error) {
       logger.error({ error }, 'Error fetching story viewers');
       res.status(500).json({ error: 'Failed to fetch story viewers' });
+    }
+  }
+);
+
+// ─── DELETE /api/stories/slides/:slideId ────────────────────
+
+router.delete(
+  '/slides/:slideId',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.userId;
+      const slideId = req.params.slideId as string;
+      const result = await deleteSlide(slideId, userId);
+
+      if (!result.deleted) {
+        const status = result.reason === 'not_found' ? 404 : 403;
+        return res.status(status).json({
+          error: result.reason === 'not_found' ? 'Slide not found' : 'Not authorized',
+        });
+      }
+
+      res.json({ success: true, storyDeleted: result.storyDeleted });
+    } catch (error) {
+      logger.error({ error }, 'Error deleting slide');
+      res.status(500).json({ error: 'Failed to delete slide' });
     }
   }
 );

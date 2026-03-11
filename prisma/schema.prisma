@@ -98,6 +98,12 @@ enum ReportStatus {
   DISMISSED
 }
 
+enum StorySlideType {
+  IMAGE
+  VIDEO
+  TEXT
+}
+
 enum BanStatus {
   NONE
   WARNING
@@ -480,20 +486,23 @@ model Story {
   expiresAt DateTime
 
   user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  images StoryImage[]
+  slides StorySlide[]
   views  StoryView[]
 
   @@index([userId, expiresAt])
   @@index([expiresAt])
 }
 
-model StoryImage {
-  id           String   @id @default(uuid())
+model StorySlide {
+  id           String         @id @default(uuid())
   storyId      String
-  imageUrl     String
+  type         StorySlideType @default(IMAGE)
+  mediaUrl     String
   cloudinaryId String
-  position     Int      @default(0)
-  createdAt    DateTime @default(now())
+  thumbnailUrl String?
+  duration     Int?
+  position     Int            @default(0)
+  createdAt    DateTime       @default(now())
 
   story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
 
