@@ -12,6 +12,7 @@ import { registerSpotlightHandlers } from './modules/spotlight/spotlight.gateway
 import { startMatchExpiryJob } from './jobs/matchExpiry';
 import { startSessionCleanupJob } from './jobs/sessionCleanup';
 import { startAvailabilityExpiryJob } from './jobs/availabilityExpiry';
+import { startStoryCleanupJob } from './jobs/storyCleanup';
 import { logger } from './shared/logger';
 import { initSentry } from './shared/sentry.service';
 import { initRedis, closeRedis } from './shared/redis.service';
@@ -37,6 +38,7 @@ async function main() {
   startMatchExpiryJob();
   startSessionCleanupJob();
   startAvailabilityExpiryJob();
+  startStoryCleanupJob();
 
   server.listen(env.PORT, '0.0.0.0', () => {
     logger.info(`Server running on port ${env.PORT} in ${env.NODE_ENV} mode`);

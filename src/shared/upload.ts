@@ -77,3 +77,29 @@ export async function fileToChatAudioUrl(file: Express.Multer.File, conversation
   }
   return saveToDisk(file.buffer, 'uploads/audio', '/uploads/audio', path.extname(file.originalname) || '.m4a');
 }
+
+export const storyImageUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: imageFilter,
+});
+
+export async function fileToStoryImageUrl(
+  file: Express.Multer.File,
+  userId: string
+): Promise<{ secureUrl: string; publicId: string }> {
+  if (cloudinaryService.isCloudinaryConfigured) {
+    const result = await cloudinaryService.uploadBuffer(file.buffer, {
+      folder: `yomeet/stories/${userId}`,
+      transformation: {
+        width: 1080,
+        height: 1920,
+        crop: 'limit',
+        quality: 'auto',
+      },
+    });
+    if (result) return { secureUrl: result.secureUrl, publicId: result.publicId };
+  }
+  const url = saveToDisk(file.buffer, 'uploads/stories', '/uploads/stories', path.extname(file.originalname) || '.jpg');
+  return { secureUrl: url, publicId: '' };
+}

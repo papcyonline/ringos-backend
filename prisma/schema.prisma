@@ -166,6 +166,8 @@ model User {
   notifications    Notification[]
   fcmTokens        FcmToken[]
   voipTokens       VoipToken[]
+  stories          Story[]
+  storyViews       StoryView[]
 
   @@index([banStatus])
   @@index([isOnline, lastSeenAt])
@@ -469,4 +471,45 @@ model SpotlightLog {
 
   @@index([broadcasterId])
   @@index([startedAt])
+}
+
+model Story {
+  id        String       @id @default(uuid())
+  userId    String
+  createdAt DateTime     @default(now())
+  expiresAt DateTime
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  images StoryImage[]
+  views  StoryView[]
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+model StoryImage {
+  id           String   @id @default(uuid())
+  storyId      String
+  imageUrl     String
+  cloudinaryId String
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@index([storyId])
+}
+
+model StoryView {
+  id        String   @id @default(uuid())
+  storyId   String
+  viewerId  String
+  createdAt DateTime @default(now())
+
+  story  Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  viewer User  @relation(fields: [viewerId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, viewerId])
+  @@index([storyId])
+  @@index([viewerId])
 }
