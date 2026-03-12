@@ -244,6 +244,25 @@ export async function likeStory(storyId: string, viewerId: string) {
   }
 }
 
+// ─── Update Slide Caption ──────────────────────────────────
+
+export async function updateSlideCaption(slideId: string, userId: string, caption: string | null) {
+  const slide = await prisma.storySlide.findUnique({
+    where: { id: slideId },
+    include: { story: { select: { userId: true } } },
+  });
+
+  if (!slide) return { updated: false, reason: 'not_found' as const };
+  if (slide.story.userId !== userId) return { updated: false, reason: 'not_owner' as const };
+
+  await prisma.storySlide.update({
+    where: { id: slideId },
+    data: { caption: caption || null },
+  });
+
+  return { updated: true };
+}
+
 // ─── Delete Slide ───────────────────────────────────────────
 
 export async function deleteSlide(slideId: string, userId: string) {

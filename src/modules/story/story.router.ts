@@ -9,6 +9,7 @@ import {
   markStoryViewed,
   getStoryViewers,
   likeStory,
+  updateSlideCaption,
   deleteStory,
   deleteSlide,
 } from './story.service';
@@ -128,6 +129,33 @@ router.post(
     } catch (error) {
       logger.error({ error }, 'Error liking story');
       res.status(500).json({ error: 'Failed to like story' });
+    }
+  }
+);
+
+// ─── PATCH /api/stories/slides/:slideId/caption ─────────────
+
+router.patch(
+  '/slides/:slideId/caption',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.userId;
+      const slideId = req.params.slideId as string;
+      const { caption } = req.body as { caption?: string };
+      const result = await updateSlideCaption(slideId, userId, caption ?? null);
+
+      if (!result.updated) {
+        const status = result.reason === 'not_found' ? 404 : 403;
+        return res.status(status).json({
+          error: result.reason === 'not_found' ? 'Slide not found' : 'Not authorized',
+        });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      logger.error({ error }, 'Error updating slide caption');
+      res.status(500).json({ error: 'Failed to update caption' });
     }
   }
 );
