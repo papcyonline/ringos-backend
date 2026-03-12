@@ -15,6 +15,7 @@ import {
 } from './story.service';
 import { createNotification } from '../notification/notification.service';
 import { prisma } from '../../config/database';
+import { getIO } from '../../config/socket';
 
 const router = Router();
 
@@ -68,6 +69,14 @@ router.post(
       }
 
       const story = await createStory(userId, files, slidesMetadata);
+
+      // Notify all connected users so their feed refreshes instantly
+      try {
+        getIO().emit('story:new', { userId, storyId: story.id });
+      } catch {
+        // Socket may not be initialized in tests
+      }
+
       res.json({ story });
     } catch (error) {
       logger.error({ error }, 'Error creating story');
