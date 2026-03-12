@@ -13,6 +13,8 @@ import {
   deleteStory,
   deleteSlide,
 } from './story.service';
+import { createNotification } from '../notification/notification.service';
+import { prisma } from '../../config/database';
 
 const router = Router();
 
@@ -125,6 +127,26 @@ router.post(
       const viewerId = req.user!.userId;
       const storyId = req.params.id as string;
       await likeStory(storyId, viewerId);
+
+      // Send notification to the story owner
+      const [story, liker] = await Promise.all([
+        prisma.story.findUnique({ where: { id: storyId }, select: { userId: true } }),
+        prisma.user.findUnique({ where: { id: viewerId }, select: { displayName: true, avatarUrl: true, isVerified: true } }),
+      ]);
+
+      if (story && liker && story.userId !== viewerId) {
+        createNotification({
+          userId: story.userId,
+          type: 'story_liked',
+          title: liker.displayName,
+          body: 'Liked your story',
+          imageUrl: liker.avatarUrl ?? undefined,
+          data: { storyId, userId: viewerId, isVerified: liker.isVerified ?? false },
+        }).catch((err) => {
+          logger.error({ err, userId: story.userId }, 'Failed to send story like notification');
+        });
+      }
+
       res.json({ success: true });
     } catch (error) {
       logger.error({ error }, 'Error liking story');
