@@ -514,6 +514,7 @@ model StoryView {
   id        String   @id @default(uuid())
   storyId   String
   viewerId  String
+  liked     Boolean  @default(false)
   createdAt DateTime @default(now())
 
   story  Story @relation(fields: [storyId], references: [id], onDelete: Cascade)

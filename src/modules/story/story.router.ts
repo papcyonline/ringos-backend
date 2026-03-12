@@ -8,6 +8,7 @@ import {
   getStoryFeed,
   markStoryViewed,
   getStoryViewers,
+  likeStory,
   deleteStory,
   deleteSlide,
 } from './story.service';
@@ -109,6 +110,24 @@ router.get(
     } catch (error) {
       logger.error({ error }, 'Error fetching story viewers');
       res.status(500).json({ error: 'Failed to fetch story viewers' });
+    }
+  }
+);
+
+// ─── POST /api/stories/:id/like ──────────────────────────────
+
+router.post(
+  '/:id/like',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const viewerId = req.user!.userId;
+      const storyId = req.params.id as string;
+      await likeStory(storyId, viewerId);
+      res.json({ success: true });
+    } catch (error) {
+      logger.error({ error }, 'Error liking story');
+      res.status(500).json({ error: 'Failed to like story' });
     }
   }
 );

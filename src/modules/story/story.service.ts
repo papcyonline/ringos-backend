@@ -216,11 +216,32 @@ export async function getStoryViewers(storyId: string, userId: string) {
     return {
       userId: v.viewerId,
       viewedAt: v.createdAt,
+      liked: v.liked,
       displayName: user?.displayName ?? 'Unknown',
       avatarUrl: user?.avatarUrl ?? null,
       isVerified: user?.isVerified ?? false,
     };
   });
+}
+
+// ─── Like Story ────────────────────────────────────────────
+
+export async function likeStory(storyId: string, viewerId: string) {
+  const view = await prisma.storyView.findUnique({
+    where: { storyId_viewerId: { storyId, viewerId } },
+  });
+
+  if (!view) {
+    // Create a view + like if they haven't viewed yet
+    await prisma.storyView.create({
+      data: { storyId, viewerId, liked: true },
+    });
+  } else {
+    await prisma.storyView.update({
+      where: { id: view.id },
+      data: { liked: true },
+    });
+  }
 }
 
 // ─── Delete Slide ───────────────────────────────────────────
