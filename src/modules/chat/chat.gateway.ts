@@ -56,9 +56,9 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
   /**
    * chat:message - Send a message: moderate content, persist, and broadcast to room.
    */
-  socket.on('chat:message', async (data: { conversationId: string; content: string; replyToId?: string }) => {
+  socket.on('chat:message', async (data: { conversationId: string; content: string; replyToId?: string; metadata?: Record<string, any> }) => {
     try {
-      const { conversationId, content, replyToId } = data;
+      const { conversationId, content, replyToId, metadata } = data;
 
       const validation = validateMessageContent(content);
       if (!validation.valid) {
@@ -75,7 +75,7 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       const cleanedContent = localMod.cleaned;
 
       // Save the message via the service
-      const message = await chatService.sendMessage(conversationId, userId, cleanedContent, { replyToId });
+      const message = await chatService.sendMessage(conversationId, userId, cleanedContent, { replyToId, metadata });
 
       // Broadcast the message to all participants in the room
       const gwPayload = formatMessagePayload(message, conversationId);

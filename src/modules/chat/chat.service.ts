@@ -329,9 +329,10 @@ export async function sendMessage(
     viewOnce?: boolean;
     audioUrl?: string;
     audioDuration?: number;
+    metadata?: Record<string, any>;
   },
 ) {
-  const { replyToId, imageUrl, viewOnce, audioUrl, audioDuration } = options ?? {};
+  const { replyToId, imageUrl, viewOnce, audioUrl, audioDuration, metadata } = options ?? {};
 
   // Run conversation lookup and participant verification in parallel
   const [conversation, participant] = await Promise.all([
@@ -399,6 +400,7 @@ export async function sendMessage(
         viewOnce: viewOnce || false,
         audioUrl: audioUrl || undefined,
         audioDuration: audioDuration ?? undefined,
+        metadata: metadata ?? undefined,
       },
       include: messageInclude,
     }),
