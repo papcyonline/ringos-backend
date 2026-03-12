@@ -452,10 +452,11 @@ export async function notifyChatMessage(
   const senderIsVerified = sender?.isVerified ?? false;
 
   for (const participant of participants) {
-    // Skip notification if the user is currently viewing this conversation
-    if (usersInRoom.has(participant.userId)) continue;
+    const isInRoom = usersInRoom.has(participant.userId);
 
-    // Create in-app notification (also emits socket event)
+    // Always create in-app notification (emits notification:new socket event)
+    // so the notification bell badge updates even if the user just left the
+    // chat room and the leave event hasn't been processed yet.
     createNotification({
       userId: participant.userId,
       type: isVoiceNote ? 'voice_note' : 'chat_message',
@@ -474,35 +475,38 @@ export async function notifyChatMessage(
       logger.error({ err, userId: participant.userId }, 'Failed to create chat notification');
     });
 
-    // Send FCM push notification - use data-only for rich notification support
-    if (isVoiceNote && options?.audioUrl) {
-      // Voice note: send data-only for in-notification playback
-      const voiceNotePayload = buildVoiceNotePayload({
-        messageId: options.messageId ?? '',
-        conversationId,
-        senderId,
-        senderName,
-        senderAvatar: senderAvatarUrl,
-        audioUrl: options.audioUrl,
-        audioDuration: options.audioDuration ?? 0,
-      });
-      sendDataPushToUser(participant.userId, voiceNotePayload).catch((err) => {
-        logger.error({ err, userId: participant.userId }, 'Failed to send voice note push');
-      });
-    } else {
-      // Text/image message: data-only so the client controls notification display
-      const messagePayload = buildMessagePayload({
-        messageId: options?.messageId,
-        conversationId,
-        senderId,
-        senderName,
-        senderAvatar: senderAvatarUrl,
-        content: body,
-        imageUrl: options?.imageUrl,
-      });
-      sendDataPushToUser(participant.userId, messagePayload).catch((err) => {
-        logger.error({ err, userId: participant.userId }, 'Failed to send chat push notification');
-      });
+    // Only send FCM push if the user is NOT currently viewing this conversation
+    // (users in the room already see messages in real-time)
+    if (!isInRoom) {
+      if (isVoiceNote && options?.audioUrl) {
+        // Voice note: send data-only for in-notification playback
+        const voiceNotePayload = buildVoiceNotePayload({
+          messageId: options.messageId ?? '',
+          conversationId,
+          senderId,
+          senderName,
+          senderAvatar: senderAvatarUrl,
+          audioUrl: options.audioUrl,
+          audioDuration: options.audioDuration ?? 0,
+        });
+        sendDataPushToUser(participant.userId, voiceNotePayload).catch((err) => {
+          logger.error({ err, userId: participant.userId }, 'Failed to send voice note push');
+        });
+      } else {
+        // Text/image message: data-only so the client controls notification display
+        const messagePayload = buildMessagePayload({
+          messageId: options?.messageId,
+          conversationId,
+          senderId,
+          senderName,
+          senderAvatar: senderAvatarUrl,
+          content: body,
+          imageUrl: options?.imageUrl,
+        });
+        sendDataPushToUser(participant.userId, messagePayload).catch((err) => {
+          logger.error({ err, userId: participant.userId }, 'Failed to send chat push notification');
+        });
+      }
     }
   }
 }
