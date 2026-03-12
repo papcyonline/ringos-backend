@@ -133,9 +133,11 @@ export async function fileToStoryVideoUrl(
       resourceType: 'video',
     });
     if (result) {
-      // Derive thumbnail URL: replace the video extension with .jpg
-      const thumbnailUrl = result.secureUrl.replace(/\.[^.]+$/, '.jpg');
-      return { secureUrl: result.secureUrl, publicId: result.publicId, thumbnailUrl };
+      // Add q_auto,f_auto delivery transformation so Cloudinary serves
+      // an optimized version based on the viewer's device and connection.
+      const optimizedUrl = result.secureUrl.replace('/upload/', '/upload/q_auto,f_auto/');
+      const thumbnailUrl = optimizedUrl.replace(/\.[^.]+$/, '.jpg');
+      return { secureUrl: optimizedUrl, publicId: result.publicId, thumbnailUrl };
     }
   }
   const url = saveToDisk(file.buffer, 'uploads/stories', '/uploads/stories', path.extname(file.originalname) || '.mp4');
