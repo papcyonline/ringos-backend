@@ -1,17 +1,15 @@
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import { prisma } from '../../config/database';
 import { getIO } from '../../config/socket';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
 
-const gemini = env.GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: env.GEMINI_API_KEY })
-  : null;
+const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
 /**
  * Translate a message asynchronously after it has been sent.
- * Detects the source language and translates to all target languages
- * spoken by active participants in the conversation.
+ * Always detects the source language, then translates to all participant
+ * languages that differ from the detected language.
  * Non-critical — failures are logged and silently ignored.
  */
 export async function translateMessage(
@@ -20,7 +18,7 @@ export async function translateMessage(
   content: string,
 ): Promise<void> {
   try {
-    if (!gemini || !content.trim()) return;
+    if (!content.trim()) return;
 
     // Get unique languages of all active participants
     const participants = await prisma.conversationParticipant.findMany({
@@ -42,18 +40,20 @@ export async function translateMessage(
       ),
     ];
 
-    // If everyone speaks the same single language, skip translation
-    if (targetLanguages.length <= 1) return;
+    // If only one participant language, still proceed — the message might be
+    // written in a different language than the participants speak.
+    // We'll detect first, then decide whether to translate.
 
     const langList = targetLanguages.join(', ');
 
-    const response = await gemini.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: `You are a translation engine. Detect the language of the following message, then translate it into each of these target languages: ${langList}.
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a translation engine. Detect the language of the user's message, then translate it into each of these target languages: ${langList}.
 
-Message: "${content}"
-
-Respond ONLY with valid JSON — no markdown, no code fences, no explanation. Use this exact format:
+Respond ONLY with valid JSON. Use this exact format:
 {"detectedLanguage":"<iso-code>","translations":{"<lang1>":"<translated text>","<lang2>":"<translated text>"}}
 
 Rules:
@@ -61,25 +61,31 @@ Rules:
 - Do NOT include a translation for the detected source language
 - If the message is already in a target language, omit that language from translations
 - Preserve emojis, @mentions, and formatting as-is`,
+        },
+        {
+          role: 'user',
+          content,
+        },
+      ],
+      temperature: 0,
+      max_tokens: 1024,
+      response_format: { type: 'json_object' },
     });
 
-    const text = response.text?.trim();
+    const text = response.choices[0]?.message?.content?.trim();
     if (!text) return;
 
-    // Strip markdown code fences if present
-    const cleaned = text.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-
-    const parsed = JSON.parse(cleaned) as {
+    const parsed = JSON.parse(text) as {
       detectedLanguage: string;
       translations: Record<string, string>;
     };
 
     if (!parsed.detectedLanguage || !parsed.translations) return;
 
-    // Remove source language from translations if Gemini included it
+    // Remove source language from translations if included
     delete parsed.translations[parsed.detectedLanguage];
 
-    // If no translations remain, skip
+    // If no translations remain (message is already in the only target language), skip
     if (Object.keys(parsed.translations).length === 0) return;
 
     // Persist to message metadata
