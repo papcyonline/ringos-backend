@@ -10,6 +10,7 @@ interface SlideMetadata {
   type: 'IMAGE' | 'VIDEO' | 'TEXT';
   position: number;
   duration?: number;
+  caption?: string;
 }
 
 // ─── Create Story ───────────────────────────────────────────
@@ -34,6 +35,7 @@ export async function createStory(
           mediaUrl: result.secureUrl,
           cloudinaryId: result.publicId,
           thumbnailUrl: result.thumbnailUrl || null,
+          caption: meta?.caption ?? null,
           duration: meta?.duration ?? null,
           position,
         };
@@ -45,6 +47,7 @@ export async function createStory(
           mediaUrl: result.secureUrl,
           cloudinaryId: result.publicId,
           thumbnailUrl: null,
+          caption: meta?.caption ?? null,
           duration: meta?.duration ?? null,
           position,
         };
@@ -147,6 +150,7 @@ export async function getStoryFeed(requesterId: string) {
         type: slide.type,
         mediaUrl: slide.mediaUrl,
         thumbnailUrl: slide.thumbnailUrl,
+        caption: slide.caption,
         duration: slide.duration,
         position: slide.position,
       })),
