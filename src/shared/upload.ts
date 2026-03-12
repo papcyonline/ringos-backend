@@ -114,7 +114,7 @@ export async function fileToStoryImageUrl(
         width: 1080,
         height: 1920,
         crop: 'limit',
-        quality: 'auto',
+        quality: 90,
       },
     });
     if (result) return { secureUrl: result.secureUrl, publicId: result.publicId };

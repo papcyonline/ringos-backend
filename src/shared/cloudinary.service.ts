@@ -153,10 +153,10 @@ export async function uploadAvatar(
     folder: 'yomeet/avatars',
     publicId: `avatar_${userId}`,
     transformation: {
-      width: 400,
-      height: 400,
+      width: 800,
+      height: 800,
       crop: 'fill',
-      quality: 'auto',
+      quality: 90,
     },
   });
 }
@@ -171,10 +171,10 @@ export async function uploadChatImage(
   return uploadBuffer(buffer, {
     folder: `yomeet/chats/${conversationId}`,
     transformation: {
-      width: 1200,
-      height: 1200,
+      width: 1920,
+      height: 1920,
       crop: 'limit',
-      quality: 'auto',
+      quality: 90,
     },
   });
 }
