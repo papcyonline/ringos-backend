@@ -133,9 +133,9 @@ export async function fileToStoryVideoUrl(
       resourceType: 'video',
     });
     if (result) {
-      // Add q_auto,f_auto delivery transformation so Cloudinary serves
-      // an optimized version based on the viewer's device and connection.
-      const optimizedUrl = result.secureUrl.replace('/upload/', '/upload/q_auto,f_auto/');
+      // Serve 720p adaptive quality — keeps the original 1080p on Cloudinary
+      // but delivers a smaller stream for playback on mobile devices.
+      const optimizedUrl = result.secureUrl.replace('/upload/', '/upload/w_720,q_auto,f_auto/');
       const thumbnailUrl = optimizedUrl.replace(/\.[^.]+$/, '.jpg');
       return { secureUrl: optimizedUrl, publicId: result.publicId, thumbnailUrl };
     }
