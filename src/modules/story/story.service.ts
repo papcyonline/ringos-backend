@@ -89,6 +89,7 @@ export async function getStoryFeed(requesterId: string) {
           displayName: true,
           avatarUrl: true,
           isVerified: true,
+          verifiedRole: true,
         },
       },
       views: {
@@ -106,6 +107,7 @@ export async function getStoryFeed(requesterId: string) {
     displayName: string;
     avatarUrl: string | null;
     isVerified: boolean;
+    isOfficial: boolean;
     stories: typeof stories;
     hasUnviewed: boolean;
     latestCreatedAt: Date;
@@ -121,6 +123,7 @@ export async function getStoryFeed(requesterId: string) {
         displayName: story.user.displayName,
         avatarUrl: story.user.avatarUrl,
         isVerified: story.user.isVerified,
+        isOfficial: story.user.verifiedRole === 'official',
         stories: [],
         hasUnviewed: false,
         latestCreatedAt: story.createdAt,
@@ -140,6 +143,7 @@ export async function getStoryFeed(requesterId: string) {
     displayName: entry.displayName,
     avatarUrl: entry.avatarUrl,
     isVerified: entry.isVerified,
+    isOfficial: entry.isOfficial,
     hasUnviewed: entry.hasUnviewed,
     stories: entry.stories.map((s) => ({
       id: s.id,
@@ -159,8 +163,9 @@ export async function getStoryFeed(requesterId: string) {
     })),
   }));
 
-  // Sort: unviewed first, then most recent
+  // Sort: official accounts first, then unviewed, then most recent
   feed.sort((a, b) => {
+    if (a.isOfficial !== b.isOfficial) return a.isOfficial ? -1 : 1;
     if (a.hasUnviewed !== b.hasUnviewed) return a.hasUnviewed ? -1 : 1;
     return b.stories[0].createdAt.getTime() - a.stories[0].createdAt.getTime();
   });
