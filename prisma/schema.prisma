@@ -174,6 +174,11 @@ model User {
   voipTokens       VoipToken[]
   stories          Story[]
   storyViews       StoryView[]
+  storyBoosts      StoryBoost[]
+  coinBalance      CoinBalance?
+  coinTransactions CoinTransaction[]
+  giftsSent        StoryGift[]    @relation("GiftsSent")
+  giftsReceived    StoryGift[]    @relation("GiftsReceived")
 
   @@index([banStatus])
   @@index([isOnline, lastSeenAt])
@@ -488,9 +493,68 @@ model Story {
   user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   slides StorySlide[]
   views  StoryView[]
+  boosts StoryBoost[]
+  gifts  StoryGift[]
 
   @@index([userId, expiresAt])
   @@index([expiresAt])
+}
+
+model StoryBoost {
+  id        String   @id @default(uuid())
+  storyId   String
+  userId    String
+  tier      String   @default("basic") // basic, premium
+  startedAt DateTime @default(now())
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([storyId])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model CoinBalance {
+  id      String @id @default(uuid())
+  userId  String @unique
+  balance Int    @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CoinTransaction {
+  id             String   @id @default(uuid())
+  userId         String
+  amount         Int
+  type           String   // purchase, tip, gift
+  relatedStoryId String?
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+model StoryGift {
+  id          String   @id @default(uuid())
+  senderId    String
+  recipientId String
+  storyId     String
+  giftType    String   // heart, star, diamond, crown
+  coinAmount  Int
+  createdAt   DateTime @default(now())
+
+  sender    User  @relation("GiftsSent", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User  @relation("GiftsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+  story     Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([storyId])
 }
 
 model StorySlide {

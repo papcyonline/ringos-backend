@@ -15,6 +15,7 @@ import { notificationRouter } from './modules/notification/notification.router';
 import { callRouter } from './modules/call/call.router';
 import { spotlightRouter } from './modules/spotlight/spotlight.router';
 import { storyRouter } from './modules/story/story.router';
+import { coinsRouter } from './modules/coins/coins.router';
 import { sentryRequestHandler, sentryErrorHandler } from './shared/sentry.service';
 
 const app = express();
@@ -56,6 +57,7 @@ app.use('/api/notifications', notificationRouter);
 app.use('/api/call', callRouter);
 app.use('/api/spotlight', spotlightRouter);
 app.use('/api/stories', storyRouter);
+app.use('/api/coins', coinsRouter);
 
 // Sentry error handler (must be before custom error handler)
 app.use(sentryErrorHandler);

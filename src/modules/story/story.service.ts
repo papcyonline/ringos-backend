@@ -3,6 +3,7 @@ import { logger } from '../../shared/logger';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
+import { getBoostedStoryIds } from './story-boost.service';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -73,7 +74,10 @@ export async function createStory(
 // ─── Get Story Feed ─────────────────────────────────────────
 
 export async function getStoryFeed(requesterId: string) {
-  const blockedIds = await getBlockedUserIds(requesterId);
+  const [blockedIds, boostedStoryIds] = await Promise.all([
+    getBlockedUserIds(requesterId),
+    getBoostedStoryIds(),
+  ]);
   const now = new Date();
 
   const stories = await prisma.story.findMany({
@@ -111,11 +115,14 @@ export async function getStoryFeed(requesterId: string) {
     stories: typeof stories;
     hasUnviewed: boolean;
     latestCreatedAt: Date;
+    hasBoosted: boolean;
+    bestBoostTier: string | null;
   }>();
 
   for (const story of stories) {
     const uid = story.userId;
     const hasViewed = story.views.length > 0;
+    const boostTier = boostedStoryIds.get(story.id) || null;
 
     if (!userMap.has(uid)) {
       userMap.set(uid, {
@@ -127,6 +134,8 @@ export async function getStoryFeed(requesterId: string) {
         stories: [],
         hasUnviewed: false,
         latestCreatedAt: story.createdAt,
+        hasBoosted: false,
+        bestBoostTier: null,
       });
     }
 
@@ -135,6 +144,12 @@ export async function getStoryFeed(requesterId: string) {
     if (!hasViewed) entry.hasUnviewed = true;
     if (story.createdAt > entry.latestCreatedAt) {
       entry.latestCreatedAt = story.createdAt;
+    }
+    if (boostTier) {
+      entry.hasBoosted = true;
+      if (boostTier === 'premium' || !entry.bestBoostTier) {
+        entry.bestBoostTier = boostTier;
+      }
     }
   }
 
@@ -145,10 +160,14 @@ export async function getStoryFeed(requesterId: string) {
     isVerified: entry.isVerified,
     isOfficial: entry.isOfficial,
     hasUnviewed: entry.hasUnviewed,
+    isBoosted: entry.hasBoosted,
+    boostTier: entry.bestBoostTier,
     stories: entry.stories.map((s) => ({
       id: s.id,
       createdAt: s.createdAt,
       expiresAt: s.expiresAt,
+      isBoosted: boostedStoryIds.has(s.id),
+      boostTier: boostedStoryIds.get(s.id) || null,
       slides: s.slides.map((slide) => ({
         id: slide.id,
         type: slide.type,
@@ -163,8 +182,13 @@ export async function getStoryFeed(requesterId: string) {
     })),
   }));
 
-  // Sort: official accounts first, then unviewed, then most recent
+  // Sort: boosted (premium > basic) → official → unviewed → most recent
   feed.sort((a, b) => {
+    // Boosted stories first
+    if (a.isBoosted !== b.isBoosted) return a.isBoosted ? -1 : 1;
+    if (a.isBoosted && b.isBoosted) {
+      if (a.boostTier !== b.boostTier) return a.boostTier === 'premium' ? -1 : 1;
+    }
     if (a.isOfficial !== b.isOfficial) return a.isOfficial ? -1 : 1;
     if (a.hasUnviewed !== b.hasUnviewed) return a.hasUnviewed ? -1 : 1;
     return b.stories[0].createdAt.getTime() - a.stories[0].createdAt.getTime();

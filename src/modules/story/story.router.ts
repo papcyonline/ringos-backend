@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
@@ -13,6 +13,8 @@ import {
   deleteStory,
   deleteSlide,
 } from './story.service';
+import { createBoost, getBoostStatus } from './story-boost.service';
+import { getStoryGiftStats } from '../coins/coins.service';
 import { createNotification } from '../notification/notification.service';
 import { prisma } from '../../config/database';
 import { getIO } from '../../config/socket';
@@ -213,6 +215,57 @@ router.delete(
     } catch (error) {
       logger.error({ error }, 'Error deleting slide');
       res.status(500).json({ error: 'Failed to delete slide' });
+    }
+  }
+);
+
+// ─── POST /api/stories/:id/boost ─────────────────────────
+
+router.post(
+  '/:id/boost',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user!.userId;
+      const storyId = req.params.id as string;
+      const { tier } = req.body as { tier?: string };
+
+      const boost = await createBoost(storyId, userId, tier);
+      res.json({ boost });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ─── GET /api/stories/:id/boost-status ───────────────────
+
+router.get(
+  '/:id/boost-status',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const storyId = req.params.id as string;
+      const status = await getBoostStatus(storyId);
+      res.json(status);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ─── GET /api/stories/:id/gift-stats ─────────────────────
+
+router.get(
+  '/:id/gift-stats',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const storyId = req.params.id as string;
+      const stats = await getStoryGiftStats(storyId);
+      res.json(stats);
+    } catch (err) {
+      next(err);
     }
   }
 );
