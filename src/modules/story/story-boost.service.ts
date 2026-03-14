@@ -59,6 +59,7 @@ export async function createBoost(
   });
 
   logger.info({ boostId: boost.id, storyId, userId, tier }, 'Story boost created');
+  invalidateBoostCache();
   return boost;
 }
 
@@ -86,8 +87,16 @@ export async function getBoostStatus(storyId: string) {
 }
 
 // ─── Get Boosted Story IDs (for feed sorting) ────────────
+// Cached for 60s since boosts change infrequently.
+
+let boostedCache: { data: Map<string, string>; expiresAt: number } | null = null;
+const BOOST_CACHE_TTL_MS = 60_000;
 
 export async function getBoostedStoryIds(): Promise<Map<string, string>> {
+  if (boostedCache && boostedCache.expiresAt > Date.now()) {
+    return boostedCache.data;
+  }
+
   const activeBoosts = await prisma.storyBoost.findMany({
     where: {
       expiresAt: { gt: new Date() },
@@ -102,5 +111,11 @@ export async function getBoostedStoryIds(): Promise<Map<string, string>> {
   for (const boost of activeBoosts) {
     boostMap.set(boost.storyId, boost.tier);
   }
+
+  boostedCache = { data: boostMap, expiresAt: Date.now() + BOOST_CACHE_TTL_MS };
   return boostMap;
+}
+
+export function invalidateBoostCache() {
+  boostedCache = null;
 }

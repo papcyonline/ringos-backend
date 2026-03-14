@@ -5,6 +5,26 @@ import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { getBoostedStoryIds } from './story-boost.service';
 
+// ─── Feed Cache ─────────────────────────────────────────────
+// Per-user feed cache with short TTL to avoid hammering the DB on every poll.
+
+interface CachedFeed {
+  data: any[];
+  expiresAt: number;
+}
+
+const feedCache = new Map<string, CachedFeed>();
+const FEED_CACHE_TTL_MS = 15_000; // 15 seconds
+
+/** Invalidate all feed caches (call after story create/delete/boost). */
+export function invalidateFeedCache(userId?: string) {
+  if (userId) {
+    feedCache.delete(userId);
+  } else {
+    feedCache.clear();
+  }
+}
+
 // ─── Types ──────────────────────────────────────────────────
 
 interface SlideMetadata {
@@ -68,12 +88,19 @@ export async function createStory(
   });
 
   logger.info({ storyId: story.id, userId, slideCount: files.length }, 'Story created');
+  invalidateFeedCache(); // New story affects everyone's feed
   return story;
 }
 
 // ─── Get Story Feed ─────────────────────────────────────────
 
 export async function getStoryFeed(requesterId: string) {
+  // Return cached feed if still fresh
+  const cached = feedCache.get(requesterId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
   const [blockedIds, boostedStoryIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getBoostedStoryIds(),
@@ -86,7 +113,18 @@ export async function getStoryFeed(requesterId: string) {
       userId: { notIn: Array.from(blockedIds) },
     },
     include: {
-      slides: { orderBy: { position: 'asc' } },
+      slides: {
+        orderBy: { position: 'asc' },
+        select: {
+          id: true,
+          type: true,
+          mediaUrl: true,
+          thumbnailUrl: true,
+          caption: true,
+          duration: true,
+          position: true,
+        },
+      },
       user: {
         select: {
           id: true,
@@ -193,6 +231,9 @@ export async function getStoryFeed(requesterId: string) {
     if (a.hasUnviewed !== b.hasUnviewed) return a.hasUnviewed ? -1 : 1;
     return b.stories[0].createdAt.getTime() - a.stories[0].createdAt.getTime();
   });
+
+  // Cache the result
+  feedCache.set(requesterId, { data: feed, expiresAt: Date.now() + FEED_CACHE_TTL_MS });
 
   return feed;
 }
@@ -333,6 +374,7 @@ export async function deleteSlide(slideId: string, userId: string) {
   );
 
   logger.info({ slideId, storyId: slide.storyId, userId }, 'Slide deleted');
+  invalidateFeedCache(); // Slide changes affect feed
   return { deleted: true, storyDeleted: false };
 }
 
@@ -357,6 +399,7 @@ export async function deleteStory(storyId: string, userId: string) {
 
   await prisma.story.delete({ where: { id: storyId } });
   logger.info({ storyId, userId }, 'Story deleted');
+  invalidateFeedCache(); // Deletion affects everyone's feed
   return { deleted: true };
 }
 
@@ -385,6 +428,10 @@ export async function cleanupExpiredStories(): Promise<number> {
   const result = await prisma.story.deleteMany({
     where: { expiresAt: { lte: now } },
   });
+
+  if (result.count > 0) {
+    invalidateFeedCache(); // Expired stories removed, refresh all feeds
+  }
 
   return result.count;
 }
