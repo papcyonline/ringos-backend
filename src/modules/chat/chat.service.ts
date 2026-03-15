@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { isBlocked } from '../safety/safety.service';
+import * as cloudinaryService from '../../shared/cloudinary.service';
 import ogs from 'open-graph-scraper';
 
 // ─── Link Preview ───────────────────────────────────────────
@@ -507,19 +508,23 @@ export async function deleteMessage(messageId: string, userId: string) {
     throw new ForbiddenError('Message is already deleted');
   }
 
-  // Clean up Drive media if the URL is from Google Drive
-  if (message.imageUrl && message.imageUrl.includes('drive.google.com')) {
-    const match = message.imageUrl.match(/id=([a-zA-Z0-9_-]+)/);
-    if (match) {
-      const { deleteFromDrive } = await import('../../shared/gdrive.service');
-      deleteFromDrive(match[1]).catch(() => {});
-    }
-  }
-  if (message.audioUrl && message.audioUrl.includes('drive.google.com')) {
-    const match = message.audioUrl.match(/id=([a-zA-Z0-9_-]+)/);
-    if (match) {
-      const { deleteFromDrive } = await import('../../shared/gdrive.service');
-      deleteFromDrive(match[1]).catch(() => {});
+  // Clean up media files from storage
+  const mediaUrls = [message.imageUrl, message.audioUrl].filter(Boolean) as string[];
+  for (const url of mediaUrls) {
+    if (url.includes('drive.google.com')) {
+      // Google Drive
+      const match = url.match(/id=([a-zA-Z0-9_-]+)/);
+      if (match) {
+        const { deleteFromDrive } = await import('../../shared/gdrive.service');
+        deleteFromDrive(match[1]).catch(() => {});
+      }
+    } else if (url.includes('cloudinary.com')) {
+      // Cloudinary — extract public ID from URL
+      const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.\w+)?$/);
+      if (match) {
+        const isAudio = url.includes('/video/') || url.endsWith('.m4a') || url.endsWith('.mp3');
+        cloudinaryService.deleteFile(match[1], isAudio ? 'video' : 'image').catch(() => {});
+      }
     }
   }
 
