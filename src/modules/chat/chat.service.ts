@@ -507,9 +507,25 @@ export async function deleteMessage(messageId: string, userId: string) {
     throw new ForbiddenError('Message is already deleted');
   }
 
+  // Clean up Drive media if the URL is from Google Drive
+  if (message.imageUrl && message.imageUrl.includes('drive.google.com')) {
+    const match = message.imageUrl.match(/id=([a-zA-Z0-9_-]+)/);
+    if (match) {
+      const { deleteFromDrive } = await import('../../shared/gdrive.service');
+      deleteFromDrive(match[1]).catch(() => {});
+    }
+  }
+  if (message.audioUrl && message.audioUrl.includes('drive.google.com')) {
+    const match = message.audioUrl.match(/id=([a-zA-Z0-9_-]+)/);
+    if (match) {
+      const { deleteFromDrive } = await import('../../shared/gdrive.service');
+      deleteFromDrive(match[1]).catch(() => {});
+    }
+  }
+
   const updated = await prisma.message.update({
     where: { id: messageId },
-    data: { content: '', deletedAt: new Date() },
+    data: { content: '', imageUrl: null, audioUrl: null, deletedAt: new Date() },
     include: messageInclude,
   });
 
