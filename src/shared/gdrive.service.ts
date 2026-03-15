@@ -4,7 +4,8 @@ import { logger } from './logger';
 
 // ── Config ──
 
-const FOLDER_NAME = 'Yomeet Chat Media';
+// Use a pre-shared folder from the app owner's Drive.
+// Set GDRIVE_FOLDER_ID env var, or falls back to creating one.
 let drive: drive_v3.Drive | null = null;
 let folderId: string | null = null;
 
@@ -45,41 +46,11 @@ export function isDriveConfigured(): boolean {
 }
 
 /**
- * Get or create the shared media folder.
+ * Get the shared folder ID from env or use the pre-configured one.
  */
-async function getOrCreateFolder(): Promise<string> {
+function getFolderId(): string {
   if (folderId) return folderId;
-  if (!drive) throw new Error('Drive not initialized');
-
-  // Search for existing folder
-  const res = await drive.files.list({
-    q: `name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    fields: 'files(id)',
-    spaces: 'drive',
-  });
-
-  if (res.data.files && res.data.files.length > 0) {
-    folderId = res.data.files[0].id!;
-    return folderId;
-  }
-
-  // Create folder
-  const folder = await drive.files.create({
-    requestBody: {
-      name: FOLDER_NAME,
-      mimeType: 'application/vnd.google-apps.folder',
-    },
-    fields: 'id',
-  });
-
-  folderId = folder.data.id!;
-
-  // Make folder publicly readable
-  await drive.permissions.create({
-    fileId: folderId,
-    requestBody: { role: 'reader', type: 'anyone' },
-  });
-
+  folderId = process.env.GDRIVE_FOLDER_ID || '1MFws6S5agAIlStM2FmLaD81i_Rq3yy6t';
   return folderId;
 }
 
@@ -94,7 +65,7 @@ export async function uploadToDrive(
   if (!drive) return null;
 
   try {
-    const parentId = await getOrCreateFolder();
+    const parentId = getFolderId();
     const timestamp = Date.now();
     const name = `${timestamp}_${fileName}`;
 
