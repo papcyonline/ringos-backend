@@ -55,6 +55,9 @@ export function formatMessagePayload(message: any, conversationId: string) {
         }
       : null,
     metadata: message.metadata,
+    isPinned: message.isPinned ?? false,
+    pinnedAt: message.pinnedAt,
+    pinnedById: message.pinnedById,
     editedAt: message.editedAt,
     deletedAt: message.deletedAt,
     reactions: message.reactions.map((r: any) => ({

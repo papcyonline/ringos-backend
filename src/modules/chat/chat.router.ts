@@ -203,6 +203,45 @@ router.post(
   },
 );
 
+// PATCH /conversations/:conversationId/messages/:messageId/pin - Toggle pin on a message
+router.patch(
+  '/conversations/:conversationId/messages/:messageId/pin',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const message = await chatService.togglePinMessage(
+        (req.params.messageId as string),
+        req.user!.userId,
+      );
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('chat:pinned', {
+        conversationId: req.params.conversationId,
+        message: formatMessagePayload(message, req.user!.userId),
+      });
+      res.json({ message });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /conversations/:conversationId/pinned - Get pinned messages
+router.get(
+  '/conversations/:conversationId/pinned',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const messages = await chatService.getPinnedMessages(
+        (req.params.conversationId as string),
+        req.user!.userId,
+      );
+      res.json({ messages });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // POST /conversations/:conversationId/image - Send an image message
 router.post(
   '/conversations/:conversationId/image',

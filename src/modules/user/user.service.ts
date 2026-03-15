@@ -31,6 +31,7 @@ export async function getProfile(userId: string) {
       verifiedAt: true,
       verifiedRole: true,
       lastNameChangeAt: true,
+      phoneLookup: true,
       isProfilePublic: true,
       hideOnlineStatus: true,
       banStatus: true,
@@ -451,4 +452,51 @@ export async function adminSetVerified(identifier: string, verified: boolean, ro
 export async function deleteAccount(userId: string) {
   await findUserOrThrow(userId);
   await prisma.user.delete({ where: { id: userId } });
+}
+
+// ─── Phone & Contact Sync ────────────────────────────────
+
+export async function setPhoneHash(userId: string, phoneHash: string) {
+  // Check if hash is already taken by another user
+  const existing = await prisma.user.findFirst({
+    where: { phoneLookup: phoneHash, NOT: { id: userId } },
+  });
+  if (existing) {
+    throw new ForbiddenError('This phone number is already linked to another account');
+  }
+
+  return prisma.user.update({
+    where: { id: userId },
+    data: { phoneLookup: phoneHash },
+    select: { id: true, phoneLookup: true },
+  });
+}
+
+export async function removePhoneHash(userId: string) {
+  return prisma.user.update({
+    where: { id: userId },
+    data: { phoneLookup: null },
+    select: { id: true, phoneLookup: true },
+  });
+}
+
+export async function syncContacts(userId: string, hashes: string[]) {
+  const { getBlockedUserIds } = await import('../spotlight/spotlight.service');
+  const blockedIds = await getBlockedUserIds(userId);
+
+  const matches = await prisma.user.findMany({
+    where: {
+      phoneLookup: { in: hashes },
+      id: { notIn: [userId, ...Array.from(blockedIds)] },
+    },
+    select: {
+      id: true,
+      displayName: true,
+      avatarUrl: true,
+      isVerified: true,
+      isOnline: true,
+    },
+  });
+
+  return matches;
 }

@@ -518,6 +518,51 @@ export async function deleteMessage(messageId: string, userId: string) {
 }
 
 /**
+ * Pin or unpin a message. Any participant can pin/unpin.
+ */
+export async function togglePinMessage(messageId: string, userId: string) {
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!message) throw new NotFoundError('Message not found');
+  if (message.deletedAt) throw new ForbiddenError('Cannot pin a deleted message');
+
+  // Verify user is a participant
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: message.conversationId, userId } },
+  });
+  if (!participant) throw new ForbiddenError('You are not a participant in this conversation');
+
+  const newPinned = !message.isPinned;
+  const updated = await prisma.message.update({
+    where: { id: messageId },
+    data: {
+      isPinned: newPinned,
+      pinnedAt: newPinned ? new Date() : null,
+      pinnedById: newPinned ? userId : null,
+    },
+    include: messageInclude,
+  });
+
+  logger.debug({ messageId, userId, isPinned: newPinned }, 'Message pin toggled');
+  return updated;
+}
+
+/**
+ * Get pinned messages for a conversation.
+ */
+export async function getPinnedMessages(conversationId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+  if (!participant) throw new ForbiddenError('You are not a participant in this conversation');
+
+  return prisma.message.findMany({
+    where: { conversationId, isPinned: true, deletedAt: null },
+    include: messageInclude,
+    orderBy: { pinnedAt: 'desc' },
+  });
+}
+
+/**
  * Mark a view-once message as opened. Only the recipient (non-sender) can open.
  */
 export async function openViewOnce(messageId: string, userId: string) {

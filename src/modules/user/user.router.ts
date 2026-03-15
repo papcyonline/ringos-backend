@@ -310,4 +310,46 @@ router.get('/:id/following', authenticate, async (req: AuthRequest, res: Respons
   }
 });
 
+// ─── Phone & Contact Sync ────────────────────────────────
+
+// PUT /me/phone - Add or update phone number for contact discovery
+router.put('/me/phone', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { phoneHash } = req.body as { phoneHash?: string };
+    if (!phoneHash || typeof phoneHash !== 'string' || phoneHash.length < 10) {
+      return res.status(400).json({ error: 'Invalid phone hash' });
+    }
+    const result = await userService.setPhoneHash(req.user!.userId, phoneHash);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /me/phone - Remove phone number (stop being discoverable)
+router.delete('/me/phone', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await userService.removePhoneHash(req.user!.userId);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /me/contacts/sync - Find Yomeet users from phone contact hashes
+router.post('/me/contacts/sync', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { hashes } = req.body as { hashes?: string[] };
+    if (!Array.isArray(hashes) || hashes.length === 0) {
+      return res.status(400).json({ error: 'Provide an array of phone hashes' });
+    }
+    // Limit to 1000 contacts per request
+    const limited = hashes.slice(0, 1000);
+    const matches = await userService.syncContacts(req.user!.userId, limited);
+    res.json({ matches });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export { router as userRouter };
