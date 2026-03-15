@@ -30,6 +30,7 @@ export async function getProfile(userId: string) {
       isVerified: true,
       verifiedAt: true,
       verifiedRole: true,
+      lastNameChangeAt: true,
       isProfilePublic: true,
       hideOnlineStatus: true,
       banStatus: true,
@@ -348,31 +349,43 @@ export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
   });
 }
 
+const NAME_CHANGE_COOLDOWN_DAYS = 20;
+
 export async function updateProfile(userId: string, data: UpdateProfileInput) {
   const user = await findUserOrThrow(userId);
 
-  // Only verified users can change their display name or location
-  if (!user.isVerified) {
-    if (data.displayName && data.displayName !== user.displayName) {
-      throw new ForbiddenError('Only verified users can change their username');
-    }
-    if (data.location !== undefined && data.location !== user.location) {
-      throw new ForbiddenError('Only verified users can change their location');
-    }
-  }
+  const isChangingName = data.displayName && data.displayName !== user.displayName;
 
-  // If verified and changing name, check uniqueness
-  if (data.displayName && data.displayName !== user.displayName) {
+  // 20-day cooldown for display name changes (all users)
+  if (isChangingName) {
+    const lastChange = (user as any).lastNameChangeAt as Date | null;
+    if (lastChange) {
+      const daysSince = (Date.now() - lastChange.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSince < NAME_CHANGE_COOLDOWN_DAYS) {
+        const daysLeft = Math.ceil(NAME_CHANGE_COOLDOWN_DAYS - daysSince);
+        throw new ForbiddenError(`You can change your username again in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`);
+      }
+    }
+
+    // Check uniqueness
     const { checkUsernameAvailable } = await import('../auth/auth.service');
-    const available = await checkUsernameAvailable(data.displayName, userId);
+    const available = await checkUsernameAvailable(data.displayName!, userId);
     if (!available) {
       throw new ForbiddenError('Username is already taken');
     }
   }
 
+  // Only verified users can change location
+  if (!user.isVerified && data.location !== undefined && data.location !== user.location) {
+    throw new ForbiddenError('Only verified users can change their location');
+  }
+
   return prisma.user.update({
     where: { id: userId },
-    data,
+    data: {
+      ...data,
+      ...(isChangingName && { lastNameChangeAt: new Date() }),
+    },
     select: {
       id: true,
       displayName: true,
@@ -381,6 +394,7 @@ export async function updateProfile(userId: string, data: UpdateProfileInput) {
       profession: true,
       gender: true,
       location: true,
+      lastNameChangeAt: true,
     },
   });
 }

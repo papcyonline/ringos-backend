@@ -2,6 +2,47 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { isBlocked } from '../safety/safety.service';
+import ogs from 'open-graph-scraper';
+
+// ─── Link Preview ───────────────────────────────────────────
+
+const urlRegex = /(?:https?:\/\/)?(?:[\w-]+\.)+[a-z]{2,}(?:\/[^\s]*)?/i;
+
+async function fetchLinkPreview(messageId: string, content: string) {
+  try {
+    const match = content.match(urlRegex);
+    if (!match) return;
+
+    const rawUrl = match[0];
+    const url = rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`;
+
+    const { result } = await ogs({ url, timeout: 5000 });
+    if (!result.success) return;
+
+    const ogData: Record<string, string> = {};
+    if (result.ogTitle) ogData.ogTitle = result.ogTitle;
+    if (result.ogDescription) ogData.ogDescription = result.ogDescription.substring(0, 200);
+    if (result.ogImage && result.ogImage.length > 0) {
+      ogData.ogImage = (result.ogImage[0] as any).url ?? '';
+    }
+    if (result.ogSiteName) ogData.ogSiteName = result.ogSiteName;
+
+    if (Object.keys(ogData).length === 0) return;
+
+    // Merge with existing metadata
+    const msg = await prisma.message.findUnique({ where: { id: messageId }, select: { metadata: true } });
+    const existing = (msg?.metadata as Record<string, any>) ?? {};
+
+    await prisma.message.update({
+      where: { id: messageId },
+      data: { metadata: { ...existing, ...ogData } },
+    });
+
+    logger.debug({ messageId, ogTitle: ogData.ogTitle }, 'Link preview fetched');
+  } catch (e) {
+    logger.debug({ messageId, error: (e as Error).message }, 'Link preview fetch failed');
+  }
+}
 
 /**
  * Compute delivery status for a message relative to the current user.
@@ -411,6 +452,12 @@ export async function sendMessage(
   ]);
 
   logger.debug({ conversationId, senderId, messageId: message.id }, 'Message sent');
+
+  // Async: fetch link preview if message contains a URL (fire-and-forget)
+  if (content && urlRegex.test(content)) {
+    fetchLinkPreview(message.id, content).catch(() => {});
+  }
+
   return message;
 }
 

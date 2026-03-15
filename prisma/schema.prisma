@@ -123,7 +123,8 @@ model User {
   deviceId      String?   @unique
   phoneHash     String?   @unique
   phoneLookup   String?   @unique  // SHA-256 of phone for fast lookups
-  displayName   String    // Auto-generated like "Gentle Owl 17"
+  displayName       String    // Auto-generated like "Gentle Owl 17"
+  lastNameChangeAt  DateTime? // Cooldown: users can change name once every 20 days
   avatarUrl     String?
   bio           String?
   profession    String?
