@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import * as cloudinaryService from './cloudinary.service';
+import { isDriveConfigured, uploadToDrive } from './gdrive.service';
 
 // Use memory storage — files live in buffer until uploaded to Cloudinary
 const memoryStorage = multer.memoryStorage();
@@ -63,6 +64,12 @@ export async function fileToAvatarUrl(file: Express.Multer.File, userId: string)
 }
 
 export async function fileToChatImageUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
+  // 1. Try Google Drive (free, service-account based)
+  if (isDriveConfigured()) {
+    const result = await uploadToDrive(file.buffer, file.originalname || 'image.jpg', file.mimetype || 'image/jpeg');
+    if (result) return result.url;
+  }
+  // 2. Fallback to Cloudinary
   if (cloudinaryService.isCloudinaryConfigured) {
     const result = await cloudinaryService.uploadChatImage(file.buffer, conversationId);
     if (result) return result.secureUrl;
@@ -71,6 +78,12 @@ export async function fileToChatImageUrl(file: Express.Multer.File, conversation
 }
 
 export async function fileToChatAudioUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
+  // 1. Try Google Drive
+  if (isDriveConfigured()) {
+    const result = await uploadToDrive(file.buffer, file.originalname || 'audio.m4a', file.mimetype || 'audio/mp4');
+    if (result) return result.url;
+  }
+  // 2. Fallback to Cloudinary
   if (cloudinaryService.isCloudinaryConfigured) {
     const result = await cloudinaryService.uploadVoiceNote(file.buffer, conversationId);
     if (result) return result.secureUrl;

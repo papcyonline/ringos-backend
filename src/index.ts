@@ -16,6 +16,7 @@ import { startStoryCleanupJob } from './jobs/storyCleanup';
 import { logger } from './shared/logger';
 import { initSentry } from './shared/sentry.service';
 import { initRedis, closeRedis } from './shared/redis.service';
+import { initGoogleDrive } from './shared/gdrive.service';
 
 async function main() {
   // Initialize error tracking first
@@ -24,6 +25,7 @@ async function main() {
   await connectDatabase();
   initializeFirebase();
   initRedis();
+  initGoogleDrive();
 
   const server = http.createServer(app);
   const io = initializeSocket(server);
