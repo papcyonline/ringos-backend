@@ -93,8 +93,14 @@ router.post(
       const message = await chatService.sendMessage(
         (req.params.conversationId as string),
         req.user!.userId,
-        req.body.content,
-        { replyToId: req.body.replyToId },
+        req.body.content || '',
+        {
+          replyToId: req.body.replyToId,
+          imageUrl: req.body.imageUrl,
+          audioUrl: req.body.audioUrl,
+          audioDuration: req.body.audioDuration,
+          viewOnce: req.body.viewOnce,
+        },
       );
 
       // Broadcast to room so other participants see it in real-time
