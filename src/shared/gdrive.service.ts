@@ -29,7 +29,7 @@ export function initGoogleDrive(): boolean {
 
     const auth = new google.auth.GoogleAuth({
       credentials,
-      scopes: ['https://www.googleapis.com/auth/drive.file'],
+      scopes: ['https://www.googleapis.com/auth/drive'],
     });
 
     drive = google.drive({ version: 'v3', auth });
@@ -79,6 +79,7 @@ export async function uploadToDrive(
         body: Readable.from(buffer),
       },
       fields: 'id',
+      supportsAllDrives: true,
     });
 
     const fileId = file.data.id!;
