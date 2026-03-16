@@ -1,6 +1,7 @@
 import { google, drive_v3 } from 'googleapis';
 import { Readable } from 'stream';
 import { logger } from './logger';
+import type { Response } from 'express';
 
 let drive: drive_v3.Drive | null = null;
 let folderId: string | null = null;
@@ -48,7 +49,8 @@ function getFolderId(): string {
 }
 
 /**
- * Upload a buffer to Google Drive and return a public URL.
+ * Upload a buffer to Google Drive (private — no public link).
+ * Returns a proxy path like /media/gdrive/<fileId> instead of a public URL.
  */
 export async function uploadToDrive(
   buffer: Buffer,
@@ -76,19 +78,49 @@ export async function uploadToDrive(
 
     const fileId = file.data.id!;
 
-    // Make publicly readable
-    await drive.permissions.create({
-      fileId,
-      requestBody: { role: 'reader', type: 'anyone' },
-    });
-
-    const url = `https://drive.google.com/uc?export=view&id=${fileId}`;
-    logger.debug({ fileId, fileName: name }, 'File uploaded to Google Drive');
+    // No public permissions — files stay private.
+    // Served via authenticated /media/gdrive/:fileId proxy endpoint.
+    const url = `/media/gdrive/${fileId}`;
+    logger.debug({ fileId, fileName: name }, 'File uploaded to Google Drive (private)');
 
     return { url, fileId };
   } catch (e) {
     logger.error({ error: (e as Error).message, fileName }, 'Google Drive upload failed');
     return null;
+  }
+}
+
+/**
+ * Stream a file from Google Drive to an Express response.
+ */
+export async function streamFromDrive(fileId: string, res: Response): Promise<boolean> {
+  if (!drive) return false;
+
+  try {
+    // Get file metadata for content type
+    const meta = await drive.files.get({
+      fileId,
+      fields: 'mimeType,size,name',
+    });
+
+    const mimeType = meta.data.mimeType || 'application/octet-stream';
+    const size = meta.data.size;
+
+    // Stream the file content
+    const response = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'stream' },
+    );
+
+    res.setHeader('Content-Type', mimeType);
+    if (size) res.setHeader('Content-Length', size);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+
+    (response.data as any).pipe(res);
+    return true;
+  } catch (e) {
+    logger.error({ error: (e as Error).message, fileId }, 'Google Drive stream failed');
+    return false;
   }
 }
 
