@@ -2,38 +2,34 @@ import { google, drive_v3 } from 'googleapis';
 import { Readable } from 'stream';
 import { logger } from './logger';
 
-// ── Config ──
-
-// Use a pre-shared folder from the app owner's Drive.
-// Set GDRIVE_FOLDER_ID env var, or falls back to creating one.
 let drive: drive_v3.Drive | null = null;
 let folderId: string | null = null;
 
 /**
- * Initialize Google Drive with a service account.
- * Reads credentials from GOOGLE_SERVICE_ACCOUNT_JSON env var (JSON string)
- * or GOOGLE_SERVICE_ACCOUNT_FILE env var (file path).
+ * Initialize Google Drive with OAuth2 credentials (refresh token).
+ *
+ * Required env vars:
+ *   GDRIVE_CLIENT_ID      – OAuth2 client ID
+ *   GDRIVE_CLIENT_SECRET   – OAuth2 client secret
+ *   GDRIVE_REFRESH_TOKEN   – Long-lived refresh token
+ *   GDRIVE_FOLDER_ID       – Target folder ID (optional)
  */
 export function initGoogleDrive(): boolean {
   try {
-    let credentials: any;
+    const clientId = process.env.GDRIVE_CLIENT_ID;
+    const clientSecret = process.env.GDRIVE_CLIENT_SECRET;
+    const refreshToken = process.env.GDRIVE_REFRESH_TOKEN;
 
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-      credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-    } else if (process.env.GOOGLE_SERVICE_ACCOUNT_FILE) {
-      credentials = require(process.env.GOOGLE_SERVICE_ACCOUNT_FILE);
-    } else {
-      logger.info('Google Drive not configured — no service account credentials found');
+    if (!clientId || !clientSecret || !refreshToken) {
+      logger.info('Google Drive not configured — missing GDRIVE_CLIENT_ID, GDRIVE_CLIENT_SECRET, or GDRIVE_REFRESH_TOKEN');
       return false;
     }
 
-    const auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/drive'],
-    });
+    const oauth2 = new google.auth.OAuth2(clientId, clientSecret);
+    oauth2.setCredentials({ refresh_token: refreshToken });
 
-    drive = google.drive({ version: 'v3', auth });
-    logger.info('Google Drive service initialized');
+    drive = google.drive({ version: 'v3', auth: oauth2 });
+    logger.info('Google Drive service initialized (OAuth2)');
     return true;
   } catch (e) {
     logger.error({ error: (e as Error).message }, 'Failed to initialize Google Drive');
@@ -45,12 +41,9 @@ export function isDriveConfigured(): boolean {
   return drive !== null;
 }
 
-/**
- * Get the shared folder ID from env or use the pre-configured one.
- */
 function getFolderId(): string {
   if (folderId) return folderId;
-  folderId = process.env.GDRIVE_FOLDER_ID || '1MFws6S5agAIlStM2FmLaD81i_Rq3yy6t';
+  folderId = process.env.GDRIVE_FOLDER_ID || '';
   return folderId;
 }
 
@@ -69,17 +62,16 @@ export async function uploadToDrive(
     const timestamp = Date.now();
     const name = `${timestamp}_${fileName}`;
 
+    const requestBody: any = { name };
+    if (parentId) requestBody.parents = [parentId];
+
     const file = await drive.files.create({
-      requestBody: {
-        name,
-        parents: [parentId],
-      },
+      requestBody,
       media: {
         mimeType,
         body: Readable.from(buffer),
       },
       fields: 'id',
-      supportsAllDrives: true,
     });
 
     const fileId = file.data.id!;
