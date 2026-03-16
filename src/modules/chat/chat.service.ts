@@ -53,13 +53,17 @@ async function fetchLinkPreview(messageId: string, content: string) {
 function computeMessageStatus(
   msg: { senderId: string; createdAt: Date },
   userId: string,
-  otherParticipants: { lastReadAt: Date | null }[],
+  otherParticipants: { lastReadAt: Date | null; lastDeliveredAt: Date | null }[],
 ): 'sent' | 'delivered' | 'read' {
   if (msg.senderId !== userId) return 'sent';
   const isRead = otherParticipants.some(
     (p) => p.lastReadAt && p.lastReadAt >= msg.createdAt,
   );
-  return isRead ? 'read' : 'delivered';
+  if (isRead) return 'read';
+  const isDelivered = otherParticipants.some(
+    (p) => p.lastDeliveredAt && p.lastDeliveredAt >= msg.createdAt,
+  );
+  return isDelivered ? 'delivered' : 'sent';
 }
 
 const messageInclude = {
@@ -744,7 +748,7 @@ export async function getMessages(
     prisma.message.count({ where: { conversationId } }),
     prisma.conversationParticipant.findMany({
       where: { conversationId, userId: { not: userId }, leftAt: null },
-      select: { lastReadAt: true },
+      select: { lastReadAt: true, lastDeliveredAt: true },
     }),
   ]);
 

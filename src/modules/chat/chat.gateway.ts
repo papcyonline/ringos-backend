@@ -224,6 +224,13 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     try {
       const { messageId, conversationId } = data;
 
+      // Update lastDeliveredAt for this participant
+      const now = new Date();
+      await prisma.conversationParticipant.updateMany({
+        where: { conversationId, userId },
+        data: { lastDeliveredAt: now },
+      });
+
       // Broadcast to conversation room
       socket.to(`conversation:${conversationId}`).emit('chat:delivered', {
         messageId,

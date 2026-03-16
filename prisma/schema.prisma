@@ -298,8 +298,9 @@ model ConversationParticipant {
   conversationId String
   userId         String
   role           ParticipantRole @default(MEMBER)
-  lastReadAt     DateTime?
-  joinedAt       DateTime        @default(now())
+  lastReadAt      DateTime?
+  lastDeliveredAt DateTime?
+  joinedAt        DateTime        @default(now())
   leftAt         DateTime?
   isPinned       Boolean         @default(false)
   isMuted        Boolean         @default(false)
