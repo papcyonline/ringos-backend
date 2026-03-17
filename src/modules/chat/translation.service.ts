@@ -12,6 +12,38 @@ const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
  * languages that differ from the detected language.
  * Non-critical — failures are logged and silently ignored.
  */
+/**
+ * Only translate content that is clearly a real sentence in a real language.
+ * Skip everything else: slang, numbers, emoji, URLs, short fragments, etc.
+ */
+function shouldSkipTranslation(content: string): boolean {
+  const text = content.trim();
+
+  // Strip emoji, URLs, phone numbers, and punctuation to get just "words"
+  const cleaned = text
+    .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}\u200d\ufe0f]/gu, '') // emoji
+    .replace(/https?:\/\/\S+/gi, '')   // URLs
+    .replace(/[\d\s\-+().]+/g, ' ')    // numbers / phone numbers
+    .replace(/[^\p{L}\s]/gu, '')       // keep only letters and spaces
+    .trim();
+
+  // Nothing meaningful left after stripping
+  if (!cleaned) return true;
+
+  // Split into words (sequences of letters)
+  const words = cleaned.split(/\s+/).filter(w => w.length > 0);
+
+  // Need at least 3 real words to be worth translating
+  // "I love you" = translate. "wyd bro" = skip.
+  if (words.length < 3) return true;
+
+  // If most "words" are very short (1-3 chars), it's likely slang/abbreviations
+  const shortWords = words.filter(w => w.length <= 3).length;
+  if (shortWords / words.length > 0.7) return true;
+
+  return false;
+}
+
 export async function translateMessage(
   messageId: string,
   conversationId: string,
@@ -19,6 +51,7 @@ export async function translateMessage(
 ): Promise<void> {
   try {
     if (!content.trim()) return;
+    if (shouldSkipTranslation(content)) return;
 
     // Get unique languages of all active participants
     const participants = await prisma.conversationParticipant.findMany({
