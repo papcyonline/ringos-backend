@@ -125,6 +125,28 @@ export async function streamFromDrive(fileId: string, res: Response): Promise<bo
 }
 
 /**
+ * Download a file from Google Drive as a Buffer.
+ */
+export async function downloadFromDrive(fileId: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  if (!drive) return null;
+
+  try {
+    const meta = await drive.files.get({ fileId, fields: 'mimeType' });
+    const mimeType = meta.data.mimeType || 'audio/mp4';
+
+    const response = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'arraybuffer' },
+    );
+
+    return { buffer: Buffer.from(response.data as ArrayBuffer), mimeType };
+  } catch (e) {
+    logger.error({ error: (e as Error).message, fileId }, 'Google Drive download failed');
+    return null;
+  }
+}
+
+/**
  * Delete a file from Google Drive.
  */
 export async function deleteFromDrive(fileId: string): Promise<void> {

@@ -11,6 +11,7 @@ import * as chatService from './chat.service';
 import * as groupService from './group.service';
 import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
 import { translateMessage } from './translation.service';
+import { transcribeMessage } from './transcription.service';
 import { notifyChatMessage } from '../notification/notification.service';
 
 const router = Router();
@@ -201,6 +202,24 @@ router.post(
         (req.params.messageId as string),
         req.user!.userId,
         req.body.emoji,
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/messages/:messageId/transcribe - Transcribe voice note
+router.post(
+  '/conversations/:conversationId/messages/:messageId/transcribe',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await transcribeMessage(
+        req.params.messageId as string,
+        req.params.conversationId as string,
+        req.user!.userId,
       );
       res.json(result);
     } catch (err) {
