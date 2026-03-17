@@ -101,6 +101,7 @@ router.post(
           audioUrl: req.body.audioUrl,
           audioDuration: req.body.audioDuration,
           viewOnce: req.body.viewOnce,
+          metadata: req.body.metadata,
         },
       );
 
