@@ -21,13 +21,16 @@ import { sentryRequestHandler, sentryErrorHandler } from './shared/sentry.servic
 
 const app = express();
 
+// Trust first proxy (Render, etc.) so req.ip returns the real client IP
+app.set('trust proxy', 1);
+
 const corsOrigin = env.CORS_ORIGIN === '*' ? '*' : env.CORS_ORIGIN.split(',').map((o) => o.trim());
 
 // Sentry request handler (must be first)
 app.use(sentryRequestHandler);
 
 app.use(helmet());
-app.use(cors({ origin: corsOrigin }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(rateLimiter());

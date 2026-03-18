@@ -188,14 +188,15 @@ export async function incr(key: string): Promise<number | null> {
 // In-memory fallback rate limiter when Redis is unavailable
 const memoryRateLimits = new Map<string, { timestamps: number[] }>();
 
-// Cleanup stale in-memory entries every 60s
-setInterval(() => {
+// Cleanup stale in-memory entries every 60s (unref so it won't block shutdown)
+const _cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of memoryRateLimits) {
     entry.timestamps = entry.timestamps.filter((t) => now - t < 3600_000);
     if (entry.timestamps.length === 0) memoryRateLimits.delete(key);
   }
 }, 60_000);
+_cleanupTimer.unref();
 
 function memoryRateLimit(
   key: string,
