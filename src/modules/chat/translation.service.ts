@@ -93,7 +93,10 @@ Rules:
 - Use ISO 639-1 two-letter language codes (e.g. "en", "fr", "es")
 - Do NOT include a translation for the detected source language
 - If the message is already in a target language, omit that language from translations
-- Preserve emojis, @mentions, and formatting as-is`,
+- Preserve emojis, @mentions, and formatting as-is
+- Pidgin English (e.g. "How far", "Wetin dey happen", "I no sabi", "Na so e be") is English — detect it as "en" and do NOT translate it
+- Internet shorthand and abbreviations (e.g. "u" = you, "r" = are, "pls" = please, "ngl", "brb", "omw", "wyd", "lol", "smh", "tbh", "imo") are English — detect as "en" and do NOT translate
+- If the message is English written informally, with slang, shorthand, or pidgin, return empty translations: {"detectedLanguage":"en","translations":{}}`,
         },
         {
           role: 'user',
