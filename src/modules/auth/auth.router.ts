@@ -1,10 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { validate } from '../../middleware/validate';
 import { authenticate } from '../../middleware/auth';
+import { authRateLimit } from '../../middleware/authRateLimit';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import { avatarUpload, fileToAvatarUrl } from '../../shared/upload';
-import { checkRateLimit } from '../../shared/redis.service';
 import {
   anonymousAuthSchema,
   registerSchema,
@@ -21,21 +21,6 @@ import {
 import * as authService from './auth.service';
 
 const router = Router();
-
-/**
- * Per-route rate limiting middleware for auth endpoints.
- */
-function authRateLimit(key: string, maxAttempts: number, windowSeconds: number) {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    const result = await checkRateLimit(`auth:${key}:${ip}`, maxAttempts, windowSeconds);
-    if (!result.allowed) {
-      res.status(429).json({ message: 'Too many attempts, try again later' });
-      return;
-    }
-    next();
-  };
-}
 
 router.post(
   '/register',

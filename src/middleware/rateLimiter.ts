@@ -23,10 +23,11 @@ export function rateLimiter(windowMs = 60000, max = 100) {
   };
 }
 
-// Clean up stale entries periodically
-setInterval(() => {
+// Clean up stale entries periodically (unref so it won't block shutdown)
+const _cleanup = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of requests) {
     if (now > entry.resetAt) requests.delete(key);
   }
 }, 60000);
+_cleanup.unref();

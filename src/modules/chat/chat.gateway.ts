@@ -287,7 +287,9 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
 
   /**
    * chat:typing - Broadcast typing/recording indicator to the room (excluding sender).
+   * Auto-clears after 5 seconds if no follow-up typing event is received.
    */
+  const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
   socket.on('chat:typing', (data: { conversationId: string; activity?: string }) => {
     try {
       const { conversationId, activity } = data;
@@ -297,9 +299,27 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
         userId,
         activity: activity ?? 'typing',
       });
+
+      // Clear previous timer for this conversation and set a new one
+      const timerKey = conversationId;
+      const existing = typingTimers.get(timerKey);
+      if (existing) clearTimeout(existing);
+      typingTimers.set(timerKey, setTimeout(() => {
+        socket.to(`conversation:${conversationId}`).emit('chat:typing-stop', {
+          conversationId,
+          userId,
+        });
+        typingTimers.delete(timerKey);
+      }, 5000));
     } catch (error) {
       logger.error({ error, userId }, 'Error broadcasting typing indicator');
     }
+  });
+
+  // Clean up typing timers on disconnect
+  socket.on('disconnect', () => {
+    for (const timer of typingTimers.values()) clearTimeout(timer);
+    typingTimers.clear();
   });
 
   /**

@@ -32,12 +32,13 @@ function checkSocketRateLimit(userId: string): boolean {
 }
 
 // Clean up stale entries every 60 seconds to prevent memory leak.
-setInterval(() => {
+const _socketCleanup = setInterval(() => {
   const now = Date.now();
   for (const [uid, entry] of userEventCounts) {
     if (now >= entry.resetAt) userEventCounts.delete(uid);
   }
 }, 60_000);
+_socketCleanup.unref();
 
 export function initializeSocket(httpServer: HttpServer): Server {
   const corsOrigin = env.CORS_ORIGIN === '*' ? '*' : env.CORS_ORIGIN.split(',').map((o) => o.trim());
