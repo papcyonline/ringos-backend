@@ -185,14 +185,48 @@ export async function incr(key: string): Promise<number | null> {
  * Check rate limit for a key
  * Returns true if within limit, false if exceeded
  */
+// In-memory fallback rate limiter when Redis is unavailable
+const memoryRateLimits = new Map<string, { timestamps: number[] }>();
+
+// Cleanup stale in-memory entries every 60s
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of memoryRateLimits) {
+    entry.timestamps = entry.timestamps.filter((t) => now - t < 3600_000);
+    if (entry.timestamps.length === 0) memoryRateLimits.delete(key);
+  }
+}, 60_000);
+
+function memoryRateLimit(
+  key: string,
+  maxRequests: number,
+  windowSeconds: number
+): { allowed: boolean; remaining: number; resetAt: number } {
+  const now = Date.now();
+  const windowMs = windowSeconds * 1000;
+  let entry = memoryRateLimits.get(key);
+  if (!entry) {
+    entry = { timestamps: [] };
+    memoryRateLimits.set(key, entry);
+  }
+  // Remove expired entries
+  entry.timestamps = entry.timestamps.filter((t) => now - t < windowMs);
+  if (entry.timestamps.length >= maxRequests) {
+    const resetAt = entry.timestamps[0] + windowMs;
+    return { allowed: false, remaining: 0, resetAt };
+  }
+  entry.timestamps.push(now);
+  return { allowed: true, remaining: maxRequests - entry.timestamps.length, resetAt: now + windowMs };
+}
+
 export async function checkRateLimit(
   key: string,
   maxRequests: number,
   windowSeconds: number
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
   if (!redisClient) {
-    // If Redis not available, allow all requests
-    return { allowed: true, remaining: maxRequests, resetAt: Date.now() + windowSeconds * 1000 };
+    // Fall back to in-memory rate limiting
+    return memoryRateLimit(key, maxRequests, windowSeconds);
   }
 
   const now = Date.now();
@@ -224,9 +258,8 @@ export async function checkRateLimit(
       resetAt: now + windowSeconds * 1000,
     };
   } catch (error) {
-    logger.error({ error, key }, 'Rate limit check failed');
-    // On error, allow the request
-    return { allowed: true, remaining: maxRequests, resetAt: Date.now() + windowSeconds * 1000 };
+    logger.error({ error, key }, 'Rate limit check failed, falling back to memory');
+    return memoryRateLimit(key, maxRequests, windowSeconds);
   }
 }
 

@@ -71,6 +71,7 @@ router.post(
 
 router.post(
   '/google',
+  authRateLimit('google', 10, 900),
   validate(googleAuthSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -86,6 +87,7 @@ router.post(
 
 router.post(
   '/apple',
+  authRateLimit('apple', 10, 900),
   validate(appleAuthSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -147,6 +149,7 @@ router.post(
 
 router.post(
   '/anonymous',
+  authRateLimit('anonymous', 10, 900),
   validate(anonymousAuthSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -162,6 +165,7 @@ router.post(
 
 router.post(
   '/phone',
+  authRateLimit('phone', 3, 900),
   validate(phoneAuthSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -207,6 +211,7 @@ router.post(
 
 router.post(
   '/reset-password',
+  authRateLimit('reset-password', 5, 900),
   validate(resetPasswordSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -221,6 +226,7 @@ router.post(
 
 router.post(
   '/refresh',
+  authRateLimit('refresh', 20, 900),
   validate(refreshTokenSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -241,6 +247,20 @@ router.post(
       const userId = req.user!.userId;
       const token = req.body.refreshToken;
       const result = await authService.logout(userId, token);
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/logout-all',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user!.userId;
+      const result = await authService.logoutAll(userId);
       res.status(200).json(result);
     } catch (err) {
       next(err);

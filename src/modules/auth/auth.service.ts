@@ -559,3 +559,13 @@ export async function logout(userId: string, token: string) {
 
   return { message: 'Logged out successfully' };
 }
+
+export async function logoutAll(userId: string) {
+  const { count } = await prisma.refreshToken.deleteMany({
+    where: { userId },
+  });
+
+  logger.info({ userId, sessionsRevoked: count }, 'User logged out from all devices');
+
+  return { message: 'Logged out from all devices', sessionsRevoked: count };
+}

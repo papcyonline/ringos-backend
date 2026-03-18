@@ -1,10 +1,12 @@
-import { Router, Response, NextFunction } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import { avatarUpload, fileToAvatarUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
+import { checkRateLimit } from '../../shared/redis.service';
 import { updatePreferenceSchema, updateAvailabilitySchema, updatePrivacySchema, updateProfileSchema } from './user.schema';
 import * as userService from './user.service';
 import * as followService from './follow.service';
@@ -184,16 +186,36 @@ router.delete('/me/verify', authenticate, async (req: AuthRequest, res: Response
 });
 
 // POST /admin/verify - Admin: verify or unverify any user by email/id/name
-router.post('/admin/verify', async (req, res: Response, next: NextFunction) => {
+router.post('/admin/verify', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const secret = req.headers['x-admin-secret'] as string;
+    // Rate limit: 5 attempts per 15 minutes per IP
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const rl = await checkRateLimit(`admin:verify:${ip}`, 5, 900);
+    if (!rl.allowed) {
+      return res.status(429).json({ error: 'Too many attempts, try again later' });
+    }
+
+    const secret = req.headers['x-admin-secret'] as string | undefined;
     const adminSecret = process.env.ADMIN_SECRET;
-    if (!adminSecret || secret !== adminSecret) {
+    if (!adminSecret || !secret) {
       return res.status(403).json({ error: 'Forbidden' });
     }
+    // Timing-safe comparison to prevent timing attacks
+    const secretBuf = Buffer.from(secret);
+    const adminBuf = Buffer.from(adminSecret);
+    if (secretBuf.length !== adminBuf.length || !crypto.timingSafeEqual(secretBuf, adminBuf)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const { user: identifier, verified, role } = req.body;
-    if (!identifier || typeof verified !== 'boolean') {
-      return res.status(400).json({ error: 'Provide "user" (email/id/name) and "verified" (boolean)' });
+    if (!identifier || typeof identifier !== 'string' || identifier.length > 255) {
+      return res.status(400).json({ error: 'Provide a valid "user" (email/id/name)' });
+    }
+    if (typeof verified !== 'boolean') {
+      return res.status(400).json({ error: '"verified" must be a boolean' });
+    }
+    if (role !== undefined && typeof role !== 'string') {
+      return res.status(400).json({ error: '"role" must be a string if provided' });
     }
     const result = await userService.adminSetVerified(identifier, verified, role);
     res.json(result);

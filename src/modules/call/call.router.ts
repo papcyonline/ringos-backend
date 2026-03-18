@@ -96,14 +96,11 @@ router.get(
   }
 );
 
-// ─── Diagnostic: check if TURN is configured (no auth required) ─────────────
-router.get('/turn-status', (_req, res: Response) => {
-  const turnServers = buildEnvTurnServers();
+// ─── Diagnostic: check if TURN is configured (auth required) ────────────────
+router.get('/turn-status', authenticate, (_req, res: Response) => {
   res.json({
     turnConfigured: isTurnConfigured,
     twilioConfigured: isTwilioConfigured,
-    turnUrlCount: turnServers.length,
-    turnUrls: turnServers.map((s) => s.urls),
   });
 });
 
