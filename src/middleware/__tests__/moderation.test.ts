@@ -82,6 +82,7 @@ describe('moderateMessage middleware', () => {
   it('should call next with BadRequestError when content is flagged', async () => {
     (moderateContent as any).mockResolvedValue({
       flagged: true,
+      severity: 'hard',
       reason: 'hateful content',
       cleaned: 'cleaned text',
     });

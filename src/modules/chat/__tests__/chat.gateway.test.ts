@@ -1,6 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mock dependencies ──────────────────────────────────────────────────────
+vi.mock('../../../config/env', () => ({
+  env: {
+    CORS_ORIGIN: '*',
+    REDIS_URL: '',
+    OPENAI_API_KEY: 'test-key',
+  },
+}));
+
+vi.mock('../../../config/socket', () => ({
+  getIO: vi.fn(() => ({
+    to: vi.fn(() => ({ emit: vi.fn() })),
+    in: vi.fn(() => ({ fetchSockets: vi.fn().mockResolvedValue([]) })),
+  })),
+}));
+
+vi.mock('../translation.service', () => ({
+  translateMessage: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../../../config/database', () => ({
   prisma: {
     conversationParticipant: {

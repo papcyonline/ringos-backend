@@ -34,6 +34,13 @@ const { mockPrisma, mockIO, mockSocketRoom } = vi.hoisted(() => {
   return { mockPrisma, mockIO, mockSocketRoom };
 });
 
+vi.mock('../../../config/env', () => ({
+  env: {
+    CORS_ORIGIN: '*',
+    REDIS_URL: '',
+  },
+}));
+
 vi.mock('../../../config/database', () => ({
   prisma: mockPrisma,
 }));
@@ -44,6 +51,10 @@ vi.mock('../../../config/socket', () => ({
 
 vi.mock('../../../config/firebase', () => ({
   getFirebaseApp: () => null,
+}));
+
+vi.mock('../../../config/apns', () => ({
+  sendVoipPush: vi.fn().mockResolvedValue({ status: 200 }),
 }));
 
 // ── Import after mocks ────────────────────────────────────────────────────
@@ -229,7 +240,7 @@ describe('notification.service', () => {
         where: {
           userId: 'user-1',
           isRead: false,
-          type: 'chat_message',
+          type: { in: ['chat_message', 'voice_note'] },
           data: { path: ['conversationId'], equals: 'conv-1' },
         },
         data: { isRead: true },
@@ -255,7 +266,7 @@ describe('notification.service', () => {
       // Should have fetched sender's avatar
       expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
         where: { id: 'sender-1' },
-        select: { avatarUrl: true },
+        select: { avatarUrl: true, isVerified: true },
       });
 
       // Notification should include imageUrl and senderAvatarUrl in data
@@ -307,8 +318,9 @@ describe('notification.service', () => {
 
       await notifyChatMessage('conv-1', 'sender-1', 'Test', 'Hello');
 
-      // Should only create one notification (for offline-user)
-      expect(mockPrisma.notification.create).toHaveBeenCalledTimes(1);
+      // In-app notifications are created for ALL participants (even in-room)
+      // so badge counts stay accurate. Push is skipped for in-room users.
+      expect(mockPrisma.notification.create).toHaveBeenCalledTimes(2);
       expect(mockPrisma.notification.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ userId: 'offline-user' }),
