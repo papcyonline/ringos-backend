@@ -1,5 +1,7 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
+import { createClient } from 'redis';
 import { env } from './env';
 import { logger } from '../shared/logger';
 import { verifyAccessToken } from '../modules/auth/auth.utils';
@@ -40,7 +42,7 @@ const _socketCleanup = setInterval(() => {
 }, 60_000);
 _socketCleanup.unref();
 
-export function initializeSocket(httpServer: HttpServer): Server {
+export async function initializeSocket(httpServer: HttpServer): Promise<Server> {
   const corsOrigin = env.CORS_ORIGIN === '*' ? '*' : env.CORS_ORIGIN.split(',').map((o) => o.trim());
 
   io = new Server(httpServer, {
@@ -51,6 +53,19 @@ export function initializeSocket(httpServer: HttpServer): Server {
     pingTimeout: 60000,
     pingInterval: 25000,
   });
+
+  // Use Redis adapter for multi-instance support when REDIS_URL is configured
+  if (env.REDIS_URL) {
+    try {
+      const pubClient = createClient({ url: env.REDIS_URL });
+      const subClient = pubClient.duplicate();
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      io.adapter(createAdapter(pubClient, subClient));
+      logger.info('Socket.IO Redis adapter enabled');
+    } catch (err) {
+      logger.warn({ err }, 'Failed to connect Socket.IO Redis adapter, using in-memory');
+    }
+  }
 
   // Auth middleware
   io.use(async (socket: Socket, next) => {

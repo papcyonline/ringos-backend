@@ -28,7 +28,7 @@ async function main() {
   initGoogleDrive();
 
   const server = http.createServer(app);
-  const io = initializeSocket(server);
+  const io = await initializeSocket(server);
 
   io.on('connection', (socket) => {
     registerChatHandlers(io, socket);

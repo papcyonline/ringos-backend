@@ -749,48 +749,68 @@ export async function getAllGroups(userId: string, limit = 100) {
 
 /**
  * Get paginated messages for a conversation.
- * Computes read/delivered status for the current user's sent messages
- * based on other participants' lastReadAt timestamps.
+ * Supports cursor-based pagination (preferred) and offset-based (legacy).
+ * Computes read/delivered status for the current user's sent messages.
  */
 export async function getMessages(
   conversationId: string,
   userId: string,
   page = 1,
   limit = 50,
+  cursor?: string,
 ) {
   await verifyParticipant(conversationId, userId);
 
-  const skip = (page - 1) * limit;
+  // Build query: cursor-based if cursor provided, offset-based otherwise
+  const whereClause: any = { conversationId };
+  let skip: number | undefined;
 
-  const [messages, total, participants] = await Promise.all([
+  if (cursor) {
+    // Cursor is a message ID — fetch messages older than it
+    const cursorMsg = await prisma.message.findUnique({
+      where: { id: cursor },
+      select: { createdAt: true },
+    });
+    if (cursorMsg) {
+      whereClause.createdAt = { lt: cursorMsg.createdAt };
+    }
+  } else {
+    skip = (page - 1) * limit;
+  }
+
+  const [messages, participants] = await Promise.all([
     prisma.message.findMany({
-      where: { conversationId },
+      where: whereClause,
       orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
+      ...(skip !== undefined ? { skip } : {}),
+      take: limit + 1, // Fetch one extra to determine hasMore
       include: messageInclude,
     }),
-    prisma.message.count({ where: { conversationId } }),
     prisma.conversationParticipant.findMany({
       where: { conversationId, userId: { not: userId }, leftAt: null },
       select: { lastReadAt: true, lastDeliveredAt: true },
     }),
   ]);
 
+  const hasMore = messages.length > limit;
+  const trimmed = hasMore ? messages.slice(0, limit) : messages;
+
   // Compute message status for messages sent by the current user
-  const data = messages.map((msg) => ({
+  const data = trimmed.map((msg) => ({
     ...msg,
     status: computeMessageStatus(msg, userId, participants),
   }));
 
-  logger.debug({ conversationId, userId, page, limit, total }, 'Fetched messages');
+  const nextCursor = hasMore && trimmed.length > 0 ? trimmed[trimmed.length - 1].id : null;
+
+  logger.debug({ conversationId, userId, page, limit, cursor, hasMore }, 'Fetched messages');
 
   return {
     data,
-    total,
     page,
     limit,
-    hasMore: skip + messages.length < total,
+    hasMore,
+    nextCursor,
   };
 }
 
