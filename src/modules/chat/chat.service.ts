@@ -611,12 +611,36 @@ export async function openViewOnce(messageId: string, userId: string) {
 
   await verifyParticipant(message.conversationId, userId);
 
+  // Clean up media files from storage
+  const mediaUrls = [message.imageUrl, message.audioUrl].filter(Boolean) as string[];
+  for (const url of mediaUrls) {
+    if (url.includes('drive.google.com')) {
+      const match = url.match(/id=([a-zA-Z0-9_-]+)/);
+      if (match) {
+        const { deleteFromDrive } = await import('../../shared/gdrive.service');
+        deleteFromDrive(match[1]).catch(() => {});
+      }
+    } else if (url.includes('cloudinary.com')) {
+      const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.\w+)?$/);
+      if (match) {
+        const isAudio = url.includes('/video/') || url.endsWith('.m4a') || url.endsWith('.mp3');
+        cloudinaryService.deleteFile(match[1], isAudio ? 'video' : 'image').catch(() => {});
+      }
+    }
+  }
+
+  // Mark as opened and wipe content/media from database
   const updated = await prisma.message.update({
     where: { id: messageId },
-    data: { viewOnceOpened: true },
+    data: {
+      viewOnceOpened: true,
+      content: '',
+      imageUrl: null,
+      audioUrl: null,
+    },
   });
 
-  logger.debug({ messageId, userId }, 'View-once message opened');
+  logger.debug({ messageId, userId }, 'View-once message opened and content deleted');
   return { messageId: updated.id, conversationId: updated.conversationId };
 }
 
