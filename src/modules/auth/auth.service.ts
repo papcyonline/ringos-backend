@@ -217,7 +217,7 @@ async function socialAuthFlow(params: {
   email: string | null;
   name: string;
   avatarUrl?: string | null;
-  authProvider: string;
+  authProvider: 'EMAIL' | 'GOOGLE' | 'APPLE' | 'PHONE' | 'ANONYMOUS';
 }) {
   const { providerId, providerField, email, name, avatarUrl, authProvider } = params;
 
@@ -320,7 +320,7 @@ export async function googleAuth(idToken: string) {
     email,
     name,
     avatarUrl,
-    authProvider: 'google',
+    authProvider: 'GOOGLE',
   });
 }
 
@@ -357,7 +357,7 @@ export async function appleAuth(idToken: string, fullName?: { givenName?: string
     providerField: 'appleId',
     email,
     name,
-    authProvider: 'apple',
+    authProvider: 'APPLE',
   });
 }
 
@@ -375,7 +375,7 @@ export async function checkUsernameAvailable(username: string, excludeUserId?: s
 export async function setUsername(
   userId: string,
   username: string,
-  opts?: { avatarUrl?: string; bio?: string; profession?: string; gender?: string; location?: string; availabilityNote?: string; language?: string },
+  opts?: { avatarUrl?: string; bio?: string; profession?: string; gender?: 'MALE' | 'FEMALE'; location?: string; availabilityNote?: string; language?: string },
 ) {
   const available = await checkUsernameAvailable(username, userId);
   if (!available) {

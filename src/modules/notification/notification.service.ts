@@ -75,7 +75,7 @@ export async function markConversationNotificationsAsRead(userId: string, conver
     where: {
       userId,
       isRead: false,
-      type: { in: ['chat_message', 'voice_note'] },
+      type: { in: ['CHAT_MESSAGE', 'VOICE_NOTE'] },
       data: { path: ['conversationId'], equals: conversationId },
     },
     data: { isRead: true },
@@ -90,7 +90,7 @@ export async function deleteNotification(userId: string, notificationId: string)
 
 export async function createNotification(data: {
   userId: string;
-  type: string;
+  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'SYSTEM';
   title: string;
   body: string;
   imageUrl?: string;
@@ -231,7 +231,7 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
 
   // Pick the correct Android notification channel based on message type.
   const androidChannelId =
-    data.type === 'voice_note' ? 'yomeet_voice_notes' : 'yomeet_messages';
+    data.type === 'voice_note' || data.type === 'VOICE_NOTE' ? 'yomeet_voice_notes' : 'yomeet_messages';
 
   const message: admin.messaging.MulticastMessage = {
     tokens: tokens.map((t) => t.token),
@@ -474,7 +474,7 @@ export async function notifyChatMessage(
     // chat room and the leave event hasn't been processed yet.
     createNotification({
       userId: participant.userId,
-      type: isVoiceNote ? 'voice_note' : 'chat_message',
+      type: isVoiceNote ? 'VOICE_NOTE' : 'CHAT_MESSAGE',
       title: senderName,
       body,
       imageUrl: senderAvatarUrl,

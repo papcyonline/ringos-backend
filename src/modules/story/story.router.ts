@@ -148,7 +148,7 @@ router.post(
       if (story && liker && story.userId !== viewerId) {
         createNotification({
           userId: story.userId,
-          type: 'story_liked',
+          type: 'STORY_LIKED',
           title: liker.displayName,
           body: 'Liked your story',
           imageUrl: liker.avatarUrl ?? undefined,

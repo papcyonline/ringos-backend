@@ -253,7 +253,7 @@ router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response,
     const follower = await userService.getProfile(req.user!.userId);
     createNotification({
       userId: (req.params.id as string),
-      type: 'new_follower',
+      type: 'NEW_FOLLOWER',
       title: follower.displayName,
       body: 'Started following you',
       imageUrl: follower.avatarUrl ?? undefined,
@@ -287,7 +287,7 @@ router.post('/:id/like', authenticate, async (req: AuthRequest, res: Response, n
     const liker = await userService.getProfile(req.user!.userId);
     createNotification({
       userId: (req.params.id as string),
-      type: 'profile_liked',
+      type: 'PROFILE_LIKED',
       title: liker.displayName,
       body: 'Liked your profile',
       imageUrl: liker.avatarUrl ?? undefined,

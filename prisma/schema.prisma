@@ -111,27 +111,58 @@ enum BanStatus {
   PERMANENT_BAN
 }
 
+enum AuthProvider {
+  EMAIL
+  GOOGLE
+  APPLE
+  PHONE
+  ANONYMOUS
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum NotificationType {
+  CHAT_MESSAGE
+  VOICE_NOTE
+  NEW_FOLLOWER
+  PROFILE_LIKED
+  MATCH_FOUND
+  STORY_GIFT
+  STORY_LIKED
+  SYSTEM
+}
+
+enum TransactionType {
+  PURCHASE
+  GIFT
+  TIP
+}
+
 // ─── Models ─────────────────────────────────────────────
 
 model User {
-  id            String    @id @default(uuid())
-  email         String?   @unique
+  id            String       @id @default(uuid())
+  email         String?      @unique
   passwordHash  String?
-  googleId      String?   @unique  // Google OAuth user ID
-  appleId       String?   @unique  // Apple Sign-In user ID
-  authProvider  String    @default("email") // "email", "google", "apple", "phone", "anonymous"
-  deviceId      String?   @unique
-  phoneHash     String?   @unique
-  phoneLookup   String?   @unique  // SHA-256 of phone for fast lookups
-  displayName       String    // Auto-generated like "Gentle Owl 17"
-  lastNameChangeAt  DateTime? // Cooldown: users can change name once every 20 days
+  googleId      String?      @unique
+  appleId       String?      @unique
+  authProvider  AuthProvider @default(EMAIL)
+  deviceId      String?      @unique
+  phoneHash     String?      @unique
+  phoneLookup   String?      @unique
+  displayName       String
+  lastNameChangeAt  DateTime?
   avatarUrl     String?
   bio           String?
   profession    String?
-  gender        String?   // "male", "female", "other"
+  gender        Gender?
   location      String?
-  status        String    @default("available") // "available", "busy"
-  availabilityNote String? // e.g. "Available for 15min call", "Free in 30 mins"
+  status        String    @default("available")
+  availabilityNote String?
   isAnonymous   Boolean   @default(true)
   isOnline      Boolean   @default(false)
   lastSeenAt    DateTime?
@@ -142,18 +173,12 @@ model User {
   verifiedRole  String?
   isProfilePublic Boolean @default(true)
   hideOnlineStatus Boolean @default(false)
-  banStatus     BanStatus @default(NONE)
-  banExpiresAt  DateTime?
-  flagCount     Int       @default(0)
-  lastFlaggedAt DateTime?
-  // Subscription (managed by RevenueCat)
-  subscriptionId      String?
-  subscriptionStatus  String?   // "active", "cancelled", "past_due", "trialing"
-  subscriptionPlan    String?   // "premium", "pro", etc.
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
   preference     UserPreference?
+  moderation     UserModeration?
+  subscription   Subscription?
   refreshTokens  RefreshToken[]
   aiSessions     AiSession[]
   matchRequests  MatchRequest[]
@@ -181,8 +206,32 @@ model User {
   giftsSent        StoryGift[]    @relation("GiftsSent")
   giftsReceived    StoryGift[]    @relation("GiftsReceived")
 
-  @@index([banStatus])
   @@index([isOnline, lastSeenAt])
+}
+
+model UserModeration {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  banStatus     BanStatus @default(NONE)
+  banExpiresAt  DateTime?
+  flagCount     Int       @default(0)
+  lastFlaggedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([banStatus])
+}
+
+model Subscription {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  externalId String?  // RevenueCat subscription ID
+  status     String?  // "active", "cancelled", "past_due", "trialing"
+  plan       String?  // "premium", "pro", etc.
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model UserPreference {
@@ -436,9 +485,9 @@ model CallLog {
 }
 
 model Notification {
-  id        String   @id @default(uuid())
+  id        String           @id @default(uuid())
   userId    String
-  type      String   // "chat_message", "new_follower", "profile_liked", "match_found"
+  type      NotificationType
   title     String
   body      String
   imageUrl  String?
@@ -533,10 +582,10 @@ model CoinBalance {
 }
 
 model CoinTransaction {
-  id             String   @id @default(uuid())
+  id             String          @id @default(uuid())
   userId         String
   amount         Int
-  type           String   // purchase, tip, gift
+  type           TransactionType
   relatedStoryId String?
   createdAt      DateTime @default(now())
 

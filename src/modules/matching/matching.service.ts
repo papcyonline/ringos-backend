@@ -11,16 +11,18 @@ export async function createMatchRequest(userId: string, data: CreateMatchReques
   // Check user is not banned
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { preference: true },
+    include: { preference: true, moderation: true },
   });
 
   if (!user) {
     throw new NotFoundError('User not found');
   }
 
-  if (user.banStatus === 'TEMP_BAN' || user.banStatus === 'PERMANENT_BAN') {
+  const banStatus = user.moderation?.banStatus ?? 'NONE';
+  const banExpiresAt = user.moderation?.banExpiresAt ?? null;
+  if (banStatus === 'TEMP_BAN' || banStatus === 'PERMANENT_BAN') {
     const isTempExpired =
-      user.banStatus === 'TEMP_BAN' && user.banExpiresAt && user.banExpiresAt < new Date();
+      banStatus === 'TEMP_BAN' && banExpiresAt && banExpiresAt < new Date();
     if (!isTempExpired) {
       throw new ForbiddenError('Your account is currently banned from matching');
     }

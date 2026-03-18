@@ -180,9 +180,10 @@ export async function isBlocked(userId1: string, userId2: string): Promise<boole
 
 export async function recordFlag(userId: string, tx?: Prisma.TransactionClient) {
   const db = tx ?? prisma;
-  await db.user.update({
-    where: { id: userId },
-    data: {
+  await db.userModeration.upsert({
+    where: { userId },
+    create: { userId, flagCount: 1, lastFlaggedAt: new Date() },
+    update: {
       flagCount: { increment: 1 },
       lastFlaggedAt: new Date(),
     },
@@ -192,19 +193,30 @@ export async function recordFlag(userId: string, tx?: Prisma.TransactionClient) 
 export async function checkBanStatus(
   userId: string,
 ): Promise<{ banned: boolean; status: string; expiresAt?: Date }> {
+  // Verify user exists
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { banStatus: true, banExpiresAt: true },
+    select: { id: true },
   });
 
   if (!user) {
     throw new NotFoundError('User not found');
   }
 
+  const moderation = await prisma.userModeration.findUnique({
+    where: { userId },
+    select: { banStatus: true, banExpiresAt: true },
+  });
+
+  // No moderation record means no ban
+  if (!moderation) {
+    return { banned: false, status: 'NONE' };
+  }
+
   // If temp ban has expired, reset it
-  if (user.banStatus === 'TEMP_BAN' && user.banExpiresAt && user.banExpiresAt < new Date()) {
-    await prisma.user.update({
-      where: { id: userId },
+  if (moderation.banStatus === 'TEMP_BAN' && moderation.banExpiresAt && moderation.banExpiresAt < new Date()) {
+    await prisma.userModeration.update({
+      where: { userId },
       data: { banStatus: 'NONE', banExpiresAt: null, flagCount: 0 },
     });
 
@@ -213,12 +225,12 @@ export async function checkBanStatus(
     return { banned: false, status: 'NONE' };
   }
 
-  const banned = user.banStatus === 'TEMP_BAN' || user.banStatus === 'PERMANENT_BAN';
+  const banned = moderation.banStatus === 'TEMP_BAN' || moderation.banStatus === 'PERMANENT_BAN';
 
   return {
     banned,
-    status: user.banStatus,
-    ...(user.banExpiresAt ? { expiresAt: user.banExpiresAt } : {}),
+    status: moderation.banStatus,
+    ...(moderation.banExpiresAt ? { expiresAt: moderation.banExpiresAt } : {}),
   };
 }
 
@@ -243,9 +255,10 @@ async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionCl
 
   // 5+ total reports ever → PERMANENT_BAN (highest priority, irreversible)
   if (totalReports >= 5) {
-    await db.user.update({
-      where: { id: userId },
-      data: { banStatus: 'PERMANENT_BAN', banExpiresAt: null },
+    await db.userModeration.upsert({
+      where: { userId },
+      create: { userId, banStatus: 'PERMANENT_BAN', banExpiresAt: null },
+      update: { banStatus: 'PERMANENT_BAN', banExpiresAt: null },
     });
     logger.warn({ userId, totalReports }, 'User permanently banned: 5+ total reports');
     return;
@@ -253,9 +266,10 @@ async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionCl
 
   // 5 reports in 48h → TEMP_BAN (24h) — rapid-fire abuse pattern
   if (reportsIn48h >= 5) {
-    await db.user.update({
-      where: { id: userId },
-      data: {
+    await db.userModeration.upsert({
+      where: { userId },
+      create: { userId, banStatus: 'TEMP_BAN', banExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
+      update: {
         banStatus: 'TEMP_BAN',
         banExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
       },
@@ -266,9 +280,10 @@ async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionCl
 
   // 3+ total reports → TEMP_BAN (24h)
   if (totalReports >= 3) {
-    await db.user.update({
-      where: { id: userId },
-      data: {
+    await db.userModeration.upsert({
+      where: { userId },
+      create: { userId, banStatus: 'TEMP_BAN', banExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
+      update: {
         banStatus: 'TEMP_BAN',
         banExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
       },
@@ -279,9 +294,10 @@ async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionCl
 
   // 3 reports in 24h → WARNING
   if (reportsIn24h >= 3) {
-    await db.user.update({
-      where: { id: userId },
-      data: { banStatus: 'WARNING' },
+    await db.userModeration.upsert({
+      where: { userId },
+      create: { userId, banStatus: 'WARNING' },
+      update: { banStatus: 'WARNING' },
     });
     logger.warn({ userId, reportsIn24h }, 'User warned: 3+ reports in 24h');
     return;

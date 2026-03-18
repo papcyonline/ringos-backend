@@ -51,7 +51,7 @@ export async function getUserContext(userId: string): Promise<string> {
   lines.push(`- Name: "${user.displayName}"`);
   if (user.bio) lines.push(`- Bio: "${user.bio}"`);
   if (user.profession) lines.push(`- Profession: ${user.profession}`);
-  if (user.gender) lines.push(`- Gender: ${user.gender}`);
+  if (user.gender) lines.push(`- Gender: ${user.gender.toLowerCase()}`);
   if (user.location) lines.push(`- Location: ${user.location}`);
   if (user.isVerified) lines.push(`- Verified: Yes`);
   lines.push(`- Followers: ${user._count.followsReceived} | Following: ${user._count.followsInitiated}`);

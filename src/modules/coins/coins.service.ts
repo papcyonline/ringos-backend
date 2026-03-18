@@ -57,7 +57,7 @@ export async function purchaseCoins(
       data: {
         userId,
         amount,
-        type: 'purchase',
+        type: 'PURCHASE',
       },
     }),
   ]);
@@ -116,7 +116,7 @@ export async function sendGift(
       data: {
         userId: senderId,
         amount: -coinAmount,
-        type: 'gift',
+        type: 'GIFT',
         relatedStoryId: storyId,
       },
     }),
@@ -124,7 +124,7 @@ export async function sendGift(
       data: {
         userId: story.userId,
         amount: coinAmount,
-        type: 'tip',
+        type: 'TIP',
         relatedStoryId: storyId,
       },
     }),
@@ -150,7 +150,7 @@ export async function sendGift(
   if (sender) {
     createNotification({
       userId: story.userId,
-      type: 'story_gift',
+      type: 'STORY_GIFT',
       title: sender.displayName,
       body: `Sent you a ${giftType} (${coinAmount} coins) on your story`,
       imageUrl: sender.avatarUrl ?? undefined,

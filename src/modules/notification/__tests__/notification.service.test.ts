@@ -80,7 +80,7 @@ describe('notification.service', () => {
       const mockNotification = {
         id: 'notif-1',
         userId: 'user-1',
-        type: 'chat_message',
+        type: 'CHAT_MESSAGE',
         title: 'Gentle Owl',
         body: 'Hello there',
         imageUrl: '/uploads/avatars/owl.jpg',
@@ -93,7 +93,7 @@ describe('notification.service', () => {
 
       const result = await createNotification({
         userId: 'user-1',
-        type: 'chat_message',
+        type: 'CHAT_MESSAGE',
         title: 'Gentle Owl',
         body: 'Hello there',
         imageUrl: '/uploads/avatars/owl.jpg',
@@ -104,7 +104,7 @@ describe('notification.service', () => {
       expect(mockPrisma.notification.create).toHaveBeenCalledWith({
         data: {
           userId: 'user-1',
-          type: 'chat_message',
+          type: 'CHAT_MESSAGE',
           title: 'Gentle Owl',
           body: 'Hello there',
           imageUrl: '/uploads/avatars/owl.jpg',
@@ -121,7 +121,7 @@ describe('notification.service', () => {
 
       await createNotification({
         userId: 'user-1',
-        type: 'new_follower',
+        type: 'NEW_FOLLOWER',
         title: 'Test',
         body: 'Test body',
       });
@@ -139,7 +139,7 @@ describe('notification.service', () => {
 
       await createNotification({
         userId: 'user-1',
-        type: 'chat_message',
+        type: 'CHAT_MESSAGE',
         title: 'Test',
         body: 'Test',
       });
@@ -152,7 +152,7 @@ describe('notification.service', () => {
 
       await createNotification({
         userId: 'user-1',
-        type: 'new_follower',
+        type: 'NEW_FOLLOWER',
         title: 'Test',
         body: 'body',
       });
@@ -240,7 +240,7 @@ describe('notification.service', () => {
         where: {
           userId: 'user-1',
           isRead: false,
-          type: { in: ['chat_message', 'voice_note'] },
+          type: { in: ['CHAT_MESSAGE', 'VOICE_NOTE'] },
           data: { path: ['conversationId'], equals: 'conv-1' },
         },
         data: { isRead: true },
@@ -272,7 +272,7 @@ describe('notification.service', () => {
       // Notification should include imageUrl and senderAvatarUrl in data
       expect(mockPrisma.notification.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
-          type: 'chat_message',
+          type: 'CHAT_MESSAGE',
           title: 'Gentle Owl',
           body: 'Hello!',
           imageUrl: '/uploads/avatars/sender.jpg',

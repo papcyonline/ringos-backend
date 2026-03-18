@@ -34,8 +34,12 @@ export async function getProfile(userId: string) {
       phoneLookup: true,
       isProfilePublic: true,
       hideOnlineStatus: true,
-      banStatus: true,
-      banExpiresAt: true,
+      moderation: {
+        select: {
+          banStatus: true,
+          banExpiresAt: true,
+        },
+      },
       createdAt: true,
       updatedAt: true,
       preference: {
@@ -58,6 +62,8 @@ export async function getProfile(userId: string) {
   if (!user) throw new NotFoundError('User not found');
   return {
     ...user,
+    banStatus: user.moderation?.banStatus ?? 'NONE',
+    banExpiresAt: user.moderation?.banExpiresAt ?? null,
     followerCount: user._count.followsReceived,
     followingCount: user._count.followsInitiated,
   };
@@ -84,7 +90,9 @@ export async function getUserById(targetId: string, currentUserId: string) {
       verifiedRole: true,
       isProfilePublic: true,
       hideOnlineStatus: true,
-      flagCount: true,
+      moderation: {
+        select: { flagCount: true },
+      },
       createdAt: true,
       _count: { select: { followsReceived: true, likesReceived: true } },
     },
@@ -132,7 +140,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
     isFollowedByMe: !!followRecord,
     likeCount: user._count.likesReceived,
     isLikedByMe: !!likeRecord,
-    reportCount: user.flagCount,
+    reportCount: user.moderation?.flagCount ?? 0,
     createdAt: user.createdAt,
   };
 }
@@ -176,7 +184,9 @@ export async function listUsers(currentUserId: string, page = 1, limit = 50) {
         verifiedRole: true,
         isProfilePublic: true,
         hideOnlineStatus: true,
-        flagCount: true,
+        moderation: {
+          select: { flagCount: true },
+        },
         preference: { select: { language: true } },
         _count: { select: { followsReceived: true, likesReceived: true } },
       },
@@ -226,7 +236,7 @@ export async function listUsers(currentUserId: string, page = 1, limit = 50) {
       isFollowedByMe: followingSet.has(user.id),
       likeCount: user._count.likesReceived,
       isLikedByMe: likedSet.has(user.id),
-      reportCount: user.flagCount,
+      reportCount: user.moderation?.flagCount ?? 0,
     };
   });
 
