@@ -713,7 +713,7 @@ export async function endConversation(conversationId: string, userId: string) {
  * List all active GROUP conversations, visible to any authenticated user.
  * Includes participant count and whether the requesting user is a member.
  */
-export async function getAllGroups(userId: string) {
+export async function getAllGroups(userId: string, limit = 100) {
   const groups = await prisma.conversation.findMany({
     where: {
       type: 'GROUP',
@@ -730,6 +730,7 @@ export async function getAllGroups(userId: string) {
       },
     },
     orderBy: { updatedAt: 'desc' },
+    take: limit,
   });
 
   const results = groups.map((g) => {

@@ -265,6 +265,7 @@ export async function getStoryViewers(storyId: string, userId: string) {
       story: false,
     },
     orderBy: { createdAt: 'desc' },
+    take: 500,
   });
 
   // Fetch viewer user info
@@ -408,25 +409,30 @@ export async function deleteStory(storyId: string, userId: string) {
 export async function cleanupExpiredStories(): Promise<number> {
   const now = new Date();
 
+  // Process in batches to avoid loading thousands of stories at once
   const expired = await prisma.story.findMany({
     where: { expiresAt: { lte: now } },
     include: { slides: { select: { cloudinaryId: true, type: true } } },
+    take: 200,
   });
 
   if (expired.length === 0) return 0;
 
-  // Delete cloudinary assets with correct resource types
-  for (const story of expired) {
-    for (const slide of story.slides) {
-      if (slide.cloudinaryId) {
-        const resourceType = slide.type === 'VIDEO' ? 'video' : 'image';
-        await cloudinaryService.deleteFile(slide.cloudinaryId, resourceType);
-      }
-    }
-  }
+  // Delete cloudinary assets — fire concurrently per story to avoid serial N+1
+  await Promise.allSettled(
+    expired.flatMap((story) =>
+      story.slides
+        .filter((slide) => slide.cloudinaryId)
+        .map((slide) => {
+          const resourceType = slide.type === 'VIDEO' ? 'video' : 'image';
+          return cloudinaryService.deleteFile(slide.cloudinaryId!, resourceType);
+        }),
+    ),
+  );
 
+  const expiredIds = expired.map((s) => s.id);
   const result = await prisma.story.deleteMany({
-    where: { expiresAt: { lte: now } },
+    where: { id: { in: expiredIds } },
   });
 
   if (result.count > 0) {

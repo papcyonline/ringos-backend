@@ -310,6 +310,7 @@ model ConversationParticipant {
 
   @@unique([conversationId, userId])
   @@index([userId])
+  @@index([conversationId])
 }
 
 model Message {
@@ -340,6 +341,7 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@index([conversationId, senderId, deletedAt, createdAt])
+  @@index([senderId])
 }
 
 model MessageReaction {

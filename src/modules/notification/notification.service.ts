@@ -179,6 +179,36 @@ async function cleanupInvalidFcmTokens(
 }
 
 /**
+ * Send an FCM multicast with retry (up to 3 attempts with exponential backoff).
+ */
+async function sendFcmWithRetry(
+  message: admin.messaging.MulticastMessage,
+  tokens: { token: string }[],
+  userId: string,
+  label: string,
+  maxRetries = 2,
+) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await admin.messaging().sendEachForMulticast(message);
+      await cleanupInvalidFcmTokens(tokens, response, userId);
+      return;
+    } catch (err: any) {
+      const isRetryable = err?.code === 'messaging/internal-error' ||
+        err?.code === 'messaging/server-unavailable' ||
+        err?.code === 'UNAVAILABLE';
+      if (!isRetryable || attempt === maxRetries) {
+        logger.error({ err, userId, attempt }, `Failed to send ${label} (final)`);
+        return;
+      }
+      const delay = 1000 * Math.pow(2, attempt); // 1s, 2s
+      logger.warn({ userId, attempt, delay }, `FCM ${label} failed, retrying`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+/**
  * Send a data-only push notification via FCM to all devices registered for a user.
  * Data-only messages give the client full control over notification display.
  */
@@ -231,12 +261,7 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
     },
   };
 
-  try {
-    const response = await admin.messaging().sendEachForMulticast(message);
-    await cleanupInvalidFcmTokens(tokens, response, userId);
-  } catch (err) {
-    logger.error({ err, userId }, 'Failed to send FCM data push notification');
-  }
+  await sendFcmWithRetry(message, tokens, userId, 'data push');
 }
 
 /**
@@ -292,12 +317,7 @@ async function sendPushToUser(userId: string, payload: {
     },
   };
 
-  try {
-    const response = await admin.messaging().sendEachForMulticast(message);
-    await cleanupInvalidFcmTokens(tokens, response, userId);
-  } catch (err) {
-    logger.error({ err, userId }, 'Failed to send FCM push notification');
-  }
+  await sendFcmWithRetry(message, tokens, userId, 'alert push');
 }
 
 /**
@@ -349,12 +369,7 @@ export async function sendCallPush(
       },
     };
 
-    try {
-      const response = await admin.messaging().sendEachForMulticast(message);
-      await cleanupInvalidFcmTokens(fcmTokens, response, userId);
-    } catch (err) {
-      logger.error({ err, userId }, 'Failed to send call FCM push');
-    }
+    await sendFcmWithRetry(message, fcmTokens, userId, 'call push');
   }
 
   // Send iOS VoIP push via APNs (PushKit → CallKit)
