@@ -161,6 +161,7 @@ export async function listUsers(currentUserId: string, page = 1, limit = 50) {
 
   const userWhere = {
     id: { notIn: [currentUserId, ...blockedIds] },
+    isAnonymous: false, // Only show users who completed profile setup
   };
 
   const [users, total] = await Promise.all([
