@@ -223,27 +223,21 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
 
   if (tokens.length === 0) return;
 
-  // Build alert title/body from data fields so the notification is visible
-  // when the app is killed or in the background (OS displays it directly).
+  // Build alert title/body for iOS (APNS) display.
   const notifTitle = data.senderName || data.callerName || 'Yomeet';
   const notifBody =
     data.audioUrl ? 'Sent a voice message' : data.content || 'New message';
 
-  // Pick the correct Android notification channel based on message type.
-  const androidChannelId =
-    data.type === 'voice_note' || data.type === 'VOICE_NOTE' ? 'yomeet_voice_notes' : 'yomeet_messages';
-
+  // Android: data-only (no notification payload) so the native
+  // YomeetFirebaseMessagingService ALWAYS handles display — this ensures
+  // proper lock-screen visibility, screen wake, sound, and heads-up.
+  // Including android.notification causes the OS to auto-display a basic
+  // notification that doesn't wake the screen or show on lock screen.
   const message: admin.messaging.MulticastMessage = {
     tokens: tokens.map((t) => t.token),
     data,
     android: {
       priority: 'high',
-      notification: {
-        channelId: androidChannelId,
-        title: notifTitle,
-        body: notifBody,
-        sound: 'default',
-      },
     },
     apns: {
       headers: {
