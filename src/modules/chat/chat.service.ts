@@ -228,7 +228,7 @@ export async function getConversations(userId: string) {
     unreadCountMap.set(g.conversationId, g._count.id);
   }
 
-  // 2) Batch missed calls: one query for all conversations
+  // 2) Batch missed calls: one query for all conversations (incoming missed only)
   const missedCalls = await prisma.callLog.findMany({
     where: {
       conversationId: { in: conversationIds },
@@ -247,6 +247,31 @@ export async function getConversations(userId: string) {
     }
   }
 
+  // 2b) Batch latest call log (any status) per conversation
+  const recentCalls = await prisma.callLog.findMany({
+    where: {
+      conversationId: { in: conversationIds },
+    },
+    orderBy: { startedAt: 'desc' },
+    select: {
+      conversationId: true,
+      callType: true,
+      status: true,
+      startedAt: true,
+      durationSecs: true,
+      initiatorId: true,
+      initiator: { select: { displayName: true } },
+    },
+  });
+
+  // Pick latest call per conversation
+  const lastCallMap = new Map<string, typeof recentCalls[0]>();
+  for (const call of recentCalls) {
+    if (!lastCallMap.has(call.conversationId)) {
+      lastCallMap.set(call.conversationId, call);
+    }
+  }
+
   // 3) Assemble results
   const results = conversations.map((c) => {
     const hasLastRead = lastReadAtMap.get(c.id) != null;
@@ -257,6 +282,18 @@ export async function getConversations(userId: string) {
     const missedCall = missedCallMap.get(c.id) ?? null;
     const lastMissedCall = missedCall
       ? { callType: missedCall.callType, startedAt: missedCall.startedAt, initiator: missedCall.initiator }
+      : null;
+
+    const recentCall = lastCallMap.get(c.id) ?? null;
+    const lastCallLog = recentCall
+      ? {
+          callType: recentCall.callType,
+          status: recentCall.status,
+          startedAt: recentCall.startedAt,
+          durationSecs: recentCall.durationSecs,
+          initiatorId: recentCall.initiatorId,
+          initiator: recentCall.initiator,
+        }
       : null;
 
     // Compute delivery status for last message
@@ -274,6 +311,7 @@ export async function getConversations(userId: string) {
       messages: undefined,
       unreadCount,
       lastMissedCall,
+      lastCallLog,
     };
   });
 
