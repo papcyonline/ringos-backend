@@ -90,7 +90,7 @@ export async function deleteNotification(userId: string, notificationId: string)
 
 export async function createNotification(data: {
   userId: string;
-  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'SYSTEM';
+  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'MISSED_CALL' | 'SYSTEM';
   title: string;
   body: string;
   imageUrl?: string;
@@ -397,6 +397,63 @@ export async function sendCallPush(
         });
     }
   }
+}
+
+/**
+ * Send a missed call notification to a user.
+ * Creates an in-app notification and sends a push notification.
+ */
+export async function sendMissedCallNotification(
+  userId: string,
+  payload: {
+    callId: string;
+    conversationId: string;
+    callType: 'AUDIO' | 'VIDEO';
+    callerId: string;
+    callerName: string;
+    callerAvatar?: string | null;
+  }
+) {
+  const isVideo = payload.callType === 'VIDEO';
+  const body = isVideo
+    ? `Missed video call from ${payload.callerName}`
+    : `Missed call from ${payload.callerName}`;
+
+  // Create in-app notification (also emits notification:new socket event)
+  createNotification({
+    userId,
+    type: 'MISSED_CALL',
+    title: payload.callerName,
+    body,
+    imageUrl: payload.callerAvatar ?? undefined,
+    data: {
+      callId: payload.callId,
+      conversationId: payload.conversationId,
+      callType: payload.callType,
+      callerId: payload.callerId,
+      callerAvatar: payload.callerAvatar ?? null,
+    },
+  }).catch((err) => {
+    logger.error({ err, userId }, 'Failed to create missed call notification');
+  });
+
+  // Send FCM push notification
+  sendPushToUser(userId, {
+    title: payload.callerName,
+    body,
+    imageUrl: payload.callerAvatar ?? undefined,
+    data: {
+      type: 'missed_call',
+      callId: payload.callId,
+      conversationId: payload.conversationId,
+      callType: payload.callType,
+      callerId: payload.callerId,
+      callerName: payload.callerName,
+      callerAvatar: payload.callerAvatar ?? '',
+    },
+  }).catch((err) => {
+    logger.error({ err, userId }, 'Failed to send missed call push notification');
+  });
 }
 
 /**

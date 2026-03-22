@@ -133,6 +133,7 @@ enum NotificationType {
   MATCH_FOUND
   STORY_GIFT
   STORY_LIKED
+  MISSED_CALL
   SYSTEM
 }
 

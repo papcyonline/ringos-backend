@@ -2,7 +2,7 @@ import { Server, Socket } from 'socket.io';
 import { randomUUID } from 'crypto';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
-import { sendCallPush } from '../notification/notification.service';
+import { sendCallPush, sendMissedCallNotification } from '../notification/notification.service';
 import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
 import { generateCallToken, LIVEKIT_URL } from './call.livekit';
 
@@ -304,6 +304,28 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
           const sockets = await io.in(`call:${callId}`).fetchSockets();
           for (const s of sockets) s.leave(`call:${callId}`);
 
+          // Send missed call notification to each target user
+          for (const targetId of targetUserIds) {
+            io.to(`user:${targetId}`).emit('call:missed', {
+              callId,
+              conversationId,
+              callType: resolvedCallType,
+              callerName: caller?.displayName ?? 'Unknown',
+              callerAvatar: caller?.avatarUrl ?? null,
+            });
+
+            sendMissedCallNotification(targetId, {
+              callId,
+              conversationId,
+              callType: resolvedCallType,
+              callerId: userId,
+              callerName: caller?.displayName ?? 'Unknown',
+              callerAvatar: caller?.avatarUrl,
+            }).catch((err) => {
+              logger.error({ err, targetId, callId }, 'Failed to send missed call notification');
+            });
+          }
+
           // Bump conversation.updatedAt so it sorts to the top of the list
           try {
             await prisma.conversation.update({
@@ -588,6 +610,35 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       logger.info({ userId, callId }, 'Call ended');
     } catch (error) {
       logger.error({ error, userId }, 'Error ending call');
+    }
+  });
+
+  /**
+   * call:reaction — Send an emoji reaction during a call.
+   * Broadcasts to all other participants in the call room.
+   */
+  socket.on('call:reaction', async (data: { callId: string; emoji: string }) => {
+    try {
+      const { callId, emoji } = data;
+      if (!callId || !emoji) return;
+
+      const call = callState.getCall(callId);
+      if (!call || !call.participantIds.has(userId)) return;
+
+      // Fetch sender's display name
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { displayName: true },
+      });
+
+      // Broadcast to all other participants in the call room
+      socket.to(`call:${callId}`).emit('call:reaction', {
+        userId,
+        displayName: user?.displayName ?? 'Unknown',
+        emoji,
+      });
+    } catch (error) {
+      logger.error({ error, userId }, 'Error sending call reaction');
     }
   });
 
