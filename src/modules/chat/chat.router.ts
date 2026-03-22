@@ -4,7 +4,7 @@ import { validate } from '../../middleware/validate';
 import { moderateMessage } from '../../middleware/moderation';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
-import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl } from '../../shared/upload';
+import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl, chatDocumentUpload, fileToChatDocumentUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema } from './chat.schema';
 import * as chatService from './chat.service';
@@ -366,6 +366,69 @@ router.post(
       ).catch((err) => {
         logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send audio notification');
       });
+
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/document - Send a document message
+router.post(
+  '/conversations/:conversationId/document',
+  authenticate,
+  chatDocumentUpload.single('document'),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No document uploaded' });
+      }
+      const documentUrl = await fileToChatDocumentUrl(req.file, (req.params.conversationId as string));
+      const caption = (req.body.caption as string) || '';
+      const replyToId = req.body.replyToId as string | undefined;
+
+      const message = await chatService.sendMessage(
+        (req.params.conversationId as string),
+        req.user!.userId,
+        caption,
+        {
+          replyToId,
+          imageUrl: documentUrl,
+          metadata: {
+            isDocument: true,
+            fileName: req.file.originalname,
+            fileSize: req.file.size,
+            mimeType: req.file.mimetype,
+          },
+        },
+      );
+
+      // Broadcast to room so other participants see it
+      const io = getIO();
+      const docPayload = formatMessagePayload(message, (req.params.conversationId as string));
+      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:message', docPayload);
+
+      // Also notify each participant's personal room for conversation-list updates
+      emitToParticipantRooms(io, (req.params.conversationId as string), docPayload).catch((err) => {
+        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to emit to participant rooms');
+      });
+
+      // Notify other participants (in-app + push)
+      notifyChatMessage(
+        (req.params.conversationId as string),
+        req.user!.userId,
+        message.sender.displayName,
+        message.content,
+        { imageUrl: message.imageUrl ?? undefined },
+      ).catch((err) => {
+        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send document notification');
+      });
+
+      // Auto-translate caption in background
+      if (message.content) {
+        translateMessage(message.id, (req.params.conversationId as string), message.content).catch(() => {});
+      }
 
       res.status(201).json(message);
     } catch (err) {

@@ -53,6 +53,37 @@ export const chatAudioUpload = multer({
   fileFilter: audioFilter,
 });
 
+function documentFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
+  const allowed = [
+    // Documents
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+    'text/csv',
+    'application/zip',
+    // Images
+    'image/jpeg', 'image/png', 'image/webp',
+    // Audio
+    'audio/mpeg', 'audio/wav', 'audio/m4a', 'audio/aac', 'audio/mp4', 'audio/x-m4a',
+  ];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Unsupported file type'));
+  }
+}
+
+export const chatDocumentUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: documentFilter,
+});
+
 // ── Upload helpers — Cloudinary with local disk fallback ────────────────
 
 export async function fileToAvatarUrl(file: Express.Multer.File, userId: string): Promise<string> {
@@ -89,6 +120,23 @@ export async function fileToChatAudioUrl(file: Express.Multer.File, conversation
     if (result) return result.secureUrl;
   }
   return saveToDisk(file.buffer, 'uploads/audio', '/uploads/audio', path.extname(file.originalname) || '.m4a');
+}
+
+export async function fileToChatDocumentUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
+  // 1. Try Google Drive
+  if (isDriveConfigured()) {
+    const result = await uploadToDrive(file.buffer, file.originalname || 'document', file.mimetype || 'application/octet-stream');
+    if (result) return result.url;
+  }
+  // 2. Fallback to Cloudinary (raw resource type for non-media files)
+  if (cloudinaryService.isCloudinaryConfigured) {
+    const result = await cloudinaryService.uploadBuffer(file.buffer, {
+      folder: `yomeet/chat/${conversationId}/documents`,
+      resourceType: 'raw',
+    });
+    if (result) return result.secureUrl;
+  }
+  return saveToDisk(file.buffer, 'uploads/documents', '/uploads/documents', path.extname(file.originalname) || '.bin');
 }
 
 function storyMediaFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
