@@ -4,6 +4,7 @@ import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
+import { prisma } from '../../config/database';
 
 const router = Router();
 
@@ -103,5 +104,80 @@ router.get('/turn-status', authenticate, (_req, res: Response) => {
     twilioConfigured: isTwilioConfigured,
   });
 });
+
+// ─── Call History ────────────────────────────────────────────────────────────
+// Returns paginated call logs for the authenticated user, ordered by startedAt desc.
+// The user must be a participant of the conversation associated with each call log.
+
+router.get(
+  '/history',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.userId;
+      const page = Math.max(1, parseInt(req.query.page as string) || 1);
+      const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 30));
+      const skip = (page - 1) * limit;
+
+      // Find all conversation IDs where this user is a participant
+      const participantRows = await prisma.conversationParticipant.findMany({
+        where: { userId, leftAt: null },
+        select: { conversationId: true },
+      });
+      const conversationIds = participantRows.map((p) => p.conversationId);
+
+      if (conversationIds.length === 0) {
+        res.json([]);
+        return;
+      }
+
+      const callLogs = await prisma.callLog.findMany({
+        where: { conversationId: { in: conversationIds } },
+        orderBy: { startedAt: 'desc' },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          callId: true,
+          callType: true,
+          status: true,
+          startedAt: true,
+          endedAt: true,
+          durationSecs: true,
+          initiatorId: true,
+          conversationId: true,
+          conversation: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+              avatarUrl: true,
+              participants: {
+                where: { leftAt: null },
+                select: {
+                  userId: true,
+                  user: {
+                    select: {
+                      id: true,
+                      displayName: true,
+                      avatarUrl: true,
+                      isOnline: true,
+                      isVerified: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      res.json(callLogs);
+    } catch (err) {
+      logger.error({ err }, 'Failed to fetch call history');
+      res.status(500).json({ message: 'Failed to fetch call history' });
+    }
+  }
+);
 
 export { router as callRouter };
