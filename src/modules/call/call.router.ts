@@ -163,6 +163,8 @@ router.get(
                       avatarUrl: true,
                       isOnline: true,
                       isVerified: true,
+                      status: true,
+                      availableFor: true,
                     },
                   },
                 },
