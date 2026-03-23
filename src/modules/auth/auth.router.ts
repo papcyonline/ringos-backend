@@ -17,6 +17,8 @@ import {
   resetPasswordSchema,
   googleAuthSchema,
   appleAuthSchema,
+  emailOtpSchema,
+  resendOtpSchema,
 } from './auth.schema';
 import * as authService from './auth.service';
 
@@ -30,8 +32,39 @@ router.post(
     try {
       const { email, password } = req.body;
       const result = await authService.register(email, password);
-      logger.info({ userId: result.user.id }, 'User registered');
+      logger.info({ userId: result.userId }, 'User registered — OTP sent');
       res.status(201).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/register/verify-otp',
+  authRateLimit('verify-email-otp', 5, 900),
+  validate(emailOtpSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { email, code } = req.body;
+      const result = await authService.verifyEmailOtp(email, code);
+      logger.info({ userId: result.userId }, 'Email OTP verified');
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/register/resend-otp',
+  authRateLimit('resend-email-otp', 3, 900),
+  validate(resendOtpSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { email } = req.body;
+      const result = await authService.resendEmailOtp(email);
+      res.status(200).json(result);
     } catch (err) {
       next(err);
     }

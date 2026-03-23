@@ -341,6 +341,57 @@ function getPasswordResetEmailTemplate(code: string): string {
   return getBaseTemplate(content, footer);
 }
 
+function getOtpEmailTemplate(code: string): string {
+  const content = `
+    <!-- Heading -->
+    <h1 style="margin: 0 0 8px; font-size: 28px; font-weight: 800; color: #0f172a; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; letter-spacing: -0.5px; line-height: 1.2;">
+      Verify your email
+    </h1>
+    <p style="margin: 0 0 32px; font-size: 15px; color: #64748b; line-height: 1.6; text-align: center;">
+      Enter this code to complete your Yomeet registration.
+    </p>
+
+    <!-- OTP Code -->
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr>
+              <td align="center" style="background-color: #0f172a; border-radius: 8px; padding: 28px 20px;">
+                <span style="font-size: 36px; font-weight: 700; color: #ffffff; letter-spacing: 10px; font-family: 'SF Mono', Monaco, 'Courier New', monospace;">${code}</span>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Expiry -->
+    <p style="margin: 0 0 28px; font-size: 13px; color: #b45309; font-weight: 600; text-align: center; letter-spacing: 0.3px;">
+      Expires in 5 minutes
+    </p>
+
+    <!-- Divider -->
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 20px;">
+      <tr><td style="border-top: 1px solid #f1f5f9;"></td></tr>
+    </table>
+
+    <!-- Security Notice -->
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 8px;">
+      <tr>
+        <td style="border-left: 3px solid #16a34a; padding: 14px 16px; background-color: #f8fafc; border-radius: 0 6px 6px 0;">
+          <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">
+            <strong style="color: #0f172a;">Didn't create an account?</strong> You can safely ignore this email.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  const footer = "You received this email because an account was created with this address on Yomeet.";
+  return getBaseTemplate(content, footer);
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
 export async function sendWelcomeEmail(to: string, displayName: string): Promise<boolean> {
@@ -356,5 +407,13 @@ export async function sendPasswordResetEmail(to: string, code: string): Promise<
     to,
     subject: 'Reset Your Yomeet Password',
     html: getPasswordResetEmailTemplate(code),
+  });
+}
+
+export async function sendOtpEmail(to: string, code: string): Promise<boolean> {
+  return sendEmail({
+    to,
+    subject: 'Verify Your Yomeet Account',
+    html: getOtpEmailTemplate(code),
   });
 }

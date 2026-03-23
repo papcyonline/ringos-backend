@@ -14,7 +14,7 @@ import {
   verifyRefreshToken,
   generateAnonymousName,
 } from './auth.utils';
-import { sendWelcomeEmail, sendPasswordResetEmail } from '../../shared/email.service';
+import { sendWelcomeEmail, sendPasswordResetEmail, sendOtpEmail } from '../../shared/email.service';
 import { sendOtpSms } from '../../shared/sms.service';
 
 // Google OAuth client - accepts tokens from web, iOS, and Android clients.
@@ -143,7 +143,7 @@ export async function register(rawEmail: string, password: string) {
   const email = rawEmail.toLowerCase().trim();
   const passwordHash = await bcrypt.hash(password, 10);
 
-  const { user, accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
+  const user = await prisma.$transaction(async (tx) => {
     const existing = await tx.user.findUnique({ where: { email } });
     if (existing) {
       throw new BadRequestError('An account with this email already exists');
@@ -158,11 +158,41 @@ export async function register(rawEmail: string, password: string) {
       },
     });
 
+    return user;
+  });
+
+  logger.info({ userId: user.id }, 'Email user registered — OTP verification pending');
+
+  // Generate and send email OTP
+  const code = String(crypto.randomInt(100000, 1000000));
+  await storeOtp(`email:${email}`, code);
+
+  const emailSent = await sendOtpEmail(email, code);
+  if (!emailSent) {
+    logger.info({ email, code }, 'Email OTP generated (email not configured — logged for dev)');
+  }
+
+  return {
+    message: 'OTP sent',
+    userId: user.id,
+  };
+}
+
+export async function verifyEmailOtp(rawEmail: string, code: string) {
+  const email = rawEmail.toLowerCase().trim();
+  await verifyStoredOtp(`email:${email}`, code);
+
+  const { user, accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { email } });
+    if (!user) {
+      throw new BadRequestError('User not found');
+    }
+
     const tokens = await createTokenPair(tx, user.id, false);
     return { user, ...tokens };
   });
 
-  logger.info({ userId: user.id }, 'Email user registered');
+  logger.info({ userId: user.id }, 'Email OTP verified — registration complete');
 
   sendWelcomeEmailAsync(email, user.displayName, user.id);
 
@@ -176,6 +206,27 @@ export async function register(rawEmail: string, password: string) {
       isAnonymous: false,
     },
   };
+}
+
+export async function resendEmailOtp(rawEmail: string) {
+  const email = rawEmail.toLowerCase().trim();
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    throw new BadRequestError('User not found');
+  }
+
+  const code = String(crypto.randomInt(100000, 1000000));
+  await storeOtp(`email:${email}`, code);
+
+  const emailSent = await sendOtpEmail(email, code);
+  if (!emailSent) {
+    logger.info({ email, code }, 'Email OTP resent (email not configured — logged for dev)');
+  }
+
+  logger.info({ userId: user.id }, 'Email OTP resent');
+
+  return { message: 'OTP resent' };
 }
 
 export async function login(rawEmail: string, password: string) {

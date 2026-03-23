@@ -53,6 +53,15 @@ export const resetPasswordSchema = z.object({
     .regex(/[0-9]/, 'Password must contain at least one digit'),
 });
 
+export const emailOtpSchema = z.object({
+  email: z.string().email(),
+  code: z.string().length(6),
+});
+
+export const resendOtpSchema = z.object({
+  email: z.string().email(),
+});
+
 export const googleAuthSchema = z.object({
   idToken: z.string().min(1),
 });
