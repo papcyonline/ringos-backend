@@ -227,7 +227,13 @@ router.post('/admin/verify', async (req: Request, res: Response, next: NextFunct
 // DELETE /me - Delete current user's account
 router.delete('/me', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await userService.deleteAccount(req.user!.userId);
+    const { email, displayName } = await userService.deleteAccount(req.user!.userId);
+    // Send goodbye email (fire-and-forget — account is already deleted)
+    if (email) {
+      import('../../shared/email.service').then(({ sendGoodbyeEmail }) => {
+        sendGoodbyeEmail(email, displayName || 'there').catch(() => {});
+      });
+    }
     res.status(204).send();
   } catch (err) {
     next(err);

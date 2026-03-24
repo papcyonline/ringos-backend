@@ -330,6 +330,64 @@ export async function sendOtpEmail(to: string, code: string): Promise<boolean> {
   });
 }
 
+function getGoodbyeEmailTemplate(displayName: string): string {
+  const content = `
+    <h1 style="margin: 0 0 8px; font-size: 28px; font-weight: 300; color: #ffffff; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+      Goodbye, <span style="font-weight: 700; color: #0FE061;">${displayName}</span>
+    </h1>
+    <p style="margin: 0 0 32px; font-size: 15px; color: #888888; line-height: 1.6; text-align: center;">
+      Your Yomeet account has been permanently deleted.
+    </p>
+
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 24px;">
+      <tr>
+        <td style="padding: 20px; background-color: #111111; border-radius: 12px; border-left: 3px solid #0FE061;">
+          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 700; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+            What&rsquo;s been deleted:
+          </p>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr><td style="padding: 4px 0; font-size: 13px; color: #aaaaaa;">&#x2713;&nbsp; Your profile, avatar, and bio</td></tr>
+            <tr><td style="padding: 4px 0; font-size: 13px; color: #aaaaaa;">&#x2713;&nbsp; All messages and conversations</td></tr>
+            <tr><td style="padding: 4px 0; font-size: 13px; color: #aaaaaa;">&#x2713;&nbsp; Stories, media, and uploads</td></tr>
+            <tr><td style="padding: 4px 0; font-size: 13px; color: #aaaaaa;">&#x2713;&nbsp; Call history and voice notes</td></tr>
+            <tr><td style="padding: 4px 0; font-size: 13px; color: #aaaaaa;">&#x2713;&nbsp; Followers, connections, and groups</td></tr>
+            <tr><td style="padding: 4px 0; font-size: 13px; color: #aaaaaa;">&#x2713;&nbsp; All personal data</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin: 0 0 24px; font-size: 14px; color: #888888; line-height: 1.6; text-align: center;">
+      None of your data is retained. This action is irreversible.
+    </p>
+
+    <p style="margin: 0 0 8px; font-size: 14px; color: #888888; line-height: 1.6; text-align: center;">
+      We&rsquo;re sorry to see you go. If you ever want to come back, you&rsquo;re always welcome.
+    </p>
+
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
+      <tr>
+        <td align="center">
+          <a href="https://yomeet.app" target="_blank" style="display: inline-block; padding: 14px 40px; background: linear-gradient(135deg, #0FE061, #0CBF50); color: #000000; font-size: 15px; font-weight: 700; text-decoration: none; border-radius: 50px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+            Create a New Account
+          </a>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  const footer = "This is a confirmation that your account and all associated data have been permanently deleted.";
+  return getBaseTemplate(content, footer);
+}
+
+export async function sendGoodbyeEmail(to: string, displayName: string): Promise<boolean> {
+  return sendEmail({
+    to,
+    subject: 'Your Yomeet account has been deleted',
+    html: getGoodbyeEmailTemplate(displayName),
+  });
+}
+
 // ─── Preview (for browser rendering during development) ─────────────────────────
 
 export function getPreviewHtml(template: string): string | null {
@@ -337,6 +395,7 @@ export function getPreviewHtml(template: string): string | null {
     case 'welcome': return getWelcomeEmailTemplate('John');
     case 'otp': return getOtpEmailTemplate('482916');
     case 'reset': return getPasswordResetEmailTemplate('739201');
+    case 'goodbye': return getGoodbyeEmailTemplate('John');
     default: return null;
   }
 }

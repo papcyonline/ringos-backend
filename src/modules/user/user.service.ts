@@ -461,8 +461,11 @@ export async function adminSetVerified(identifier: string, verified: boolean, ro
 }
 
 export async function deleteAccount(userId: string) {
-  await findUserOrThrow(userId);
+  const user = await findUserOrThrow(userId);
+  const email = (user as any).email as string | null;
+  const displayName = (user as any).displayName as string | null;
   await prisma.user.delete({ where: { id: userId } });
+  return { email, displayName };
 }
 
 // ─── Phone & Contact Sync ────────────────────────────────
