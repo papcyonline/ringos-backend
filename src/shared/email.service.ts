@@ -10,7 +10,7 @@ const resend = env.RESEND_API_KEY && env.RESEND_API_KEY !== 're_your_resend_api_
 const EMAIL_FROM = env.EMAIL_FROM || 'Yomeet <noreply@yomeet.app>';
 
 // Logo URL - hosted image for email compatibility
-const LOGO_URL = env.EMAIL_LOGO_URL || 'https://api.yomeet.app/public/logo.png';
+const LOGO_URL = env.EMAIL_LOGO_URL || 'https://yomeet-backend.onrender.com/public/logo.png';
 
 // App store links
 const APP_STORE_URL = 'https://apps.apple.com/app/yomeet';
@@ -18,21 +18,21 @@ const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.yomeet
 const APP_STORE_BADGE = 'https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83';
 const PLAY_STORE_BADGE = 'https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png';
 
-// Social media
+// Social media links
 const SOCIALS = [
-  { name: 'Facebook',  url: 'https://facebook.com/yomeetapp',    icon: 'https://cdn.simpleicons.org/facebook/ffffff' },
-  { name: 'Instagram', url: 'https://instagram.com/yomeetapp',   icon: 'https://cdn.simpleicons.org/instagram/ffffff' },
-  { name: 'X',         url: 'https://x.com/yomeetapp',           icon: 'https://cdn.simpleicons.org/x/ffffff' },
-  { name: 'LinkedIn',  url: 'https://linkedin.com/company/yomeet', icon: 'https://cdn.simpleicons.org/linkedin/ffffff' },
-  { name: 'YouTube',   url: 'https://youtube.com/@yomeetapp',    icon: 'https://cdn.simpleicons.org/youtube/ffffff' },
-  { name: 'TikTok',    url: 'https://tiktok.com/@yomeetapp',     icon: 'https://cdn.simpleicons.org/tiktok/ffffff' },
+  { name: 'Facebook',  url: 'https://facebook.com/yomeetapp' },
+  { name: 'Instagram', url: 'https://instagram.com/yomeetapp' },
+  { name: 'X',         url: 'https://x.com/yomeetapp' },
+  { name: 'LinkedIn',  url: 'https://linkedin.com/company/yomeet' },
+  { name: 'YouTube',   url: 'https://youtube.com/@yomeetapp' },
+  { name: 'TikTok',    url: 'https://tiktok.com/@yomeetapp' },
 ];
 
 function buildSocialIconsHtml(): string {
   return SOCIALS.map(s =>
-    `<td style="padding: 0 8px;">
-                    <a href="${s.url}" target="_blank" style="text-decoration: none;">
-                      <img src="${s.icon}" alt="${s.name}" width="18" height="18" style="display: block; opacity: 0.5;" />
+    `<td style="padding: 0 4px;">
+                    <a href="${s.url}" target="_blank" style="text-decoration: none; display: inline-block; padding: 5px 10px; border-radius: 16px; border: 1px solid #2a2a2a; font-size: 11px; font-weight: 600; color: #888888; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                      ${s.name}
                     </a>
                   </td>`
   ).join('\n                  ');
