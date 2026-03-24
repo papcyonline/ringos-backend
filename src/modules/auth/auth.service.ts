@@ -188,7 +188,7 @@ export async function verifyEmailOtp(rawEmail: string, code: string) {
       throw new BadRequestError('User not found');
     }
 
-    const tokens = await createTokenPair(tx, user.id, false);
+    const tokens = await createTokenPair(tx, user.id, user.isAnonymous);
     return { user, ...tokens };
   });
 
@@ -201,7 +201,7 @@ export async function verifyEmailOtp(rawEmail: string, code: string) {
     user: {
       id: user.id,
       displayName: user.displayName,
-      isAnonymous: false,
+      isAnonymous: user.isAnonymous,
     },
   };
 }
