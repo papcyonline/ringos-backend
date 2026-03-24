@@ -755,6 +755,23 @@ router.patch(
   },
 );
 
+// PATCH /conversations/:conversationId/archive - Toggle archive
+router.patch(
+  '/conversations/:conversationId/archive',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.toggleArchive(
+        req.user!.userId,
+        req.params.conversationId as string,
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // POST /conversations/:conversationId/read - Mark conversation as read
 router.post(
   '/conversations/:conversationId/read',

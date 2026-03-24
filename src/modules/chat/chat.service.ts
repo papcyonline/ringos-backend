@@ -496,6 +496,18 @@ export async function sendMessage(
 
   logger.debug({ conversationId, senderId, messageId: message.id }, 'Message sent');
 
+  // Auto-unarchive: when a new message arrives, unarchive for all other participants
+  prisma.conversationParticipant.updateMany({
+    where: {
+      conversationId,
+      userId: { not: senderId },
+      isArchived: true,
+    },
+    data: { isArchived: false },
+  }).catch((err) => {
+    logger.error({ err, conversationId }, 'Failed to auto-unarchive participants');
+  });
+
   // Async: fetch link preview if message contains a URL (fire-and-forget)
   if (content && urlRegex.test(content)) {
     fetchLinkPreview(message.id, content).catch(() => {});
@@ -881,5 +893,21 @@ export async function toggleMute(userId: string, conversationId: string) {
   });
 
   logger.debug({ conversationId, userId, isMuted: updated.isMuted }, 'Mute toggled');
+  return updated;
+}
+
+/**
+ * Toggle archive status for a conversation participant.
+ */
+export async function toggleArchive(userId: string, conversationId: string) {
+  const participant = await verifyParticipant(conversationId, userId);
+
+  const updated = await prisma.conversationParticipant.update({
+    where: { conversationId_userId: { conversationId, userId } },
+    data: { isArchived: !participant.isArchived },
+    select: { isArchived: true },
+  });
+
+  logger.debug({ conversationId, userId, isArchived: updated.isArchived }, 'Archive toggled');
   return updated;
 }
