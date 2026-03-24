@@ -329,3 +329,14 @@ export async function sendOtpEmail(to: string, code: string): Promise<boolean> {
     html: getOtpEmailTemplate(code),
   });
 }
+
+// ─── Preview (for browser rendering during development) ─────────────────────────
+
+export function getPreviewHtml(template: string): string | null {
+  switch (template) {
+    case 'welcome': return getWelcomeEmailTemplate('John');
+    case 'otp': return getOtpEmailTemplate('482916');
+    case 'reset': return getPasswordResetEmailTemplate('739201');
+    default: return null;
+  }
+}
