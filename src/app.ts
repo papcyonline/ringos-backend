@@ -51,13 +51,15 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-// Email template previews (open in browser to see rendered emails)
+// Email template previews (open in browser to see rendered emails — dev only)
 import { getPreviewHtml } from './shared/email.service';
-app.get('/preview/:template', (req, res) => {
-  const html = getPreviewHtml(req.params.template as string);
-  if (!html) return res.status(404).send('Template not found. Use: welcome, otp, reset');
-  res.type('html').send(html);
-});
+if (env.NODE_ENV !== 'production') {
+  app.get('/preview/:template', (req, res) => {
+    const html = getPreviewHtml(req.params.template as string);
+    if (!html) return res.status(404).send('Template not found. Use: welcome, otp, reset');
+    res.type('html').send(html);
+  });
+}
 
 app.use('/api/auth', authRouter);
 app.use('/api/users', userRouter);
