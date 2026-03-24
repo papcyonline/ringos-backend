@@ -154,7 +154,7 @@ export async function register(rawEmail: string, password: string) {
         email,
         passwordHash,
         displayName: generateAnonymousName(),
-        isAnonymous: false,
+        isAnonymous: true, // Stays true until profile setup completes
       },
     });
 
@@ -192,9 +192,7 @@ export async function verifyEmailOtp(rawEmail: string, code: string) {
     return { user, ...tokens };
   });
 
-  logger.info({ userId: user.id }, 'Email OTP verified — registration complete');
-
-  sendWelcomeEmailAsync(email, user.displayName, user.id);
+  logger.info({ userId: user.id }, 'Email OTP verified — awaiting profile setup');
 
   return {
     accessToken,
@@ -433,7 +431,10 @@ export async function setUsername(
     throw new BadRequestError('Username is already taken');
   }
 
-  const data: Record<string, unknown> = { displayName: username };
+  const data: Record<string, unknown> = {
+    displayName: username,
+    isAnonymous: false, // Profile complete — user now visible in People tab
+  };
   if (opts?.avatarUrl) data.avatarUrl = opts.avatarUrl;
   if (opts?.bio) data.bio = opts.bio;
   if (opts?.profession) data.profession = opts.profession;
@@ -444,8 +445,15 @@ export async function setUsername(
   const user = await prisma.user.update({
     where: { id: userId },
     data,
-    select: { displayName: true, avatarUrl: true, bio: true, gender: true, location: true },
+    select: { displayName: true, avatarUrl: true, bio: true, gender: true, location: true, email: true },
   });
+
+  // Send welcome email now that we have their real name
+  if (user.email) {
+    sendWelcomeEmail(user.email, username).catch((err) => {
+      logger.error({ err, userId }, 'Failed to send welcome email');
+    });
+  }
 
   // If language was provided, save it to preferences
   if (opts?.language) {
