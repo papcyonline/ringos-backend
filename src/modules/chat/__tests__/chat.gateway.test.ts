@@ -31,10 +31,6 @@ vi.mock('../../../config/database', () => ({
   },
 }));
 
-vi.mock('../../safety/moderation.service', () => ({
-  moderateContent: vi.fn().mockResolvedValue({ flagged: false, cleaned: 'test' }),
-}));
-
 vi.mock('../chat.service', () => ({
   sendMessage: vi.fn(),
   editMessage: vi.fn(),

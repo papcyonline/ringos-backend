@@ -1,7 +1,6 @@
 import { Server, Socket } from 'socket.io';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
-import { moderateContentLocal, moderateContent } from '../safety/moderation.service';
 import * as chatService from './chat.service';
 import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
 import { translateMessage } from './translation.service';
@@ -66,13 +65,7 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
         return;
       }
 
-      // Fast local moderation (keyword filter + PII stripping) — instant, no network calls
-      const localMod = moderateContentLocal(content);
-      if (localMod.flagged && localMod.severity === 'hard') {
-        socket.emit('chat:error', { message: 'Message contains inappropriate content' });
-        return;
-      }
-      const cleanedContent = localMod.cleaned;
+      const cleanedContent = content;
 
       // Save the message via the service
       const message = await chatService.sendMessage(conversationId, userId, cleanedContent, { replyToId, metadata });
@@ -101,24 +94,6 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       if (cleanedContent) {
         translateMessage(message.id, conversationId, cleanedContent).catch(() => {});
       }
-
-      // Run full OpenAI moderation in the background — if flagged, retroactively remove
-      moderateContent(cleanedContent).then(async (fullResult) => {
-        if (fullResult.flagged) {
-          logger.warn({ messageId: message.id, reason: fullResult.reason }, 'Message retroactively flagged by OpenAI');
-          try {
-            await chatService.deleteMessage(message.id, userId);
-            io.to(`conversation:${conversationId}`).emit('chat:deleted', {
-              messageId: message.id,
-              deletedAt: new Date(),
-            });
-          } catch (deleteErr) {
-            logger.error({ deleteErr, messageId: message.id }, 'Failed to retroactively delete flagged message');
-          }
-        }
-      }).catch((moderationError) => {
-        logger.warn({ moderationError, userId, conversationId }, 'Background content moderation failed');
-      });
 
       logger.debug({ conversationId, userId, messageId: message.id }, 'Message broadcast to room');
     } catch (error: any) {

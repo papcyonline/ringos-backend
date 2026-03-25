@@ -1,7 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
-import { moderateMessage } from '../../middleware/moderation';
+
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl, chatDocumentUpload, fileToChatDocumentUrl } from '../../shared/upload';
@@ -90,7 +90,6 @@ router.post(
   '/conversations/:conversationId/messages',
   authenticate,
   validate(sendMessageSchema),
-  moderateMessage('content'),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const message = await chatService.sendMessage(
@@ -145,7 +144,6 @@ router.put(
   '/conversations/:conversationId/messages/:messageId',
   authenticate,
   validate(editMessageSchema),
-  moderateMessage('content'),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const message = await chatService.editMessage(
