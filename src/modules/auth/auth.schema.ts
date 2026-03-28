@@ -19,10 +19,10 @@ export const loginSchema = z.object({
 
 export const usernameSchema = z.object({
   username: z.string().min(3).max(12),
-  bio: z.string().max(200).optional(),
-  profession: z.string().max(80).optional(),
-  gender: z.enum(['male', 'female', 'MALE', 'FEMALE']).transform(v => v.toUpperCase() as 'MALE' | 'FEMALE').optional(),
-  location: z.string().max(100).optional(),
+  bio: z.string().min(10, 'Bio must be at least 10 characters').max(200),
+  profession: z.string().min(2, 'Profession is required').max(80),
+  gender: z.enum(['male', 'female', 'MALE', 'FEMALE']).transform(v => v.toUpperCase() as 'MALE' | 'FEMALE'),
+  location: z.string().min(2, 'Location is required').max(100),
   availabilityNote: z.string().max(120).optional(),
   language: z.string().min(2).max(100).optional(),
 });

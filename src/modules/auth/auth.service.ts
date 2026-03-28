@@ -296,7 +296,7 @@ async function socialAuthFlow(params: {
             authProvider,
             displayName: name,
             ...(avatarUrl ? { avatarUrl } : {}),
-            isAnonymous: false,
+            isAnonymous: true, // Must complete profile setup
           },
         });
         logger.info({ userId: user.id }, `New ${authProvider} user registered`);
@@ -308,13 +308,13 @@ async function socialAuthFlow(params: {
           [providerField]: providerId,
           authProvider,
           displayName: name,
-          isAnonymous: false,
+          isAnonymous: true, // Must complete profile setup
         },
       });
       logger.info({ userId: user.id }, `New ${authProvider} user registered (no email)`);
     }
 
-    const tokens = await createTokenPair(tx, user.id, false);
+    const tokens = await createTokenPair(tx, user.id, user.isAnonymous);
     return { user, ...tokens, shouldSendWelcome };
   });
 
@@ -330,7 +330,7 @@ async function socialAuthFlow(params: {
       id: user.id,
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
-      isAnonymous: false,
+      isAnonymous: user.isAnonymous,
     },
     isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime()) < 5000,
   };
@@ -426,6 +426,20 @@ export async function setUsername(
   username: string,
   opts?: { avatarUrl?: string; bio?: string; profession?: string; gender?: 'MALE' | 'FEMALE'; location?: string; availabilityNote?: string; language?: string },
 ) {
+  // Validate required profile fields
+  if (!opts?.bio || opts.bio.length < 10) {
+    throw new BadRequestError('Bio is required (min 10 characters)');
+  }
+  if (!opts?.profession || opts.profession.length < 2) {
+    throw new BadRequestError('Profession is required');
+  }
+  if (!opts?.gender) {
+    throw new BadRequestError('Gender is required');
+  }
+  if (!opts?.location || opts.location.length < 2) {
+    throw new BadRequestError('Location is required');
+  }
+
   const available = await checkUsernameAvailable(username, userId);
   if (!available) {
     throw new BadRequestError('Username is already taken');
@@ -434,12 +448,12 @@ export async function setUsername(
   const data: Record<string, unknown> = {
     displayName: username,
     isAnonymous: false, // Profile complete — user now visible in People tab
+    bio: opts.bio,
+    profession: opts.profession,
+    gender: opts.gender,
+    location: opts.location,
   };
   if (opts?.avatarUrl) data.avatarUrl = opts.avatarUrl;
-  if (opts?.bio) data.bio = opts.bio;
-  if (opts?.profession) data.profession = opts.profession;
-  if (opts?.gender) data.gender = opts.gender;
-  if (opts?.location) data.location = opts.location;
   if (opts?.availabilityNote) data.availabilityNote = opts.availabilityNote;
 
   const user = await prisma.user.update({
