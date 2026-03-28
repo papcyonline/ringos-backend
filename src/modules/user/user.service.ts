@@ -509,6 +509,10 @@ export async function syncContacts(userId: string, hashes: string[]) {
       avatarUrl: true,
       isVerified: true,
       isOnline: true,
+      lastSeenAt: true,
+      status: true,
+      availabilityNote: true,
+      availableFor: true,
     },
   });
 
