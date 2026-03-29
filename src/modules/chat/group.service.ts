@@ -58,11 +58,16 @@ export async function updateGroup(
     where: { conversationId_userId: { conversationId, userId } },
   });
 
-  if (!participant) {
+  if (!participant || participant.leftAt !== null) {
     throw new ForbiddenError('You are not a participant in this conversation');
   }
   if (participant.role !== 'ADMIN') {
     throw new ForbiddenError('Only admins can update group settings');
+  }
+
+  const conv = await prisma.conversation.findUnique({ where: { id: conversationId }, select: { status: true } });
+  if (!conv || conv.status !== 'ACTIVE') {
+    throw new ForbiddenError('This group is no longer active');
   }
 
   const conversation = await prisma.conversation.update({

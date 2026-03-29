@@ -102,6 +102,10 @@ async function verifyParticipant(conversationId: string, userId: string) {
     throw new ForbiddenError('You are not a participant in this conversation');
   }
 
+  if (participant.leftAt !== null) {
+    throw new ForbiddenError('You have left this conversation');
+  }
+
   return participant;
 }
 
@@ -325,11 +329,19 @@ export async function getConversations(userId: string) {
 export async function markConversationAsRead(conversationId: string, userId: string) {
   await verifyParticipant(conversationId, userId);
 
-  await prisma.conversationParticipant.update({
+  const now = new Date();
+  // Only update if new timestamp is newer — prevents race condition
+  // where out-of-order requests could regress lastReadAt.
+  await prisma.conversationParticipant.updateMany({
     where: {
-      conversationId_userId: { conversationId, userId },
+      conversationId,
+      userId,
+      OR: [
+        { lastReadAt: null },
+        { lastReadAt: { lt: now } },
+      ],
     },
-    data: { lastReadAt: new Date() },
+    data: { lastReadAt: now },
   });
 
   logger.debug({ conversationId, userId }, 'Conversation marked as read');
@@ -434,6 +446,9 @@ export async function sendMessage(
   }
   if (!participant) {
     throw new ForbiddenError('You are not a participant in this conversation');
+  }
+  if (participant.leftAt !== null) {
+    throw new ForbiddenError('You have left this conversation');
   }
 
   // Run block check and reply verification in parallel
