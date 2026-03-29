@@ -6,6 +6,7 @@ import { env } from './env';
 import { logger } from '../shared/logger';
 import { verifyAccessToken } from '../modules/auth/auth.utils';
 import { setOnline, setOffline } from '../modules/user/user.service';
+import { checkBanStatus } from '../modules/safety/safety.service';
 import { prisma } from './database';
 
 let io: Server;
@@ -80,6 +81,11 @@ export async function initializeSocket(httpServer: HttpServer): Promise<Server> 
         return next(new Error('Authentication required'));
       }
       const payload = verifyAccessToken(token);
+      // Check if user is banned before allowing socket connection
+      const ban = await checkBanStatus(payload.userId);
+      if (ban.banned) {
+        return next(new Error('Account suspended'));
+      }
       (socket as any).userId = payload.userId;
       next();
     } catch {

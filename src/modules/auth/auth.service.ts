@@ -7,7 +7,8 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
-import { UnauthorizedError, BadRequestError } from '../../shared/errors';
+import { UnauthorizedError, BadRequestError, ForbiddenError } from '../../shared/errors';
+import { checkBanStatus } from '../safety/safety.service';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -239,6 +240,16 @@ export async function login(rawEmail: string, password: string) {
     throw new UnauthorizedError('Invalid email or password');
   }
 
+  // Check if user is banned
+  const ban = await checkBanStatus(user.id);
+  if (ban.banned) {
+    throw new ForbiddenError(
+      ban.expiresAt
+        ? `Your account is temporarily suspended until ${ban.expiresAt.toISOString()}`
+        : 'Your account has been permanently suspended'
+    );
+  }
+
   const { accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
     return createTokenPair(tx, user.id, user.isAnonymous);
   });
@@ -275,6 +286,15 @@ async function socialAuthFlow(params: {
     let shouldSendWelcome = false;
 
     if (user) {
+      // Check if existing user is banned
+      const ban = await checkBanStatus(user.id);
+      if (ban.banned) {
+        throw new ForbiddenError(
+          ban.expiresAt
+            ? `Your account is temporarily suspended until ${ban.expiresAt.toISOString()}`
+            : 'Your account has been permanently suspended'
+        );
+      }
       logger.info({ userId: user.id }, `${authProvider} user logged in`);
     } else if (email) {
       const existingEmailUser = await tx.user.findUnique({ where: { email } });

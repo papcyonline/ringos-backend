@@ -475,7 +475,7 @@ export async function notifyChatMessage(
   // Get all participants except the sender
   const participants = await prisma.conversationParticipant.findMany({
     where: { conversationId, userId: { not: senderId }, leftAt: null },
-    select: { userId: true },
+    select: { userId: true, isMuted: true },
   });
 
   if (participants.length === 0) return;
@@ -541,9 +541,10 @@ export async function notifyChatMessage(
       logger.error({ err, userId: participant.userId }, 'Failed to create chat notification');
     });
 
-    // Only send FCM push if the user is NOT currently viewing this conversation
-    // (users in the room already see messages in real-time)
-    if (!isInRoom) {
+    // Only send FCM push if:
+    // 1. User is NOT currently viewing this conversation
+    // 2. User has NOT muted this conversation
+    if (!isInRoom && !participant.isMuted) {
       if (isVoiceNote && options?.audioUrl) {
         // Voice note: send data-only for in-notification playback
         const voiceNotePayload = buildVoiceNotePayload({
