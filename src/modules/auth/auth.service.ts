@@ -65,6 +65,16 @@ async function createTokenPair(
   return { accessToken, refreshToken };
 }
 
+/** Normalize email to lowercase and trimmed. */
+function normalizeEmail(rawEmail: string): string {
+  return normalizeEmail(rawEmail);
+}
+
+/** Generate a random 6-digit OTP code. */
+function generateOtpCode(): string {
+  return generateOtpCode();
+}
+
 // ── OTP helpers (database-backed) ──────────────────────
 
 async function storeOtp(key: string, code: string, ttlMs: number = 5 * 60 * 1000) {
@@ -104,6 +114,31 @@ async function verifyStoredOtp(key: string, code: string): Promise<void> {
   await prisma.otpCode.delete({ where: { id: stored.id } });
 }
 
+/** Build the standard auth response shape returned by all auth endpoints. */
+function buildAuthResponse<T extends Record<string, unknown> = Record<string, never>>(
+  user: { id: string; displayName: string; isAnonymous: boolean; avatarUrl?: string | null },
+  tokens: { accessToken: string; refreshToken: string },
+  extra?: T,
+) {
+  return {
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    userId: user.id,
+    user: {
+      id: user.id,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl ?? undefined,
+      isAnonymous: user.isAnonymous,
+    },
+    ...(extra ?? {}),
+  } as {
+    accessToken: string;
+    refreshToken: string;
+    userId: string;
+    user: { id: string; displayName: string; avatarUrl: string | undefined; isAnonymous: boolean };
+  } & T;
+}
+
 /** Deterministic SHA-256 hash for fast indexed phone lookups. */
 function phoneToLookup(phone: string): string {
   return crypto.createHash('sha256').update(phone.trim()).digest('hex');
@@ -128,20 +163,11 @@ export async function anonymousLogin(deviceId: string) {
     return { user, ...tokens };
   });
 
-  return {
-    accessToken,
-    refreshToken,
-    userId: user.id,
-    user: {
-      id: user.id,
-      displayName: user.displayName,
-      isAnonymous: user.isAnonymous,
-    },
-  };
+  return buildAuthResponse(user, { accessToken, refreshToken });
 }
 
 export async function register(rawEmail: string, password: string) {
-  const email = rawEmail.toLowerCase().trim();
+  const email = normalizeEmail(rawEmail);
   const passwordHash = await bcrypt.hash(password, 10);
 
   const user = await prisma.$transaction(async (tx) => {
@@ -165,7 +191,7 @@ export async function register(rawEmail: string, password: string) {
   logger.info({ userId: user.id }, 'Email user registered — OTP verification pending');
 
   // Generate and send email OTP
-  const code = String(crypto.randomInt(100000, 1000000));
+  const code = generateOtpCode();
   await storeOtp(`email:${email}`, code);
 
   const emailSent = await sendOtpEmail(email, code);
@@ -180,7 +206,7 @@ export async function register(rawEmail: string, password: string) {
 }
 
 export async function verifyEmailOtp(rawEmail: string, code: string) {
-  const email = rawEmail.toLowerCase().trim();
+  const email = normalizeEmail(rawEmail);
   await verifyStoredOtp(`email:${email}`, code);
 
   const { user, accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
@@ -195,27 +221,18 @@ export async function verifyEmailOtp(rawEmail: string, code: string) {
 
   logger.info({ userId: user.id }, 'Email OTP verified — awaiting profile setup');
 
-  return {
-    accessToken,
-    refreshToken,
-    userId: user.id,
-    user: {
-      id: user.id,
-      displayName: user.displayName,
-      isAnonymous: user.isAnonymous,
-    },
-  };
+  return buildAuthResponse(user, { accessToken, refreshToken });
 }
 
 export async function resendEmailOtp(rawEmail: string) {
-  const email = rawEmail.toLowerCase().trim();
+  const email = normalizeEmail(rawEmail);
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     throw new BadRequestError('User not found');
   }
 
-  const code = String(crypto.randomInt(100000, 1000000));
+  const code = generateOtpCode();
   await storeOtp(`email:${email}`, code);
 
   const emailSent = await sendOtpEmail(email, code);
@@ -229,7 +246,7 @@ export async function resendEmailOtp(rawEmail: string) {
 }
 
 export async function login(rawEmail: string, password: string) {
-  const email = rawEmail.toLowerCase().trim();
+  const email = normalizeEmail(rawEmail);
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !user.passwordHash) {
     throw new UnauthorizedError('Invalid email or password');
@@ -256,16 +273,7 @@ export async function login(rawEmail: string, password: string) {
 
   logger.info({ userId: user.id }, 'Email user logged in');
 
-  return {
-    accessToken,
-    refreshToken,
-    userId: user.id,
-    user: {
-      id: user.id,
-      displayName: user.displayName,
-      isAnonymous: user.isAnonymous,
-    },
-  };
+  return buildAuthResponse(user, { accessToken, refreshToken });
 }
 
 /**
@@ -345,18 +353,7 @@ async function socialAuthFlow(params: {
     sendWelcomeEmailAsync(email, name, user.id);
   }
 
-  return {
-    accessToken,
-    refreshToken,
-    userId: user.id,
-    user: {
-      id: user.id,
-      displayName: user.displayName,
-      avatarUrl: user.avatarUrl,
-      isAnonymous: user.isAnonymous,
-    },
-    isNewUser,
-  };
+  return buildAuthResponse(user, { accessToken, refreshToken }, { isNewUser });
 }
 
 export async function googleAuth(idToken: string) {
@@ -449,20 +446,9 @@ export async function setUsername(
   username: string,
   opts?: { avatarUrl?: string; bio?: string; profession?: string; gender?: 'MALE' | 'FEMALE'; location?: string; availabilityNote?: string; language?: string },
 ) {
-  // Validate required profile fields
-  if (!opts?.bio || opts.bio.length < 10) {
-    throw new BadRequestError('Bio is required (min 10 characters)');
-  }
-  if (!opts?.profession || opts.profession.length < 2) {
-    throw new BadRequestError('Profession is required');
-  }
-  if (!opts?.gender) {
-    throw new BadRequestError('Gender is required');
-  }
-  if (!opts?.location || opts.location.length < 2) {
-    throw new BadRequestError('Location is required');
-  }
-
+  // Validation is handled by Zod schema in the router middleware.
+  // Service-level check is only needed for the username uniqueness
+  // (which depends on DB state and can't be done in Zod).
   const available = await checkUsernameAvailable(username, userId);
   if (!available) {
     throw new BadRequestError('Username is already taken');
@@ -471,10 +457,10 @@ export async function setUsername(
   const data: Record<string, unknown> = {
     displayName: username,
     isAnonymous: false, // Profile complete — user now visible in People tab
-    bio: opts.bio,
-    profession: opts.profession,
-    gender: opts.gender,
-    location: opts.location,
+    bio: opts?.bio,
+    profession: opts?.profession,
+    gender: opts?.gender,
+    location: opts?.location,
   };
   if (opts?.avatarUrl) data.avatarUrl = opts.avatarUrl;
   if (opts?.availabilityNote) data.availabilityNote = opts.availabilityNote;
@@ -531,7 +517,7 @@ export async function requestOtp(phone: string) {
   }
 
   // Generate 6-digit OTP
-  const code = String(crypto.randomInt(100000, 1000000));
+  const code = generateOtpCode();
   await storeOtp(phone, code);
 
   // Send OTP via SMS (falls back to logging if Twilio not configured)
@@ -562,16 +548,7 @@ export async function verifyOtp(phone: string, code: string) {
     return { user, ...tokens };
   });
 
-  return {
-    accessToken,
-    refreshToken,
-    userId: user.id,
-    user: {
-      id: user.id,
-      displayName: user.displayName,
-      isAnonymous: user.isAnonymous,
-    },
-  };
+  return buildAuthResponse(user, { accessToken, refreshToken });
 }
 
 export async function refreshTokens(token: string) {
@@ -607,11 +584,11 @@ export async function refreshTokens(token: string) {
 }
 
 export async function requestPasswordReset(rawEmail: string) {
-  const email = rawEmail.toLowerCase().trim();
+  const email = normalizeEmail(rawEmail);
   const user = await prisma.user.findUnique({ where: { email } });
 
   if (user) {
-    const code = String(crypto.randomInt(100000, 1000000));
+    const code = generateOtpCode();
     await storeOtp(`reset:${email}`, code);
 
     // Send OTP via email
@@ -627,7 +604,7 @@ export async function requestPasswordReset(rawEmail: string) {
 }
 
 export async function resetPassword(rawEmail: string, code: string, newPassword: string) {
-  const email = rawEmail.toLowerCase().trim();
+  const email = normalizeEmail(rawEmail);
   await verifyStoredOtp(`reset:${email}`, code);
 
   const user = await prisma.user.findUnique({ where: { email } });
