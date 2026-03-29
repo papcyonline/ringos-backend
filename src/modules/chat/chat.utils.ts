@@ -1,5 +1,6 @@
 import { Server } from 'socket.io';
 import { prisma } from '../../config/database';
+import { logger } from '../../shared/logger';
 
 /**
  * Shared utilities for the chat module.
@@ -19,6 +20,7 @@ export async function emitToParticipantRooms(
     where: { conversationId, leftAt: null },
     select: { userId: true },
   });
+  logger.info({ conversationId, participantCount: participants.length }, 'Emitting chat:list-update to participant rooms');
   for (const p of participants) {
     io.to(`user:${p.userId}`).emit('chat:list-update', payload);
   }

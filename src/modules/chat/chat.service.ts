@@ -911,3 +911,80 @@ export async function toggleArchive(userId: string, conversationId: string) {
   logger.debug({ conversationId, userId, isArchived: updated.isArchived }, 'Archive toggled');
   return updated;
 }
+
+// ─── Forward Message ──────────────────────────────────────────
+
+/**
+ * Forward a message to another conversation.
+ * Creates a new message in the target conversation with the original content.
+ */
+export async function forwardMessage(
+  messageId: string,
+  targetConversationId: string,
+  senderId: string,
+) {
+  // Verify source message exists
+  const original = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { content: true, imageUrl: true, audioUrl: true, audioDuration: true },
+  });
+  if (!original) throw new NotFoundError('Message not found');
+
+  // Verify sender is participant in target conversation
+  await verifyParticipant(targetConversationId, senderId);
+
+  // Create forwarded message with metadata marking it as forwarded
+  const forwarded = await sendMessage(targetConversationId, senderId, original.content ?? '', {
+    imageUrl: original.imageUrl ?? undefined,
+    audioUrl: original.audioUrl ?? undefined,
+    audioDuration: original.audioDuration ?? undefined,
+    metadata: { forwarded: true },
+  });
+
+  logger.info({ messageId, targetConversationId, senderId }, 'Message forwarded');
+  return forwarded;
+}
+
+// ─── Search Messages ──────────────────────────────────────────
+
+/**
+ * Search messages within a conversation by text content.
+ */
+export async function searchMessages(
+  conversationId: string,
+  userId: string,
+  query: string,
+) {
+  await verifyParticipant(conversationId, userId);
+
+  const messages = await prisma.message.findMany({
+    where: {
+      conversationId,
+      deletedAt: null,
+      content: { contains: query, mode: 'insensitive' },
+    },
+    include: messageInclude,
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
+
+  return messages;
+}
+
+// ─── Clear Chat History ───────────────────────────────────────
+
+/**
+ * Clear chat history for a user — soft-deletes all messages they sent
+ * and marks their lastReadAt to now so old messages don't show as unread.
+ */
+export async function clearHistory(conversationId: string, userId: string) {
+  await verifyParticipant(conversationId, userId);
+
+  // Update lastReadAt so cleared messages don't count as unread
+  await prisma.conversationParticipant.update({
+    where: { conversationId_userId: { conversationId, userId } },
+    data: { lastReadAt: new Date() },
+  });
+
+  logger.info({ conversationId, userId }, 'Chat history cleared');
+}

@@ -6,7 +6,7 @@ import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl, chatDocumentUpload, fileToChatDocumentUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
-import { sendMessageSchema, editMessageSchema, reactMessageSchema } from './chat.schema';
+import { sendMessageSchema, editMessageSchema, reactMessageSchema, forwardMessageSchema, searchMessagesSchema } from './chat.schema';
 import * as chatService from './chat.service';
 import * as groupService from './group.service';
 import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
@@ -823,6 +823,84 @@ router.post(
         req.user!.userId,
       );
       res.json(conversation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/messages/:messageId/forward - Forward a message
+router.post(
+  '/conversations/:conversationId/messages/:messageId/forward',
+  authenticate,
+  validate(forwardMessageSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const message = await chatService.forwardMessage(
+        req.params.messageId as string,
+        req.body.targetConversationId,
+        req.user!.userId,
+      );
+
+      // Broadcast to target conversation
+      const io = getIO();
+      const msgPayload = formatMessagePayload(message, req.body.targetConversationId);
+      io.to(`conversation:${req.body.targetConversationId}`).emit('chat:message', msgPayload);
+      emitToParticipantRooms(io, req.body.targetConversationId, msgPayload).catch((err) => {
+        logger.error({ err }, 'Failed to emit forwarded message to participant rooms');
+      });
+
+      // Notify participants
+      notifyChatMessage(
+        req.body.targetConversationId,
+        req.user!.userId,
+        message.sender.displayName,
+        message.content,
+        { imageUrl: message.imageUrl ?? undefined, audioUrl: message.audioUrl ?? undefined },
+      ).catch((err) => {
+        logger.error({ err }, 'Failed to send forward notification');
+      });
+
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /conversations/:conversationId/messages/search - Search messages
+router.get(
+  '/conversations/:conversationId/messages/search',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const q = req.query.q as string;
+      if (!q || q.length < 1) {
+        return res.status(400).json({ error: 'Search query is required' });
+      }
+      const messages = await chatService.searchMessages(
+        req.params.conversationId as string,
+        req.user!.userId,
+        q,
+      );
+      res.json(messages);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /conversations/:conversationId/history - Clear chat history
+router.delete(
+  '/conversations/:conversationId/history',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      await chatService.clearHistory(
+        req.params.conversationId as string,
+        req.user!.userId,
+      );
+      res.json({ success: true });
     } catch (err) {
       next(err);
     }

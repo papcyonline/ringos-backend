@@ -17,7 +17,15 @@ export const editMessageSchema = z.object({
 });
 
 export const reactMessageSchema = z.object({
-  emoji: z.enum(['thumbsup', 'heart', 'laugh', 'wow', 'sad', 'pray']),
+  emoji: z.string().min(1).max(32),
+});
+
+export const forwardMessageSchema = z.object({
+  targetConversationId: z.string().uuid(),
+});
+
+export const searchMessagesSchema = z.object({
+  q: z.string().min(1).max(200),
 });
 
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
