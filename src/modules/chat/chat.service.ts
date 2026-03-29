@@ -56,7 +56,7 @@ function computeMessageStatus(
   otherParticipants: { lastReadAt: Date | null; lastDeliveredAt: Date | null }[],
 ): 'sent' | 'delivered' | 'read' {
   if (msg.senderId !== userId) return 'sent';
-  const isRead = otherParticipants.some(
+  const isRead = otherParticipants.every(
     (p) => p.lastReadAt && p.lastReadAt >= msg.createdAt,
   );
   if (isRead) return 'read';
