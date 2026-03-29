@@ -9,7 +9,7 @@ import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema, forwardMessageSchema, searchMessagesSchema } from './chat.schema';
 import * as chatService from './chat.service';
 import * as groupService from './group.service';
-import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
+import { formatMessagePayload, emitToParticipantRooms, broadcastAndNotifyMessage } from './chat.utils';
 import { translateMessage } from './translation.service';
 import { transcribeMessage } from './transcription.service';
 import { notifyChatMessage } from '../notification/notification.service';
@@ -107,32 +107,7 @@ router.post(
         },
       );
 
-      // Broadcast to room so other participants see it in real-time
-      const io = getIO();
-      const msgPayload = formatMessagePayload(message, (req.params.conversationId as string));
-      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:message', msgPayload);
-
-      // Also notify each participant's personal room for conversation-list updates
-      emitToParticipantRooms(io, (req.params.conversationId as string), msgPayload).catch((err) => {
-        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to emit to participant rooms');
-      });
-
-      // Notify other participants (in-app + push)
-      notifyChatMessage(
-        (req.params.conversationId as string),
-        req.user!.userId,
-        message.sender.displayName,
-        message.content,
-        { imageUrl: message.imageUrl ?? undefined, audioUrl: message.audioUrl ?? undefined },
-      ).catch((err) => {
-        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send chat notification');
-      });
-
-      // Auto-translate in background
-      if (message.content) {
-        translateMessage(message.id, (req.params.conversationId as string), message.content).catch(() => {});
-      }
-
+      broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
       res.status(201).json(message);
     } catch (err) {
       next(err);
@@ -304,32 +279,7 @@ router.post(
         { replyToId, imageUrl, viewOnce },
       );
 
-      // Broadcast to room so other participants see it
-      const io = getIO();
-      const imgPayload = formatMessagePayload(message, (req.params.conversationId as string));
-      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:message', imgPayload);
-
-      // Also notify each participant's personal room for conversation-list updates
-      emitToParticipantRooms(io, (req.params.conversationId as string), imgPayload).catch((err) => {
-        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to emit to participant rooms');
-      });
-
-      // Notify other participants (in-app + push)
-      notifyChatMessage(
-        (req.params.conversationId as string),
-        req.user!.userId,
-        message.sender.displayName,
-        message.content,
-        { imageUrl: message.imageUrl ?? undefined },
-      ).catch((err) => {
-        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send image notification');
-      });
-
-      // Auto-translate caption in background
-      if (message.content) {
-        translateMessage(message.id, (req.params.conversationId as string), message.content).catch(() => {});
-      }
-
+      broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
       res.status(201).json(message);
     } catch (err) {
       next(err);
@@ -358,26 +308,7 @@ router.post(
         { replyToId, audioUrl, audioDuration: duration },
       );
 
-      // Broadcast to room so other participants see it
-      const io = getIO();
-      const audioPayload = formatMessagePayload(message, (req.params.conversationId as string));
-      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:message', audioPayload);
-
-      // Also notify each participant's personal room for conversation-list updates
-      emitToParticipantRooms(io, (req.params.conversationId as string), audioPayload).catch((err) => {
-        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to emit to participant rooms');
-      });
-
-      // Notify other participants (in-app + push)
-      notifyChatMessage(
-        (req.params.conversationId as string),
-        req.user!.userId,
-        message.sender.displayName,
-        message.content,
-        { audioUrl: message.audioUrl ?? undefined },
-      ).catch((err) => {
-        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send audio notification');
-      });
+      broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
 
       res.status(201).json(message);
     } catch (err) {
@@ -416,26 +347,7 @@ router.post(
         },
       );
 
-      // Broadcast to room so other participants see it
-      const io = getIO();
-      const docPayload = formatMessagePayload(message, (req.params.conversationId as string));
-      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:message', docPayload);
-
-      // Also notify each participant's personal room for conversation-list updates
-      emitToParticipantRooms(io, (req.params.conversationId as string), docPayload).catch((err) => {
-        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to emit to participant rooms');
-      });
-
-      // Notify other participants (in-app + push)
-      notifyChatMessage(
-        (req.params.conversationId as string),
-        req.user!.userId,
-        message.sender.displayName,
-        message.content,
-        { imageUrl: message.imageUrl ?? undefined },
-      ).catch((err) => {
-        logger.error({ err, conversationId: (req.params.conversationId as string) }, 'Failed to send document notification');
-      });
+      broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
 
       // Auto-translate caption in background
       if (message.content) {
@@ -866,25 +778,7 @@ router.post(
         req.user!.userId,
       );
 
-      // Broadcast to target conversation
-      const io = getIO();
-      const msgPayload = formatMessagePayload(message, req.body.targetConversationId);
-      io.to(`conversation:${req.body.targetConversationId}`).emit('chat:message', msgPayload);
-      emitToParticipantRooms(io, req.body.targetConversationId, msgPayload).catch((err) => {
-        logger.error({ err }, 'Failed to emit forwarded message to participant rooms');
-      });
-
-      // Notify participants
-      notifyChatMessage(
-        req.body.targetConversationId,
-        req.user!.userId,
-        message.sender.displayName,
-        message.content,
-        { imageUrl: message.imageUrl ?? undefined, audioUrl: message.audioUrl ?? undefined },
-      ).catch((err) => {
-        logger.error({ err }, 'Failed to send forward notification');
-      });
-
+      broadcastAndNotifyMessage(message, req.body.targetConversationId, req.user!.userId);
       res.status(201).json(message);
     } catch (err) {
       next(err);

@@ -2,11 +2,13 @@ import { Server, Socket } from 'socket.io';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import * as chatService from './chat.service';
-import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
-import { translateMessage } from './translation.service';
+import { broadcastAndNotifyMessage } from './chat.utils';
 import { notifyChatMessage } from '../notification/notification.service';
 
-// Any emoji is allowed — validation is in the schema (max 32 chars)
+/** Extract a user-facing error message from a caught error. */
+function extractErrorMessage(error: any, fallback: string): string {
+  return error?.statusCode ? error.message : fallback;
+}
 
 function validateMessageContent(content: unknown): { valid: true } | { valid: false; error: string } {
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
@@ -75,36 +77,12 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       // Save the message via the service
       const message = await chatService.sendMessage(conversationId, userId, cleanedContent, { replyToId, metadata });
 
-      // Broadcast the message to all participants in the room
-      const gwPayload = formatMessagePayload(message, conversationId);
-      io.to(`conversation:${conversationId}`).emit('chat:message', gwPayload);
-
-      // Also notify each participant's personal room for conversation-list updates
-      emitToParticipantRooms(io, conversationId, gwPayload).catch((err) => {
-        logger.error({ err, conversationId }, 'Failed to emit to participant rooms');
-      });
-
-      // Notify other participants (in-app + push)
-      notifyChatMessage(
-        conversationId,
-        userId,
-        message.sender.displayName,
-        message.content,
-        { imageUrl: message.imageUrl ?? undefined, audioUrl: message.audioUrl ?? undefined },
-      ).catch((err) => {
-        logger.error({ err, conversationId }, 'Failed to send chat notification');
-      });
-
-      // Auto-translate in background
-      if (cleanedContent) {
-        translateMessage(message.id, conversationId, cleanedContent).catch(() => {});
-      }
+      broadcastAndNotifyMessage(message, conversationId, userId);
 
       logger.debug({ conversationId, userId, messageId: message.id }, 'Message broadcast to room');
     } catch (error: any) {
       logger.error({ error, userId }, 'Error sending message');
-      const errorMessage = error?.statusCode ? error.message : 'Failed to send message';
-      socket.emit('chat:error', { message: errorMessage });
+      socket.emit('chat:error', { message: extractErrorMessage(error, 'Failed to send message') });
     }
   });
 
@@ -132,8 +110,7 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       logger.debug({ messageId, userId }, 'Edit broadcast to room');
     } catch (error: any) {
       logger.error({ error, userId }, 'Error editing message');
-      const errorMessage = error?.statusCode ? error.message : 'Failed to edit message';
-      socket.emit('chat:error', { message: errorMessage });
+      socket.emit('chat:error', { message: extractErrorMessage(error, 'Failed to edit message') });
     }
   });
 
@@ -167,8 +144,7 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       logger.debug({ messageId, userId }, 'Delete broadcast to room');
     } catch (error: any) {
       logger.error({ error, userId }, 'Error deleting message');
-      const errorMessage = error?.statusCode ? error.message : 'Failed to delete message';
-      socket.emit('chat:error', { message: errorMessage });
+      socket.emit('chat:error', { message: extractErrorMessage(error, 'Failed to delete message') });
     }
   });
 
@@ -197,8 +173,7 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       logger.debug({ messageId, userId, emoji, action: result.action }, 'Reaction broadcast to room');
     } catch (error: any) {
       logger.error({ error, userId }, 'Error toggling reaction');
-      const errorMessage = error?.statusCode ? error.message : 'Failed to toggle reaction';
-      socket.emit('chat:error', { message: errorMessage });
+      socket.emit('chat:error', { message: extractErrorMessage(error, 'Failed to toggle reaction') });
     }
   });
 
@@ -339,8 +314,7 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       logger.info({ userId, conversationId, socketId: socket.id }, 'User left conversation room');
     } catch (error: any) {
       logger.error({ error, userId }, 'Error leaving conversation');
-      const errorMessage = error?.statusCode ? error.message : 'Failed to leave conversation';
-      socket.emit('chat:error', { message: errorMessage });
+      socket.emit('chat:error', { message: extractErrorMessage(error, 'Failed to leave conversation') });
     }
   });
 }

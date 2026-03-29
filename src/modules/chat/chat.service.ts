@@ -5,6 +5,29 @@ import { isBlocked } from '../safety/safety.service';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import ogs from 'open-graph-scraper';
 
+/**
+ * Clean up media files from storage (Google Drive or Cloudinary).
+ * Fire-and-forget — errors are silently swallowed.
+ */
+async function cleanupMediaUrls(urls: (string | null)[]): Promise<void> {
+  const validUrls = urls.filter(Boolean) as string[];
+  for (const url of validUrls) {
+    if (url.includes('drive.google.com')) {
+      const match = url.match(/id=([a-zA-Z0-9_-]+)/);
+      if (match) {
+        const { deleteFromDrive } = await import('../../shared/gdrive.service');
+        deleteFromDrive(match[1]).catch(() => {});
+      }
+    } else if (url.includes('cloudinary.com')) {
+      const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.\w+)?$/);
+      if (match) {
+        const isAudio = url.includes('/video/') || url.endsWith('.m4a') || url.endsWith('.mp3');
+        cloudinaryService.deleteFile(match[1], isAudio ? 'video' : 'image').catch(() => {});
+      }
+    }
+  }
+}
+
 // ─── Link Preview ───────────────────────────────────────────
 
 const urlRegex = /(?:https?:\/\/)?(?:[\w-]+\.)+[a-z]{2,}(?:\/[^\s]*)?/i;
@@ -586,25 +609,7 @@ export async function deleteMessage(messageId: string, userId: string) {
     throw new ForbiddenError('Message is already deleted');
   }
 
-  // Clean up media files from storage
-  const mediaUrls = [message.imageUrl, message.audioUrl].filter(Boolean) as string[];
-  for (const url of mediaUrls) {
-    if (url.includes('drive.google.com')) {
-      // Google Drive
-      const match = url.match(/id=([a-zA-Z0-9_-]+)/);
-      if (match) {
-        const { deleteFromDrive } = await import('../../shared/gdrive.service');
-        deleteFromDrive(match[1]).catch(() => {});
-      }
-    } else if (url.includes('cloudinary.com')) {
-      // Cloudinary — extract public ID from URL
-      const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.\w+)?$/);
-      if (match) {
-        const isAudio = url.includes('/video/') || url.endsWith('.m4a') || url.endsWith('.mp3');
-        cloudinaryService.deleteFile(match[1], isAudio ? 'video' : 'image').catch(() => {});
-      }
-    }
-  }
+  await cleanupMediaUrls([message.imageUrl, message.audioUrl]);
 
   const [updated] = await prisma.$transaction([
     prisma.message.update({
@@ -687,23 +692,7 @@ export async function openViewOnce(messageId: string, userId: string) {
     throw new ForbiddenError('This message has already been opened');
   }
 
-  // Clean up media files from storage
-  const mediaUrls = [message.imageUrl, message.audioUrl].filter(Boolean) as string[];
-  for (const url of mediaUrls) {
-    if (url.includes('drive.google.com')) {
-      const match = url.match(/id=([a-zA-Z0-9_-]+)/);
-      if (match) {
-        const { deleteFromDrive } = await import('../../shared/gdrive.service');
-        deleteFromDrive(match[1]).catch(() => {});
-      }
-    } else if (url.includes('cloudinary.com')) {
-      const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.\w+)?$/);
-      if (match) {
-        const isAudio = url.includes('/video/') || url.endsWith('.m4a') || url.endsWith('.mp3');
-        cloudinaryService.deleteFile(match[1], isAudio ? 'video' : 'image').catch(() => {});
-      }
-    }
-  }
+  await cleanupMediaUrls([message.imageUrl, message.audioUrl]);
 
   // Mark as opened and wipe content/media from database
   const updated = await prisma.message.update({

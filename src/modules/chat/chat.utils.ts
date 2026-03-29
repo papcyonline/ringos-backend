@@ -1,6 +1,9 @@
 import { Server } from 'socket.io';
 import { prisma } from '../../config/database';
+import { getIO } from '../../config/socket';
 import { logger } from '../../shared/logger';
+import { notifyChatMessage } from '../notification/notification.service';
+import { translateMessage } from './translation.service';
 
 /**
  * Shared utilities for the chat module.
@@ -65,4 +68,47 @@ export function formatMessagePayload(message: any, conversationId: string) {
     })),
     createdAt: message.createdAt,
   };
+}
+
+/**
+ * After a message is created, broadcast it to all relevant socket rooms,
+ * send push notifications, and trigger background translation.
+ * Shared by both REST routes and the socket gateway.
+ */
+export function broadcastAndNotifyMessage(
+  message: any,
+  conversationId: string,
+  senderId: string,
+): void {
+  const io = getIO();
+  const payload = formatMessagePayload(message, conversationId);
+
+  // 1. Broadcast to conversation room (real-time chat view)
+  io.to(`conversation:${conversationId}`).emit('chat:message', payload);
+
+  // 2. Emit to each participant's personal room (conversation-list updates)
+  emitToParticipantRooms(io, conversationId, payload).catch((err) => {
+    logger.error({ err, conversationId }, 'Failed to emit to participant rooms');
+  });
+
+  // 3. Push + in-app notifications
+  notifyChatMessage(
+    conversationId,
+    senderId,
+    message.sender.displayName,
+    message.content,
+    {
+      messageId: message.id,
+      imageUrl: message.imageUrl ?? undefined,
+      audioUrl: message.audioUrl ?? undefined,
+      audioDuration: message.audioDuration ?? undefined,
+    },
+  ).catch((err) => {
+    logger.error({ err, conversationId }, 'Failed to send chat notification');
+  });
+
+  // 4. Background translation
+  if (message.content) {
+    translateMessage(message.id, conversationId, message.content).catch(() => {});
+  }
 }
