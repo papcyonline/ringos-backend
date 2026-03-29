@@ -112,9 +112,9 @@ export async function addMembers(
     throw new ForbiddenError('Only admins can add members');
   }
 
-  // Filter out users already in the conversation
+  // Filter out users already in the conversation — only check the IDs we're adding
   const existing = await prisma.conversationParticipant.findMany({
-    where: { conversationId },
+    where: { conversationId, userId: { in: memberIds } },
     select: { userId: true },
   });
   const existingIds = new Set(existing.map((e) => e.userId));
@@ -247,25 +247,12 @@ export async function joinGroup(conversationId: string, userId: string) {
     throw new ForbiddenError('This is a private group. You must be invited to join.');
   }
 
-  // Check if user already has a participant record
-  const existing = await prisma.conversationParticipant.findUnique({
+  // Upsert to prevent race condition on concurrent join requests
+  await prisma.conversationParticipant.upsert({
     where: { conversationId_userId: { conversationId, userId } },
+    create: { conversationId, userId, role: 'MEMBER' },
+    update: { leftAt: null, joinedAt: new Date() },
   });
-
-  if (existing) {
-    if (existing.leftAt) {
-      // Re-join: clear the leftAt timestamp
-      await prisma.conversationParticipant.update({
-        where: { id: existing.id },
-        data: { leftAt: null, joinedAt: new Date() },
-      });
-    }
-    // Already a member — no-op
-  } else {
-    await prisma.conversationParticipant.create({
-      data: { conversationId, userId, role: 'MEMBER' },
-    });
-  }
 
   const updated = await prisma.conversation.findUnique({
     where: { id: conversationId },

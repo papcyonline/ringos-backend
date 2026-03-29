@@ -666,6 +666,9 @@ export async function openViewOnce(messageId: string, userId: string) {
     throw new ForbiddenError('This is not a view-once message');
   }
 
+  // Verify participant first — reject unauthorized users before leaking info
+  await verifyParticipant(message.conversationId, userId);
+
   if (message.senderId === userId) {
     throw new ForbiddenError('Sender cannot open their own view-once message');
   }
@@ -673,8 +676,6 @@ export async function openViewOnce(messageId: string, userId: string) {
   if (message.viewOnceOpened) {
     throw new ForbiddenError('This message has already been opened');
   }
-
-  await verifyParticipant(message.conversationId, userId);
 
   // Clean up media files from storage
   const mediaUrls = [message.imageUrl, message.audioUrl].filter(Boolean) as string[];
@@ -846,7 +847,7 @@ export async function getMessages(
   const [messages, participants] = await Promise.all([
     prisma.message.findMany({
       where: whereClause,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       ...(skip !== undefined ? { skip } : {}),
       take: limit + 1, // Fetch one extra to determine hasMore
       include: messageInclude,
@@ -979,7 +980,7 @@ export async function searchMessages(
       content: { contains: query, mode: 'insensitive' },
     },
     include: messageInclude,
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: 50,
   });
 
