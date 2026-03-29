@@ -33,8 +33,8 @@ function shouldSkipTranslation(content: string): boolean {
   // Split into words (sequences of letters)
   const words = cleaned.split(/\s+/).filter(w => w.length > 0);
 
-  // Need at least 2 real words to be worth translating
-  if (words.length < 2) return true;
+  // Need at least 1 real word to be worth translating
+  if (words.length < 1) return true;
 
   // If most "words" are very short (1-3 chars), it's likely slang/abbreviations
   const shortWords = words.filter(w => w.length <= 3).length;
