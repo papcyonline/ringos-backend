@@ -371,8 +371,10 @@ router.post('/me/contacts/sync', authenticate, async (req: AuthRequest, res: Res
     if (!Array.isArray(hashes) || hashes.length === 0) {
       return res.status(400).json({ error: 'Provide an array of phone hashes' });
     }
-    // Limit to 1000 contacts per request
-    const limited = hashes.slice(0, 1000);
+    // Filter out empty/malformed hashes and limit to 1000
+    const limited = hashes
+      .filter((h) => typeof h === 'string' && h.length >= 16 && h.length <= 128)
+      .slice(0, 1000);
     const matches = await userService.syncContacts(req.user!.userId, limited);
     res.json({ matches });
   } catch (err) {

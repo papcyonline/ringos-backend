@@ -162,7 +162,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
   socket.on('spotlight:list', async (_, callback) => {
     try {
       const blockedIds = await getBlockedUserIds(userId);
-      const list = buildBroadcasterList(liveBroadcasters, userId, blockedIds);
+      const list = await buildBroadcasterList(liveBroadcasters, userId, blockedIds);
       if (typeof callback === 'function') callback({ broadcasters: list });
       else socket.emit('spotlight:list', { broadcasters: list });
     } catch (error) {

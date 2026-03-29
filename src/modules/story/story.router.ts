@@ -246,6 +246,10 @@ router.get(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const storyId = req.params.id as string;
+      // Verify the requester owns this story
+      const story = await prisma.story.findUnique({ where: { id: storyId }, select: { userId: true } });
+      if (!story) return res.status(404).json({ error: 'Story not found' });
+      if (story.userId !== req.user!.userId) return res.status(403).json({ error: 'Not your story' });
       const status = await getBoostStatus(storyId);
       res.json(status);
     } catch (err) {
