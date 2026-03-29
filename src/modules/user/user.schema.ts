@@ -36,13 +36,14 @@ export type UpdateAvailabilityInput = z.infer<typeof updateAvailabilitySchema>;
 export const updatePrivacySchema = z.object({
   isProfilePublic: z.boolean().optional(),
   hideOnlineStatus: z.boolean().optional(),
+  hideReadReceipts: z.boolean().optional(),
 });
 
 export type UpdatePrivacyInput = z.infer<typeof updatePrivacySchema>;
 
 export const updateProfileSchema = z.object({
   displayName: z.string().min(1).max(50).optional(),
-  bio: z.string().max(200).optional().nullable(),
+  bio: z.string().max(500).optional().nullable(),
   profession: z.string().max(100).optional().nullable(),
   gender: z.enum(['male', 'female', 'MALE', 'FEMALE']).transform(v => v?.toUpperCase() as 'MALE' | 'FEMALE').optional().nullable(),
   location: z.string().max(100).optional().nullable(),

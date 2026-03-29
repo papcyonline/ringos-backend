@@ -4,6 +4,7 @@ import { getIO } from '../../config/socket';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
 import { downloadFromDrive } from '../../shared/gdrive.service';
+import { checkTranscription, incrementTranscription } from '../../shared/usage.service';
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
@@ -31,10 +32,16 @@ export async function transcribeMessage(
   if (message.conversationId !== conversationId) throw new Error('Message not in conversation');
   if (!message.audioUrl) throw new Error('Not a voice message');
 
-  // Check cache
+  // Check cache — cached results are always free (no limit consumed)
   const existing = message.metadata as Record<string, any> | null;
   if (existing?.transcription) {
     return { transcription: existing.transcription };
+  }
+
+  // Gate non-cached transcriptions behind daily limit
+  const txCheck = await checkTranscription(userId);
+  if (!txCheck.allowed) {
+    throw Object.assign(new Error('Daily transcription limit reached'), { code: 'TRANSCRIPTION_LIMIT' });
   }
 
   // Extract Drive file ID from /media/gdrive/<fileId>
@@ -54,6 +61,9 @@ export async function transcribeMessage(
 
   const transcription = result.text;
   if (!transcription) throw new Error('Transcription returned empty');
+
+  // Track usage after successful transcription
+  await incrementTranscription(userId);
 
   // Save to metadata (merge with existing)
   const merged = { ...(existing || {}), transcription };

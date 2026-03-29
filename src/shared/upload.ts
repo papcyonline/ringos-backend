@@ -160,7 +160,7 @@ export const storyImageUpload = multer({
 
 export const storyMediaUpload = multer({
   storage: memoryStorage,
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max (Pro); free limit enforced in story router
   fileFilter: storyMediaFilter,
 });
 

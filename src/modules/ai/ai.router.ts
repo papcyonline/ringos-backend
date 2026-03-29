@@ -8,7 +8,7 @@ import * as aiService from './ai.service';
 import { synthesizeSpeech } from './tts.service';
 import { promptMap } from './prompts';
 import { env } from '../../config/env';
-import { checkKoraSession, incrementKoraSession, checkKoraMessages, incrementKoraMessage } from '../../shared/usage.service';
+import { checkKoraSession, incrementKoraSession, checkKoraMessages, incrementKoraMessage, isPro } from '../../shared/usage.service';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -31,6 +31,18 @@ router.post(
   validate(startSessionSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      // Gate premium modes behind Pro subscription
+      const PRO_MODES = ['RELATIONSHIP_COACH', 'CAREER_MENTOR'];
+      if (PRO_MODES.includes(req.body.mode)) {
+        const pro = await isPro(req.user!.userId);
+        if (!pro) {
+          return res.status(403).json({
+            message: 'This mode requires Yomeet Pro',
+            code: 'PRO_MODE_REQUIRED',
+          });
+        }
+      }
+
       // Check daily session limit for free users
       const sessionCheck = await checkKoraSession(req.user!.userId);
       if (!sessionCheck.allowed) {

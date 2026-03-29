@@ -3,6 +3,7 @@ import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import { storyMediaUpload } from '../../shared/upload';
+import { getLimits, isPro } from '../../shared/usage.service';
 import {
   createStory,
   getStoryFeed,
@@ -70,7 +71,20 @@ router.post(
         }
       }
 
-      const story = await createStory(userId, files, slidesMetadata);
+      // Enforce file size limit based on Pro status
+      const limits = await getLimits(userId);
+      const maxBytes = limits.storyUploadMB * 1024 * 1024;
+      for (const file of files) {
+        if (file.size > maxBytes) {
+          return res.status(413).json({
+            error: `File exceeds ${limits.storyUploadMB}MB limit`,
+            code: 'FILE_TOO_LARGE',
+          });
+        }
+      }
+
+      const isPermanent = req.body.isPermanent === 'true' || req.body.isPermanent === true;
+      const story = await createStory(userId, files, slidesMetadata, { isPermanent });
 
       // Notify all connected users so their feed refreshes instantly
       try {
@@ -96,7 +110,8 @@ router.post(
     try {
       const viewerId = req.user!.userId;
       const storyId = req.params.id as string;
-      await markStoryViewed(storyId, viewerId);
+      const stealth = req.body.stealth === true && await isPro(viewerId);
+      await markStoryViewed(storyId, viewerId, stealth);
       res.json({ success: true });
     } catch (error) {
       logger.error({ error }, 'Error marking story viewed');

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const startSessionSchema = z.object({
-  mode: z.enum(['CALM_LISTENER', 'LIGHT_AND_FUN', 'NIGHT_COMPANION', 'MOTIVATOR']),
+  mode: z.enum(['CALM_LISTENER', 'LIGHT_AND_FUN', 'NIGHT_COMPANION', 'MOTIVATOR', 'RELATIONSHIP_COACH', 'CAREER_MENTOR']),
 });
 
 export const sendMessageSchema = z.object({

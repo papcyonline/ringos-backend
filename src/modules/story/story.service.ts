@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
+import { isPro } from '../../shared/usage.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { getBoostedStoryIds } from './story-boost.service';
@@ -39,9 +40,15 @@ interface SlideMetadata {
 export async function createStory(
   userId: string,
   files: Express.Multer.File[],
-  slidesMetadata?: SlideMetadata[]
+  slidesMetadata?: SlideMetadata[],
+  options?: { isPermanent?: boolean },
 ) {
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const pro = await isPro(userId);
+  const permanent = options?.isPermanent === true && pro;
+  const hoursToExpire = pro ? 48 : 24;
+  const expiresAt = permanent
+    ? new Date('2099-12-31T23:59:59Z')
+    : new Date(Date.now() + hoursToExpire * 60 * 60 * 1000);
 
   const uploads = await Promise.all(
     files.map(async (file, index) => {
@@ -80,6 +87,7 @@ export async function createStory(
     data: {
       userId,
       expiresAt,
+      isPermanent: permanent,
       slides: {
         create: uploads,
       },
@@ -109,7 +117,7 @@ export async function getStoryFeed(requesterId: string) {
 
   const stories = await prisma.story.findMany({
     where: {
-      expiresAt: { gt: now },
+      OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
       userId: { notIn: Array.from(blockedIds) },
     },
     include: {
@@ -240,9 +248,9 @@ export async function getStoryFeed(requesterId: string) {
 
 // ─── Mark Story Viewed ──────────────────────────────────────
 
-export async function markStoryViewed(storyId: string, viewerId: string) {
+export async function markStoryViewed(storyId: string, viewerId: string, isStealth = false) {
   await prisma.storyView.createMany({
-    data: [{ storyId, viewerId }],
+    data: [{ storyId, viewerId, isStealth }],
     skipDuplicates: true,
   });
 }
@@ -260,7 +268,7 @@ export async function getStoryViewers(storyId: string, userId: string) {
   }
 
   const views = await prisma.storyView.findMany({
-    where: { storyId },
+    where: { storyId, isStealth: false },
     include: {
       story: false,
     },
@@ -411,7 +419,7 @@ export async function cleanupExpiredStories(): Promise<number> {
 
   // Process in batches to avoid loading thousands of stories at once
   const expired = await prisma.story.findMany({
-    where: { expiresAt: { lte: now } },
+    where: { expiresAt: { lte: now }, isPermanent: false },
     include: { slides: { select: { cloudinaryId: true, type: true } } },
     take: 200,
   });

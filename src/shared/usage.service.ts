@@ -7,6 +7,7 @@ import * as redis from './redis.service';
 const FREE_CALL_MINS = 5;
 const FREE_KORA_SESSIONS = 2;
 const FREE_KORA_MESSAGES = 3;
+const FREE_TRANSCRIPTIONS = 3;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -26,8 +27,21 @@ function secondsUntilMidnight(): number {
   return Math.ceil((nextMidnightUTC().getTime() - Date.now()) / 1000);
 }
 
+// ─── Limits ──────────────────────────────────────────────────────────────────
+
+export const LIMITS = {
+  FREE: { bioLength: 200, storyUploadMB: 50, pinnedChats: 3 },
+  PRO:  { bioLength: 500, storyUploadMB: 100, pinnedChats: 10 },
+} as const;
+
+export async function getLimits(userId: string) {
+  return (await isPro(userId)) ? LIMITS.PRO : LIMITS.FREE;
+}
+
+// ─── Pro Check ───────────────────────────────────────────────────────────────
+
 /** Check whether a user is Pro (verified OR has active subscription). */
-async function isPro(userId: string): Promise<boolean> {
+export async function isPro(userId: string): Promise<boolean> {
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -104,6 +118,42 @@ export async function addCallMinutes(userId: string, seconds: number): Promise<v
     await redis.expire(key, secondsUntilMidnight());
   } catch (err) {
     logger.error({ err, userId, seconds }, 'addCallMinutes failed');
+  }
+}
+
+// ─── Voice Transcriptions ─────────────────────────────────────────────────────
+
+export interface TranscriptionResult {
+  allowed: boolean;
+  used: number;
+  limit: number;
+  resetAt: string;
+}
+
+export async function checkTranscription(userId: string): Promise<TranscriptionResult> {
+  const resetAt = nextMidnightUTC().toISOString();
+  if (await isPro(userId)) {
+    return { allowed: true, used: 0, limit: -1, resetAt };
+  }
+  const key = `usage:transcriptions:${userId}:${todayKey()}`;
+  try {
+    const raw = await redis.get(key);
+    const used = raw ? parseInt(raw as string, 10) : 0;
+    return { allowed: used < FREE_TRANSCRIPTIONS, used, limit: FREE_TRANSCRIPTIONS, resetAt };
+  } catch (err) {
+    logger.error({ err, userId }, 'checkTranscription failed — allowing');
+    return { allowed: true, used: 0, limit: FREE_TRANSCRIPTIONS, resetAt };
+  }
+}
+
+export async function incrementTranscription(userId: string): Promise<void> {
+  if (await isPro(userId)) return;
+  const key = `usage:transcriptions:${userId}:${todayKey()}`;
+  try {
+    await redis.incr(key);
+    await redis.expire(key, secondsUntilMidnight());
+  } catch (err) {
+    logger.error({ err, userId }, 'incrementTranscription failed');
   }
 }
 
@@ -222,6 +272,8 @@ export interface UsageSummary {
     limitMessages: number;
     resetAt: string;
   };
+  transcription: { used: number; limit: number; resetAt: string };
+  limits: { bioLength: number; storyUploadMB: number; pinnedChats: number };
 }
 
 /**
@@ -231,6 +283,8 @@ export interface UsageSummary {
 export async function getUsageSummary(userId: string): Promise<UsageSummary> {
   const pro = await isPro(userId);
   const resetAt = nextMidnightUTC().toISOString();
+
+  const limits = pro ? LIMITS.PRO : LIMITS.FREE;
 
   if (pro) {
     return {
@@ -243,11 +297,16 @@ export async function getUsageSummary(userId: string): Promise<UsageSummary> {
         limitMessages: -1,
         resetAt,
       },
+      transcription: { used: 0, limit: -1, resetAt },
+      limits,
     };
   }
 
-  const callResult = await checkCallMinutes(userId);
-  const sessionResult = await checkKoraSession(userId);
+  const [callResult, sessionResult, txResult] = await Promise.all([
+    checkCallMinutes(userId),
+    checkKoraSession(userId),
+    checkTranscription(userId),
+  ]);
 
   return {
     isPro: false,
@@ -263,5 +322,7 @@ export async function getUsageSummary(userId: string): Promise<UsageSummary> {
       limitMessages: FREE_KORA_MESSAGES,
       resetAt,
     },
+    transcription: { used: txResult.used, limit: txResult.limit, resetAt },
+    limits,
   };
 }

@@ -220,6 +220,14 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
   socket.on('chat:read', async (data: { conversationId: string }) => {
     try {
       const { conversationId } = data;
+
+      // If user has read receipts hidden, silently skip — don't update DB or broadcast
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { hideReadReceipts: true },
+      });
+      if (user?.hideReadReceipts) return;
+
       await chatService.markConversationAsRead(conversationId, userId);
 
       const readPayload = { conversationId, userId };

@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { UpdatePreferenceInput, UpdateAvailabilityInput, UpdatePrivacyInput, UpdateProfileInput } from './user.schema';
 import { isBlocked } from '../safety/safety.service';
+import { getLimits, isPro } from '../../shared/usage.service';
 
 async function findUserOrThrow(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -34,6 +35,7 @@ export async function getProfile(userId: string) {
       phoneLookup: true,
       isProfilePublic: true,
       hideOnlineStatus: true,
+      hideReadReceipts: true,
       moderation: {
         select: {
           banStatus: true,
@@ -351,13 +353,23 @@ export async function updatePreference(userId: string, data: UpdatePreferenceInp
 
 export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
   await findUserOrThrow(userId);
+
+  // hideReadReceipts is a Pro-only feature
+  if (data.hideReadReceipts === true) {
+    const pro = await isPro(userId);
+    if (!pro) {
+      throw new ForbiddenError('Hide read receipts requires Yomeet Pro');
+    }
+  }
+
   return prisma.user.update({
     where: { id: userId },
     data: {
       ...(data.isProfilePublic !== undefined && { isProfilePublic: data.isProfilePublic }),
       ...(data.hideOnlineStatus !== undefined && { hideOnlineStatus: data.hideOnlineStatus }),
+      ...(data.hideReadReceipts !== undefined && { hideReadReceipts: data.hideReadReceipts }),
     },
-    select: { id: true, isProfilePublic: true, hideOnlineStatus: true },
+    select: { id: true, isProfilePublic: true, hideOnlineStatus: true, hideReadReceipts: true },
   });
 }
 
@@ -365,6 +377,14 @@ const NAME_CHANGE_COOLDOWN_DAYS = 20;
 
 export async function updateProfile(userId: string, data: UpdateProfileInput) {
   const user = await findUserOrThrow(userId);
+
+  // Enforce bio length limit based on Pro status
+  if (data.bio) {
+    const limits = await getLimits(userId);
+    if (data.bio.length > limits.bioLength) {
+      throw new ForbiddenError(`Bio exceeds ${limits.bioLength} character limit. Upgrade to Pro for longer bios.`);
+    }
+  }
 
   const isChangingName = data.displayName && data.displayName !== user.displayName;
 

@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { isBlocked } from '../safety/safety.service';
+import { getLimits } from '../../shared/usage.service';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import ogs from 'open-graph-scraper';
 
@@ -888,6 +889,17 @@ export async function getMessages(
  */
 export async function togglePin(userId: string, conversationId: string) {
   const participant = await verifyParticipant(conversationId, userId);
+
+  // Enforce pinned chat limit when pinning (not unpinning)
+  if (!participant.isPinned) {
+    const limits = await getLimits(userId);
+    const pinnedCount = await prisma.conversationParticipant.count({
+      where: { userId, isPinned: true, leftAt: null },
+    });
+    if (pinnedCount >= limits.pinnedChats) {
+      throw new ForbiddenError(`Pinned chat limit reached (max ${limits.pinnedChats}). Upgrade to Pro for more.`);
+    }
+  }
 
   const updated = await prisma.conversationParticipant.update({
     where: { conversationId_userId: { conversationId, userId } },

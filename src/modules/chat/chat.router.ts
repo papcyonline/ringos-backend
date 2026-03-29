@@ -702,6 +702,16 @@ router.post(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      // If user has read receipts hidden, skip DB update and broadcast
+      const reader = await prisma.user.findUnique({
+        where: { id: req.user!.userId },
+        select: { hideReadReceipts: true },
+      });
+      if (reader?.hideReadReceipts) {
+        res.json({ success: true });
+        return;
+      }
+
       await chatService.markConversationAsRead(
         (req.params.conversationId as string),
         req.user!.userId,

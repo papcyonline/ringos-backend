@@ -14,6 +14,8 @@ enum CompanionMode {
   LIGHT_AND_FUN
   NIGHT_COMPANION
   MOTIVATOR
+  RELATIONSHIP_COACH
+  CAREER_MENTOR
 }
 
 enum MatchIntent {
@@ -174,6 +176,7 @@ model User {
   verifiedRole  String?
   isProfilePublic Boolean @default(true)
   hideOnlineStatus Boolean @default(false)
+  hideReadReceipts Boolean @default(false)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -545,9 +548,10 @@ model SpotlightLog {
 
 model Story {
   id        String       @id @default(uuid())
-  userId    String
-  createdAt DateTime     @default(now())
-  expiresAt DateTime
+  userId      String
+  createdAt   DateTime     @default(now())
+  expiresAt   DateTime
+  isPermanent Boolean      @default(false)
 
   user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   slides StorySlide[]
@@ -638,6 +642,7 @@ model StoryView {
   storyId   String
   viewerId  String
   liked     Boolean  @default(false)
+  isStealth Boolean  @default(false)
   createdAt DateTime @default(now())
 
   story  Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
