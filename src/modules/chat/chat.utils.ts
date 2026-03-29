@@ -15,16 +15,12 @@ export async function emitToParticipantRooms(
   conversationId: string,
   payload: any,
 ): Promise<void> {
-  try {
-    const participants = await prisma.conversationParticipant.findMany({
-      where: { conversationId, leftAt: null },
-      select: { userId: true },
-    });
-    for (const p of participants) {
-      io.to(`user:${p.userId}`).emit('chat:list-update', payload);
-    }
-  } catch {
-    // Non-critical — conversation room broadcast already handled
+  const participants = await prisma.conversationParticipant.findMany({
+    where: { conversationId, leftAt: null },
+    select: { userId: true },
+  });
+  for (const p of participants) {
+    io.to(`user:${p.userId}`).emit('chat:list-update', payload);
   }
 }
 
