@@ -209,11 +209,20 @@ export async function getConversations(userId: string) {
     // For conversations with lastReadAt, count only messages after that timestamp.
     // We need per-conversation filtering, but we can still batch by fetching all unread
     // messages for these conversations and filtering in JS (much cheaper than N queries).
+    // Use the earliest lastReadAt as a floor to avoid scanning the entire message history.
+    const lastReadDates = idsWithLastRead
+      .map((id) => lastReadAtMap.get(id))
+      .filter((d): d is Date => d != null);
+    const earliestLastRead = lastReadDates.length > 0
+      ? new Date(Math.min(...lastReadDates.map((d) => d.getTime())))
+      : undefined;
+
     const unreadMessages = await prisma.message.findMany({
       where: {
         conversationId: { in: idsWithLastRead },
         senderId: { not: userId },
         deletedAt: null,
+        ...(earliestLastRead ? { createdAt: { gt: earliestLastRead } } : {}),
       },
       select: { conversationId: true, createdAt: true },
     });

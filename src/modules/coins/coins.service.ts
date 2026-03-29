@@ -89,55 +89,55 @@ export async function sendGift(
   }
 
   await ensureBalance(senderId);
-
-  // Check sender has enough coins
-  const senderBalance = await prisma.coinBalance.findUnique({
-    where: { userId: senderId },
-  });
-
-  if (!senderBalance || senderBalance.balance < coinAmount) {
-    throw new BadRequestError('Insufficient coin balance');
-  }
-
-  // Ensure recipient has a balance record
   await ensureBalance(story.userId);
 
-  // Atomic transaction: debit sender, credit recipient, record gift + transactions
-  const [updatedSender] = await prisma.$transaction([
-    prisma.coinBalance.update({
+  // Atomic transaction: check balance, debit sender, credit recipient, record gift
+  const [updatedSender] = await prisma.$transaction(async (tx) => {
+    // Check balance inside transaction to prevent race condition
+    const senderBalance = await tx.coinBalance.findUnique({
       where: { userId: senderId },
-      data: { balance: { decrement: coinAmount } },
-    }),
-    prisma.coinBalance.update({
-      where: { userId: story.userId },
-      data: { balance: { increment: coinAmount } },
-    }),
-    prisma.coinTransaction.create({
-      data: {
-        userId: senderId,
-        amount: -coinAmount,
-        type: 'GIFT',
-        relatedStoryId: storyId,
-      },
-    }),
-    prisma.coinTransaction.create({
-      data: {
-        userId: story.userId,
-        amount: coinAmount,
-        type: 'TIP',
-        relatedStoryId: storyId,
-      },
-    }),
-    prisma.storyGift.create({
-      data: {
-        senderId,
-        recipientId: story.userId,
-        storyId,
-        giftType,
-        coinAmount,
-      },
-    }),
-  ]);
+    });
+
+    if (!senderBalance || senderBalance.balance < coinAmount) {
+      throw new BadRequestError('Insufficient coin balance');
+    }
+
+    return Promise.all([
+      tx.coinBalance.update({
+        where: { userId: senderId },
+        data: { balance: { decrement: coinAmount } },
+      }),
+      tx.coinBalance.update({
+        where: { userId: story.userId },
+        data: { balance: { increment: coinAmount } },
+      }),
+      tx.coinTransaction.create({
+        data: {
+          userId: senderId,
+          amount: -coinAmount,
+          type: 'GIFT',
+          relatedStoryId: storyId,
+        },
+      }),
+      tx.coinTransaction.create({
+        data: {
+          userId: story.userId,
+          amount: coinAmount,
+          type: 'TIP',
+          relatedStoryId: storyId,
+        },
+      }),
+      tx.storyGift.create({
+        data: {
+          senderId,
+          recipientId: story.userId,
+          storyId,
+          giftType,
+          coinAmount,
+        },
+      }),
+    ]);
+  });
 
   logger.info({ senderId, recipientId: story.userId, storyId, giftType, coinAmount }, 'Gift sent');
 

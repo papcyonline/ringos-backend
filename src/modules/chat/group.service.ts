@@ -112,14 +112,24 @@ export async function addMembers(
     throw new ForbiddenError('Only admins can add members');
   }
 
-  // Filter out users already in the conversation — only check the IDs we're adding
+  // Find existing participants (both active and those who left)
   const existing = await prisma.conversationParticipant.findMany({
     where: { conversationId, userId: { in: memberIds } },
-    select: { userId: true },
+    select: { userId: true, leftAt: true },
   });
-  const existingIds = new Set(existing.map((e) => e.userId));
-  const newMembers = memberIds.filter((id) => !existingIds.has(id));
+  const existingMap = new Map(existing.map((e) => [e.userId, e]));
 
+  // Members who previously left — re-add by clearing leftAt
+  const rejoining = memberIds.filter((id) => existingMap.get(id)?.leftAt != null);
+  if (rejoining.length > 0) {
+    await prisma.conversationParticipant.updateMany({
+      where: { conversationId, userId: { in: rejoining } },
+      data: { leftAt: null, joinedAt: new Date() },
+    });
+  }
+
+  // Truly new members who never joined before
+  const newMembers = memberIds.filter((id) => !existingMap.has(id));
   if (newMembers.length > 0) {
     await prisma.conversationParticipant.createMany({
       data: newMembers.map((userId) => ({

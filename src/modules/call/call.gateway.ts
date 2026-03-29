@@ -480,6 +480,14 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       } else {
         call.participantIds.delete(userId);
         callState.unmapUser(userId);
+
+        // If only the initiator is left, clean up the call entirely
+        if (call.participantIds.size <= 1) {
+          io.to(`user:${call.initiatorId}`).emit('call:ended', { callId, endedBy: 'all_rejected' });
+          const remainingSockets = await io.in(`call:${callId}`).fetchSockets();
+          for (const s of remainingSockets) s.leave(`call:${callId}`);
+          callState.cleanup(callId);
+        }
       }
 
       logger.info({ userId, callId }, 'Call rejected');

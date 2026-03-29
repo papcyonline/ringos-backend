@@ -13,6 +13,7 @@ import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
 import { translateMessage } from './translation.service';
 import { transcribeMessage } from './transcription.service';
 import { notifyChatMessage } from '../notification/notification.service';
+import { prisma } from '../../config/database';
 
 const router = Router();
 
@@ -178,12 +179,25 @@ router.delete(
         req.user!.userId,
       );
 
-      // Broadcast deletion to room
+      // Broadcast deletion to conversation room
       const io = getIO();
-      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:deleted', {
+      const convId = req.params.conversationId as string;
+      const deletePayload = {
         messageId: message.id,
+        conversationId: convId,
         deletedAt: message.deletedAt,
-      });
+      };
+      io.to(`conversation:${convId}`).emit('chat:deleted', deletePayload);
+
+      // Also emit to personal rooms so conversation list clears the deleted last message
+      prisma.conversationParticipant.findMany({
+        where: { conversationId: convId, leftAt: null },
+        select: { userId: true },
+      }).then((participants) => {
+        for (const p of participants) {
+          io.to(`user:${p.userId}`).emit('chat:deleted', deletePayload);
+        }
+      }).catch(() => {});
 
       res.json(message);
     } catch (err) {
@@ -783,10 +797,20 @@ router.post(
 
       // Broadcast read receipt so the sender sees blue ticks
       const io = getIO();
-      io.to(`conversation:${(req.params.conversationId as string)}`).emit('chat:read', {
-        conversationId: (req.params.conversationId as string),
-        userId: req.user!.userId,
-      });
+      const convId = req.params.conversationId as string;
+      const readPayload = { conversationId: convId, userId: req.user!.userId };
+      io.to(`conversation:${convId}`).emit('chat:read', readPayload);
+
+      // Also emit to all other participants' personal rooms so the
+      // sender sees blue ticks even if they left the chat screen.
+      prisma.conversationParticipant.findMany({
+        where: { conversationId: convId, userId: { not: req.user!.userId }, leftAt: null },
+        select: { userId: true },
+      }).then((participants) => {
+        for (const p of participants) {
+          io.to(`user:${p.userId}`).emit('chat:read', readPayload);
+        }
+      }).catch(() => {});
 
       res.json({ success: true });
     } catch (err) {

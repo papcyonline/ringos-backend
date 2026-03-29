@@ -116,7 +116,7 @@ export async function initializeSocket(httpServer: HttpServer): Promise<Server> 
         select: { hideOnlineStatus: true },
       });
       if (!user?.hideOnlineStatus) {
-        socket.broadcast.emit('user:online', { userId });
+        io.emit('user:online', { userId });
       }
     } catch (err) {
       logger.error({ err, userId }, 'Failed to set user online');
@@ -135,7 +135,7 @@ export async function initializeSocket(httpServer: HttpServer): Promise<Server> 
             select: { hideOnlineStatus: true },
           });
           if (!user?.hideOnlineStatus) {
-            socket.broadcast.emit('user:offline', {
+            io.emit('user:offline', {
               userId,
               lastSeenAt: new Date().toISOString(),
             });

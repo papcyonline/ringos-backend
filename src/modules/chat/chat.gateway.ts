@@ -42,6 +42,11 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
         return;
       }
 
+      if (participant.leftAt !== null) {
+        socket.emit('chat:error', { message: 'You have left this conversation' });
+        return;
+      }
+
       socket.join(`conversation:${conversationId}`);
       logger.info({ userId, conversationId, socketId: socket.id }, 'User joined conversation room');
 
@@ -141,10 +146,23 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
 
       const message = await chatService.deleteMessage(messageId, userId);
 
-      io.to(`conversation:${message.conversationId}`).emit('chat:deleted', {
+      const deletePayload = {
         messageId: message.id,
+        conversationId: message.conversationId,
         deletedAt: message.deletedAt,
-      });
+      };
+      io.to(`conversation:${message.conversationId}`).emit('chat:deleted', deletePayload);
+
+      // Also emit chat:deleted to personal rooms so conversation list
+      // clears the deleted last message even when user is not in the room.
+      prisma.conversationParticipant.findMany({
+        where: { conversationId: message.conversationId, leftAt: null },
+        select: { userId: true },
+      }).then((participants) => {
+        for (const p of participants) {
+          io.to(`user:${p.userId}`).emit('chat:deleted', deletePayload);
+        }
+      }).catch(() => {});
 
       logger.debug({ messageId, userId }, 'Delete broadcast to room');
     } catch (error: any) {

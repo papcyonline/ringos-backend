@@ -281,9 +281,10 @@ async function socialAuthFlow(params: {
 }) {
   const { providerId, providerField, email, name, avatarUrl, authProvider } = params;
 
-  const { user, accessToken, refreshToken, shouldSendWelcome } = await prisma.$transaction(async (tx) => {
+  const { user, accessToken, refreshToken, shouldSendWelcome, isNewUser } = await prisma.$transaction(async (tx) => {
     let user = await tx.user.findUnique({ where: { [providerField]: providerId } as any });
     let shouldSendWelcome = false;
+    let isNewUser = false;
 
     if (user) {
       // Check if existing user is banned
@@ -321,6 +322,7 @@ async function socialAuthFlow(params: {
         });
         logger.info({ userId: user.id }, `New ${authProvider} user registered`);
         shouldSendWelcome = true;
+        isNewUser = true;
       }
     } else {
       user = await tx.user.create({
@@ -332,10 +334,11 @@ async function socialAuthFlow(params: {
         },
       });
       logger.info({ userId: user.id }, `New ${authProvider} user registered (no email)`);
+      isNewUser = true;
     }
 
     const tokens = await createTokenPair(tx, user.id, user.isAnonymous);
-    return { user, ...tokens, shouldSendWelcome };
+    return { user, ...tokens, shouldSendWelcome, isNewUser };
   });
 
   if (shouldSendWelcome && email) {
@@ -352,7 +355,7 @@ async function socialAuthFlow(params: {
       avatarUrl: user.avatarUrl,
       isAnonymous: user.isAnonymous,
     },
-    isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime()) < 5000,
+    isNewUser,
   };
 }
 
@@ -520,7 +523,7 @@ export async function requestOtp(phone: string) {
         phoneHash,
         phoneLookup: lookup,
         displayName: generateAnonymousName(),
-        isAnonymous: false,
+        isAnonymous: true,
       },
     });
     matchedUser = newUser;

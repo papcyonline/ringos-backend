@@ -99,6 +99,8 @@ router.post(
       'Access-Control-Allow-Origin': '*',
     });
 
+    let ended = false;
+    const safeEnd = () => { if (!ended) { ended = true; res.end(); } };
     try {
       // Increment message count
       await incrementKoraMessage(req.user!.userId, (req.params.sessionId as string));
@@ -108,19 +110,19 @@ router.post(
         req.user!.userId,
         req.body.content,
         (token) => {
-          res.write(`data: ${JSON.stringify({ type: 'token', text: token })}\n\n`);
+          if (!ended) res.write(`data: ${JSON.stringify({ type: 'token', text: token })}\n\n`);
         },
         (meta) => {
-          res.write(`data: ${JSON.stringify({ type: 'done', ...meta })}\n\n`);
-          res.end();
+          if (!ended) res.write(`data: ${JSON.stringify({ type: 'done', ...meta })}\n\n`);
+          safeEnd();
         },
         (action) => {
-          res.write(`data: ${JSON.stringify({ type: 'action', actionType: action.actionType, data: action.data })}\n\n`);
+          if (!ended) res.write(`data: ${JSON.stringify({ type: 'action', actionType: action.actionType, data: action.data })}\n\n`);
         },
       );
     } catch (err) {
-      res.write(`data: ${JSON.stringify({ type: 'error', message: (err as Error).message })}\n\n`);
-      res.end();
+      if (!ended) res.write(`data: ${JSON.stringify({ type: 'error', message: (err as Error).message })}\n\n`);
+      safeEnd();
     }
   },
 );

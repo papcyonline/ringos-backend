@@ -26,14 +26,21 @@ function secondsUntilMidnight(): number {
   return Math.ceil((nextMidnightUTC().getTime() - Date.now()) / 1000);
 }
 
-/** Check whether a user is Pro (verified / subscribed). */
+/** Check whether a user is Pro (verified OR has active subscription). */
 async function isPro(userId: string): Promise<boolean> {
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { isVerified: true },
+      select: {
+        isVerified: true,
+        subscription: { select: { status: true } },
+      },
     });
-    return user?.isVerified === true;
+    if (!user) return false;
+    if (user.isVerified) return true;
+    // Check for active RevenueCat subscription
+    const subStatus = user.subscription?.status;
+    return subStatus === 'active' || subStatus === 'trialing';
   } catch (err) {
     logger.error({ err, userId }, 'Failed to check Pro status');
     return false;
