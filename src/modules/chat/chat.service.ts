@@ -938,7 +938,7 @@ export async function forwardMessage(
     imageUrl: original.imageUrl ?? undefined,
     audioUrl: original.audioUrl ?? undefined,
     audioDuration: original.audioDuration ?? undefined,
-    metadata: { forwarded: true },
+    metadata: { isForwarded: true },
   });
 
   logger.info({ messageId, targetConversationId, senderId }, 'Message forwarded');

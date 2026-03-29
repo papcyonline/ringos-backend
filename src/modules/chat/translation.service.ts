@@ -33,9 +33,8 @@ function shouldSkipTranslation(content: string): boolean {
   // Split into words (sequences of letters)
   const words = cleaned.split(/\s+/).filter(w => w.length > 0);
 
-  // Need at least 3 real words to be worth translating
-  // "I love you" = translate. "wyd bro" = skip.
-  if (words.length < 3) return true;
+  // Need at least 2 real words to be worth translating
+  if (words.length < 2) return true;
 
   // If most "words" are very short (1-3 chars), it's likely slang/abbreviations
   const shortWords = words.filter(w => w.length <= 3).length;
@@ -124,11 +123,17 @@ Rules:
     // If no translations remain (message is already in the only target language), skip
     if (Object.keys(parsed.translations).length === 0) return;
 
-    // Persist to message metadata
+    // Persist to message metadata — merge with existing metadata
+    const existing = await prisma.message.findUnique({
+      where: { id: messageId },
+      select: { metadata: true },
+    });
+    const currentMetadata = (existing?.metadata as Record<string, unknown>) ?? {};
     await prisma.message.update({
       where: { id: messageId },
       data: {
         metadata: {
+          ...currentMetadata,
           detectedLanguage: parsed.detectedLanguage,
           translations: parsed.translations,
         },
