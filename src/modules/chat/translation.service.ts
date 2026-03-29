@@ -68,9 +68,12 @@ export async function translateMessage(
     const targetLanguages = [
       ...new Set(
         participants
+          .filter((p) => p.user != null)
           .flatMap((p) => (p.user.preference?.language ?? 'en').split(',').map((l: string) => l.trim()).filter(Boolean))
       ),
     ];
+
+    if (targetLanguages.length === 0) return;
 
     // If only one participant language, still proceed — the message might be
     // written in a different language than the participants speak.

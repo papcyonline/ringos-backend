@@ -299,47 +299,50 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const timeout = setTimeout(async () => {
         const call = callState.getCall(callId);
         if (call && !call.answeredAt) {
-          io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: 'timeout' });
-          // Make all sockets leave the call room
-          const sockets = await io.in(`call:${callId}`).fetchSockets();
-          for (const s of sockets) s.leave(`call:${callId}`);
-
-          // Send missed call notification to each target user
-          for (const targetId of targetUserIds) {
-            io.to(`user:${targetId}`).emit('call:missed', {
-              callId,
-              conversationId,
-              callType: resolvedCallType,
-              callerName: caller?.displayName ?? 'Unknown',
-              callerAvatar: caller?.avatarUrl ?? null,
-            });
-
-            sendMissedCallNotification(targetId, {
-              callId,
-              conversationId,
-              callType: resolvedCallType,
-              callerId: userId,
-              callerName: caller?.displayName ?? 'Unknown',
-              callerAvatar: caller?.avatarUrl,
-            }).catch((err) => {
-              logger.error({ err, targetId, callId }, 'Failed to send missed call notification');
-            });
-          }
-
-          // Bump conversation.updatedAt so it sorts to the top of the list
           try {
-            await prisma.conversation.update({
-              where: { id: conversationId },
-              data: { updatedAt: new Date() },
-            });
-          } catch (dbErr) {
-            logger.error({ dbErr, callId, conversationId }, 'Failed to bump conversation updatedAt on missed call');
-          }
+            io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: 'timeout' });
+            const sockets = await io.in(`call:${callId}`).fetchSockets();
+            for (const s of sockets) s.leave(`call:${callId}`);
 
-          callState.cleanup(callId);
-          logger.info({ callId }, 'Call timed out server-side (no answer)');
+            for (const targetId of targetUserIds) {
+              io.to(`user:${targetId}`).emit('call:missed', {
+                callId,
+                conversationId,
+                callType: resolvedCallType,
+                callerName: caller?.displayName ?? 'Unknown',
+                callerAvatar: caller?.avatarUrl ?? null,
+              });
+
+              sendMissedCallNotification(targetId, {
+                callId,
+                conversationId,
+                callType: resolvedCallType,
+                callerId: userId,
+                callerName: caller?.displayName ?? 'Unknown',
+                callerAvatar: caller?.avatarUrl,
+              }).catch((err) => {
+                logger.error({ err, targetId, callId }, 'Failed to send missed call notification');
+              });
+            }
+
+            try {
+              await prisma.conversation.update({
+                where: { id: conversationId },
+                data: { updatedAt: new Date() },
+              });
+            } catch (dbErr) {
+              logger.error({ dbErr, callId, conversationId }, 'Failed to bump conversation updatedAt on missed call');
+            }
+
+            logger.info({ callId }, 'Call timed out server-side (no answer)');
+          } finally {
+            // Always clean up call state, even if notifications fail
+            callState.cleanup(callId);
+            callState.timeouts.delete(callId);
+          }
+        } else {
+          callState.timeouts.delete(callId);
         }
-        callState.timeouts.delete(callId);
       }, CALL_TIMEOUT_MS);
       callState.setTimeout(callId, timeout);
 

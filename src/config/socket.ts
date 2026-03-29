@@ -56,13 +56,18 @@ export async function initializeSocket(httpServer: HttpServer): Promise<Server> 
 
   // Use Redis adapter for multi-instance support when REDIS_URL is configured
   if (env.REDIS_URL) {
+    let pubClient: ReturnType<typeof createClient> | null = null;
+    let subClient: ReturnType<typeof createClient> | null = null;
     try {
-      const pubClient = createClient({ url: env.REDIS_URL });
-      const subClient = pubClient.duplicate();
+      pubClient = createClient({ url: env.REDIS_URL });
+      subClient = pubClient.duplicate();
       await Promise.all([pubClient.connect(), subClient.connect()]);
       io.adapter(createAdapter(pubClient, subClient));
       logger.info('Socket.IO Redis adapter enabled');
     } catch (err) {
+      // Clean up connections on failure
+      await pubClient?.disconnect().catch(() => {});
+      await subClient?.disconnect().catch(() => {});
       logger.warn({ err }, 'Failed to connect Socket.IO Redis adapter, using in-memory');
     }
   }
