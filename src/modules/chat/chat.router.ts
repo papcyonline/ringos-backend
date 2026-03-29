@@ -14,8 +14,85 @@ import { translateMessage } from './translation.service';
 import { transcribeMessage } from './transcription.service';
 import { notifyChatMessage } from '../notification/notification.service';
 import { prisma } from '../../config/database';
+import * as folderService from './folder.service';
 
 const router = Router();
+
+// ─── Chat Folders ────────────────────────────────────────
+
+// GET /folders - List user's chat folders
+router.get('/folders', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const folders = await folderService.getFolders(req.user!.userId);
+    res.json({ folders });
+  } catch (err) { next(err); }
+});
+
+// POST /folders - Create a chat folder
+router.post('/folders', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, icon } = req.body;
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({ error: 'Folder name is required' });
+    }
+    if (name.trim().length > 30) {
+      return res.status(400).json({ error: 'Folder name too long (max 30 characters)' });
+    }
+    const folder = await folderService.createFolder(req.user!.userId, name, icon);
+    res.status(201).json(folder);
+  } catch (err) { next(err); }
+});
+
+// PUT /folders/:folderId - Update a chat folder
+router.put('/folders/:folderId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, icon } = req.body;
+    const folder = await folderService.updateFolder(req.user!.userId, (req.params.folderId as string), { name, icon });
+    res.json(folder);
+  } catch (err) { next(err); }
+});
+
+// DELETE /folders/:folderId - Delete a chat folder
+router.delete('/folders/:folderId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await folderService.deleteFolder(req.user!.userId, (req.params.folderId as string));
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// PUT /folders/reorder - Reorder chat folders
+router.put('/folders/reorder', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { folderIds } = req.body;
+    if (!Array.isArray(folderIds)) {
+      return res.status(400).json({ error: 'folderIds array is required' });
+    }
+    const result = await folderService.reorderFolders(req.user!.userId, folderIds);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /folders/:folderId/conversations/:conversationId - Add conversation to folder
+router.post('/folders/:folderId/conversations/:conversationId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await folderService.addConversationToFolder(
+      req.user!.userId, (req.params.folderId as string), (req.params.conversationId as string),
+    );
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// DELETE /folders/conversations/:conversationId - Remove conversation from its folder
+router.delete('/folders/conversations/:conversationId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await folderService.removeConversationFromFolder(
+      req.user!.userId, (req.params.conversationId as string),
+    );
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// ─── Conversations ───────────────────────────────────────
 
 // GET /conversations - List user's conversations
 router.get(

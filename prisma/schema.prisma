@@ -209,6 +209,7 @@ model User {
   coinTransactions CoinTransaction[]
   giftsSent        StoryGift[]    @relation("GiftsSent")
   giftsReceived    StoryGift[]    @relation("GiftsReceived")
+  chatFolders      ChatFolder[]
 
   @@index([isOnline, lastSeenAt])
 }
@@ -651,4 +652,32 @@ model StoryView {
   @@unique([storyId, viewerId])
   @@index([storyId])
   @@index([viewerId])
+}
+
+// ─── Chat Folders ──────────────────────────────────────
+
+model ChatFolder {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  icon      String?  // emoji or icon name
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  members ChatFolderMember[]
+
+  @@index([userId, position])
+}
+
+model ChatFolderMember {
+  id             String @id @default(uuid())
+  folderId       String
+  conversationId String
+
+  folder ChatFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([folderId, conversationId])
+  @@unique([conversationId]) // one folder per conversation
+  @@index([folderId])
 }
