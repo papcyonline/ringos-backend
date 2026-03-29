@@ -597,11 +597,15 @@ export async function deleteMessage(messageId: string, userId: string) {
     }
   }
 
-  const updated = await prisma.message.update({
-    where: { id: messageId },
-    data: { content: '', imageUrl: null, audioUrl: null, deletedAt: new Date() },
-    include: messageInclude,
-  });
+  const [updated] = await prisma.$transaction([
+    prisma.message.update({
+      where: { id: messageId },
+      data: { content: '', imageUrl: null, audioUrl: null, deletedAt: new Date() },
+      include: messageInclude,
+    }),
+    // Clean up reactions on deleted messages
+    prisma.messageReaction.deleteMany({ where: { messageId } }),
+  ]);
 
   logger.debug({ messageId, userId }, 'Message deleted');
   return updated;
@@ -615,11 +619,8 @@ export async function togglePinMessage(messageId: string, userId: string) {
   if (!message) throw new NotFoundError('Message not found');
   if (message.deletedAt) throw new ForbiddenError('Cannot pin a deleted message');
 
-  // Verify user is a participant
-  const participant = await prisma.conversationParticipant.findUnique({
-    where: { conversationId_userId: { conversationId: message.conversationId, userId } },
-  });
-  if (!participant) throw new ForbiddenError('You are not a participant in this conversation');
+  // Verify user is an active participant (checks leftAt too)
+  await verifyParticipant(message.conversationId, userId);
 
   const newPinned = !message.isPinned;
   const updated = await prisma.message.update({
@@ -754,6 +755,10 @@ export async function endConversation(conversationId: string, userId: string) {
 
   if (!conversation) {
     throw new NotFoundError('Conversation not found');
+  }
+
+  if (conversation.status === 'ENDED') {
+    throw new ForbiddenError('Conversation is already ended');
   }
 
   await verifyParticipant(conversationId, userId);
