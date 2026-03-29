@@ -85,6 +85,39 @@ class CallStateManager {
 
 const callState = new CallStateManager();
 
+/**
+ * Shared call-end logic: calculate duration, update DB, track minutes, remove sockets, cleanup state.
+ * Used by both the explicit call:end handler and the disconnect grace expiry.
+ */
+async function finalizeCallEnd(io: Server, callId: string, call: ActiveCall): Promise<void> {
+  const now = new Date();
+  const durationSecs = call.answeredAt
+    ? Math.round((now.getTime() - call.answeredAt.getTime()) / 1000)
+    : undefined;
+
+  try {
+    await prisma.callLog.update({
+      where: { callId },
+      data: { endedAt: now, ...(durationSecs !== undefined ? { durationSecs } : {}) },
+    });
+  } catch (dbErr) {
+    logger.error({ dbErr, callId }, 'Failed to update CallLog on end');
+  }
+
+  if (durationSecs !== undefined && durationSecs > 0) {
+    for (const pid of call.participantIds) {
+      addCallMinutes(pid, durationSecs).catch((err) => {
+        logger.error({ err, userId: pid, callId }, 'Failed to track call minutes');
+      });
+    }
+  }
+
+  const sockets = await io.in(`call:${callId}`).fetchSockets();
+  for (const s of sockets) s.leave(`call:${callId}`);
+
+  callState.cleanup(callId);
+}
+
 /** Check whether a user is currently in an active call. */
 export function isUserInCall(userId: string): boolean {
   return callState.isUserInCall(userId);
@@ -576,48 +609,10 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
     try {
       const { callId } = data;
       const call = callState.getCall(callId);
-
       if (!call) return;
 
-      // Calculate duration
-      const now = new Date();
-      const durationSecs = call.answeredAt
-        ? Math.round((now.getTime() - call.answeredAt.getTime()) / 1000)
-        : undefined;
-
-      // Update CallLog with endedAt and durationSecs
-      try {
-        await prisma.callLog.update({
-          where: { callId },
-          data: {
-            endedAt: now,
-            ...(durationSecs !== undefined ? { durationSecs } : {}),
-          },
-        });
-      } catch (dbErr) {
-        logger.error({ dbErr, callId }, 'Failed to update CallLog on end');
-      }
-
-      // Track call minutes for all participants
-      if (durationSecs !== undefined && durationSecs > 0) {
-        for (const pid of call.participantIds) {
-          addCallMinutes(pid, durationSecs).catch((err) => {
-            logger.error({ err, userId: pid, callId }, 'Failed to track call minutes');
-          });
-        }
-      }
-
-      // Notify all other participants
-      socket.to(`call:${callId}`).emit('call:ended', {
-        callId,
-        endedBy: userId,
-      });
-
-      // Make all sockets leave the call room
-      const endSockets = await io.in(`call:${callId}`).fetchSockets();
-      for (const s of endSockets) s.leave(`call:${callId}`);
-
-      callState.cleanup(callId);
+      socket.to(`call:${callId}`).emit('call:ended', { callId, endedBy: userId });
+      await finalizeCallEnd(io, callId, call);
       logger.info({ userId, callId }, 'Call ended');
     } catch (error) {
       logger.error({ error, userId }, 'Error ending call');
@@ -682,32 +677,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       } else {
         // Grace period expired — end the call
         io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: userId });
-
-        const now = new Date();
-        const durationSecs = currentCall.answeredAt
-          ? Math.round((now.getTime() - currentCall.answeredAt.getTime()) / 1000)
-          : undefined;
-
-        prisma.callLog.update({
-          where: { callId },
-          data: { endedAt: now, ...(durationSecs !== undefined ? { durationSecs } : {}) },
-        }).catch((dbErr) => {
-          logger.error({ dbErr, callId }, 'Failed to update CallLog on disconnect grace expiry');
-        });
-
-        if (durationSecs !== undefined && durationSecs > 0) {
-          for (const pid of currentCall.participantIds) {
-            addCallMinutes(pid, durationSecs).catch((err) => {
-              logger.error({ err, userId: pid, callId }, 'Failed to track call minutes');
-            });
-          }
-        }
-
-        io.in(`call:${callId}`).fetchSockets().then((sockets) => {
-          for (const s of sockets) s.leave(`call:${callId}`);
-        }).catch(() => {});
-
-        callState.cleanup(callId);
+        await finalizeCallEnd(io, callId, currentCall);
         logger.info({ userId, callId }, 'Call ended after disconnect grace period expired');
       }
     }, DISCONNECT_GRACE_MS);
