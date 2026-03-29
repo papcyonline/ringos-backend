@@ -6,7 +6,7 @@ import { formatMessagePayload, emitToParticipantRooms } from './chat.utils';
 import { translateMessage } from './translation.service';
 import { notifyChatMessage } from '../notification/notification.service';
 
-const VALID_EMOJIS = ['thumbsup', 'heart', 'laugh', 'wow', 'sad', 'pray'];
+// Any emoji is allowed — validation is in the schema (max 32 chars)
 
 function validateMessageContent(content: unknown): { valid: true } | { valid: false; error: string } {
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
@@ -161,28 +161,20 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     try {
       const { messageId, emoji } = data;
 
-      if (!VALID_EMOJIS.includes(emoji)) {
+      if (!emoji || typeof emoji !== 'string' || emoji.length > 32) {
         socket.emit('chat:error', { message: 'Invalid emoji' });
         return;
       }
 
       const result = await chatService.toggleReaction(messageId, userId, emoji);
 
-      // Get the conversation ID from the message
-      const message = await prisma.message.findUnique({
-        where: { id: messageId },
-        select: { conversationId: true },
+      io.to(`conversation:${result.conversationId}`).emit('chat:reacted', {
+        messageId: result.messageId,
+        userId: result.userId,
+        emoji: result.emoji,
+        action: result.action,
+        displayName: (result as any).displayName,
       });
-
-      if (message) {
-        io.to(`conversation:${message.conversationId}`).emit('chat:reacted', {
-          messageId: result.messageId,
-          userId: result.userId,
-          emoji: result.emoji,
-          action: result.action,
-          displayName: (result as any).displayName,
-        });
-      }
 
       logger.debug({ messageId, userId, emoji, action: result.action }, 'Reaction broadcast to room');
     } catch (error: any) {

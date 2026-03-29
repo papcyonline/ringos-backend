@@ -732,7 +732,7 @@ export async function toggleReaction(messageId: string, userId: string, emoji: s
   if (existing) {
     await prisma.messageReaction.delete({ where: { id: existing.id } });
     logger.debug({ messageId, userId, emoji, action: 'removed' }, 'Reaction toggled');
-    return { action: 'removed' as const, emoji, userId, messageId };
+    return { action: 'removed' as const, emoji, userId, messageId, conversationId: message.conversationId };
   }
 
   const reaction = await prisma.messageReaction.create({
@@ -741,7 +741,7 @@ export async function toggleReaction(messageId: string, userId: string, emoji: s
   });
 
   logger.debug({ messageId, userId, emoji, action: 'added' }, 'Reaction toggled');
-  return { action: 'added' as const, emoji, userId, messageId, displayName: reaction.user.displayName };
+  return { action: 'added' as const, emoji, userId, messageId, conversationId: message.conversationId, displayName: reaction.user.displayName };
 }
 
 /**
