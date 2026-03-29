@@ -661,6 +661,7 @@ model ChatFolder {
   userId    String
   name      String
   icon      String?  // emoji or icon name
+  color     String?  // hex color e.g. "#E3F2FD"
   position  Int      @default(0)
   createdAt DateTime @default(now())
 

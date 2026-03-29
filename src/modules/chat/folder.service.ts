@@ -13,7 +13,7 @@ export async function getFolders(userId: string) {
   });
 }
 
-export async function createFolder(userId: string, name: string, icon?: string) {
+export async function createFolder(userId: string, name: string, icon?: string, color?: string) {
   const count = await prisma.chatFolder.count({ where: { userId } });
   if (count >= MAX_FOLDERS) {
     throw new BadRequestError(`Maximum ${MAX_FOLDERS} folders allowed`);
@@ -24,6 +24,7 @@ export async function createFolder(userId: string, name: string, icon?: string) 
       userId,
       name: name.trim(),
       icon: icon ?? null,
+      color: color ?? null,
       position: count, // append at end
     },
     include: {
@@ -35,7 +36,7 @@ export async function createFolder(userId: string, name: string, icon?: string) 
 export async function updateFolder(
   userId: string,
   folderId: string,
-  updates: { name?: string; icon?: string },
+  updates: { name?: string; icon?: string; color?: string },
 ) {
   const folder = await prisma.chatFolder.findUnique({ where: { id: folderId } });
   if (!folder) throw new NotFoundError('Folder not found');
@@ -46,6 +47,7 @@ export async function updateFolder(
     data: {
       ...(updates.name !== undefined ? { name: updates.name.trim() } : {}),
       ...(updates.icon !== undefined ? { icon: updates.icon } : {}),
+      ...(updates.color !== undefined ? { color: updates.color } : {}),
     },
     include: {
       members: { select: { conversationId: true } },

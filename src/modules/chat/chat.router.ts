@@ -31,14 +31,14 @@ router.get('/folders', authenticate, async (req: AuthRequest, res: Response, nex
 // POST /folders - Create a chat folder
 router.post('/folders', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { name, icon } = req.body;
+    const { name, icon, color } = req.body;
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return res.status(400).json({ error: 'Folder name is required' });
     }
     if (name.trim().length > 30) {
       return res.status(400).json({ error: 'Folder name too long (max 30 characters)' });
     }
-    const folder = await folderService.createFolder(req.user!.userId, name, icon);
+    const folder = await folderService.createFolder(req.user!.userId, name, icon, color);
     res.status(201).json(folder);
   } catch (err) { next(err); }
 });
@@ -46,8 +46,8 @@ router.post('/folders', authenticate, async (req: AuthRequest, res: Response, ne
 // PUT /folders/:folderId - Update a chat folder
 router.put('/folders/:folderId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { name, icon } = req.body;
-    const folder = await folderService.updateFolder(req.user!.userId, (req.params.folderId as string), { name, icon });
+    const { name, icon, color } = req.body;
+    const folder = await folderService.updateFolder(req.user!.userId, (req.params.folderId as string), { name, icon, color });
     res.json(folder);
   } catch (err) { next(err); }
 });
