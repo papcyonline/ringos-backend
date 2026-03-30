@@ -97,9 +97,14 @@ export async function addConversationToFolder(
   if (!folder) throw new NotFoundError('Folder not found');
   if (folder.userId !== userId) throw new ForbiddenError('Not your folder');
 
-  // Remove from any existing folder first (one folder per conversation)
+  // Remove from any existing folder owned by this user first (one folder per conversation)
+  const userFolderIds = (await prisma.chatFolder.findMany({
+    where: { userId },
+    select: { id: true },
+  })).map((f) => f.id);
+
   await prisma.chatFolderMember.deleteMany({
-    where: { conversationId },
+    where: { conversationId, folderId: { in: userFolderIds } },
   });
 
   await prisma.chatFolderMember.create({
