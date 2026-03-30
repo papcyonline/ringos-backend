@@ -979,6 +979,50 @@ export async function forwardMessage(
 // ─── Search Messages ──────────────────────────────────────────
 
 /**
+ * Search messages across ALL conversations the user participates in.
+ */
+export async function searchMessagesGlobal(
+  userId: string,
+  query: string,
+) {
+  // Get all conversation IDs the user is part of
+  const participations = await prisma.conversationParticipant.findMany({
+    where: { userId, leftAt: null },
+    select: { conversationId: true },
+  });
+  const conversationIds = participations.map((p) => p.conversationId);
+
+  if (conversationIds.length === 0) return [];
+
+  const messages = await prisma.message.findMany({
+    where: {
+      conversationId: { in: conversationIds },
+      deletedAt: null,
+      content: { contains: query, mode: 'insensitive' },
+    },
+    include: {
+      ...messageInclude,
+      conversation: {
+        select: {
+          id: true,
+          type: true,
+          name: true,
+          participants: {
+            select: {
+              user: { select: { id: true, displayName: true, avatarUrl: true } },
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ createdAt: 'desc' }],
+    take: 50,
+  });
+
+  return messages;
+}
+
+/**
  * Search messages within a conversation by text content.
  */
 export async function searchMessages(

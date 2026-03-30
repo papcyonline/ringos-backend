@@ -92,6 +92,22 @@ router.delete('/folders/conversations/:conversationId', authenticate, async (req
   } catch (err) { next(err); }
 });
 
+// GET /messages/search - Global message search across all conversations
+router.get(
+  '/messages/search',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const q = (req.query.q as string || '').trim();
+      if (q.length < 1) {
+        return res.status(400).json({ error: 'Search query is required' });
+      }
+      const messages = await chatService.searchMessagesGlobal(req.user!.userId, q);
+      res.json({ messages });
+    } catch (err) { next(err); }
+  },
+);
+
 // ─── Conversations ───────────────────────────────────────
 
 // GET /conversations - List user's conversations
