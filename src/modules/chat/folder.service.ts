@@ -3,6 +3,14 @@ import { BadRequestError, ForbiddenError, NotFoundError } from '../../shared/err
 
 const MAX_FOLDERS = 10;
 
+/** Verify folder exists and belongs to user. */
+async function verifyFolderOwnership(folderId: string, userId: string) {
+  const folder = await prisma.chatFolder.findUnique({ where: { id: folderId } });
+  if (!folder) throw new NotFoundError('Folder not found');
+  if (folder.userId !== userId) throw new ForbiddenError('Not your folder');
+  return folder;
+}
+
 export async function getFolders(userId: string) {
   return prisma.chatFolder.findMany({
     where: { userId },
@@ -38,9 +46,7 @@ export async function updateFolder(
   folderId: string,
   updates: { name?: string; icon?: string; color?: string },
 ) {
-  const folder = await prisma.chatFolder.findUnique({ where: { id: folderId } });
-  if (!folder) throw new NotFoundError('Folder not found');
-  if (folder.userId !== userId) throw new ForbiddenError('Not your folder');
+  await verifyFolderOwnership(folderId, userId);
 
   return prisma.chatFolder.update({
     where: { id: folderId },
@@ -56,9 +62,7 @@ export async function updateFolder(
 }
 
 export async function deleteFolder(userId: string, folderId: string) {
-  const folder = await prisma.chatFolder.findUnique({ where: { id: folderId } });
-  if (!folder) throw new NotFoundError('Folder not found');
-  if (folder.userId !== userId) throw new ForbiddenError('Not your folder');
+  await verifyFolderOwnership(folderId, userId);
 
   await prisma.chatFolder.delete({ where: { id: folderId } });
   return { deleted: true };
@@ -93,9 +97,7 @@ export async function addConversationToFolder(
   folderId: string,
   conversationId: string,
 ) {
-  const folder = await prisma.chatFolder.findUnique({ where: { id: folderId } });
-  if (!folder) throw new NotFoundError('Folder not found');
-  if (folder.userId !== userId) throw new ForbiddenError('Not your folder');
+  await verifyFolderOwnership(folderId, userId);
 
   // Remove from any existing folder owned by this user first (one folder per conversation)
   const userFolderIds = (await prisma.chatFolder.findMany({
