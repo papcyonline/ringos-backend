@@ -339,6 +339,7 @@ model Conversation {
   isVerified  Boolean            @default(false)
   callsEnabled  Boolean          @default(true)
   videoEnabled  Boolean          @default(true)
+  disappearAfterSecs Int?       // null=off, 86400=24h, 604800=7d, 2592000=30d
   metadata  Json?
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
@@ -387,6 +388,7 @@ model Message {
   pinnedById     String?
   editedAt       DateTime?
   deletedAt      DateTime?
+  expiresAt      DateTime?  // set when disappearAfterSecs is active on conversation
   createdAt      DateTime  @default(now())
 
   conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)

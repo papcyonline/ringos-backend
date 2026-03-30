@@ -520,6 +520,12 @@ export async function sendMessage(
     await Promise.all(parallelChecks);
   }
 
+  // Compute message expiry if conversation has disappearing messages enabled
+  const disappearSecs = (conversation as any).disappearAfterSecs as number | null;
+  const expiresAt = disappearSecs
+    ? new Date(Date.now() + disappearSecs * 1000)
+    : undefined;
+
   // Create message and update conversation timestamp in parallel
   const [message] = await Promise.all([
     prisma.message.create({
@@ -533,6 +539,7 @@ export async function sendMessage(
         audioUrl: audioUrl || undefined,
         audioDuration: audioDuration ?? undefined,
         metadata: metadata ?? undefined,
+        expiresAt,
       },
       include: messageInclude,
     }),
@@ -940,6 +947,31 @@ export async function toggleArchive(userId: string, conversationId: string) {
   });
 
   logger.debug({ conversationId, userId, isArchived: updated.isArchived }, 'Archive toggled');
+  return updated;
+}
+
+// ─── Disappearing Messages ───────────────────────────────────
+
+const VALID_DISAPPEAR_DURATIONS = [null, 86400, 604800, 2592000]; // off, 24h, 7d, 30d
+
+export async function setDisappearingMessages(
+  conversationId: string,
+  userId: string,
+  disappearAfterSecs: number | null,
+) {
+  if (!VALID_DISAPPEAR_DURATIONS.includes(disappearAfterSecs)) {
+    throw new NotFoundError('Invalid duration. Use null (off), 86400 (24h), 604800 (7d), or 2592000 (30d)');
+  }
+
+  await verifyParticipant(conversationId, userId);
+
+  const updated = await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { disappearAfterSecs },
+    select: { id: true, disappearAfterSecs: true },
+  });
+
+  logger.info({ conversationId, userId, disappearAfterSecs }, 'Disappearing messages updated');
   return updated;
 }
 

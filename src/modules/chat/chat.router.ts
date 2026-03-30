@@ -789,6 +789,23 @@ router.patch(
   },
 );
 
+// PUT /conversations/:conversationId/disappearing - Set disappearing messages timer
+router.put(
+  '/conversations/:conversationId/disappearing',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { disappearAfterSecs } = req.body;
+      const result = await chatService.setDisappearingMessages(
+        (req.params.conversationId as string),
+        req.user!.userId,
+        disappearAfterSecs ?? null,
+      );
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
 // POST /conversations/:conversationId/read - Mark conversation as read
 router.post(
   '/conversations/:conversationId/read',
