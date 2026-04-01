@@ -67,12 +67,12 @@ async function createTokenPair(
 
 /** Normalize email to lowercase and trimmed. */
 function normalizeEmail(rawEmail: string): string {
-  return normalizeEmail(rawEmail);
+  return rawEmail.toLowerCase().trim();
 }
 
 /** Generate a random 6-digit OTP code. */
 function generateOtpCode(): string {
-  return generateOtpCode();
+  return crypto.randomInt(1000000).toString().padStart(6, '0');
 }
 
 // ── OTP helpers (database-backed) ──────────────────────
