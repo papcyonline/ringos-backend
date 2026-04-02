@@ -194,6 +194,7 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       // Broadcast to conversation room
       socket.to(`conversation:${conversationId}`).emit('chat:delivered', {
         messageId,
+        conversationId,
       });
 
       // Also emit to the message sender's personal room so they see
@@ -204,7 +205,7 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
           select: { senderId: true },
         });
         if (msg && msg.senderId !== userId) {
-          io.to(`user:${msg.senderId}`).emit('chat:delivered', { messageId });
+          io.to(`user:${msg.senderId}`).emit('chat:delivered', { messageId, conversationId });
         }
       } catch { /* non-critical */ }
 
