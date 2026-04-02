@@ -15,7 +15,7 @@ interface CachedFeed {
 }
 
 const feedCache = new Map<string, CachedFeed>();
-const FEED_CACHE_TTL_MS = 15_000; // 15 seconds
+const FEED_CACHE_TTL_MS = 60_000; // 60 seconds
 
 /** Invalidate all feed caches (call after story create/delete/boost). */
 export function invalidateFeedCache(userId?: string) {
