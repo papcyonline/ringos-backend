@@ -400,15 +400,16 @@ export async function deleteStory(storyId: string, userId: string) {
   if (!story) return { deleted: false, reason: 'not_found' };
   if (story.userId !== userId) return { deleted: false, reason: 'not_owner' };
 
-  // Delete cloudinary assets with correct resource type
+  // Delete from DB first, then clean up cloudinary (fire-and-forget)
+  await prisma.story.delete({ where: { id: storyId } });
+
+  // Clean up cloudinary assets — don't block on failures
   for (const slide of story.slides) {
     if (slide.cloudinaryId) {
       const resourceType = slide.type === 'VIDEO' ? 'video' : 'image';
-      await cloudinaryService.deleteFile(slide.cloudinaryId, resourceType);
+      cloudinaryService.deleteFile(slide.cloudinaryId, resourceType).catch(() => {});
     }
   }
-
-  await prisma.story.delete({ where: { id: storyId } });
   logger.info({ storyId, userId }, 'Story deleted');
   invalidateFeedCache(); // Deletion affects everyone's feed
   return { deleted: true };
