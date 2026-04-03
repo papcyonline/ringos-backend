@@ -155,7 +155,8 @@ router.post(
       const liked = req.body?.liked !== false; // default true, pass false to unlike
       await likeStory(storyId, viewerId, liked);
 
-      // Send notification to the story owner
+      // Send notification to the story owner (only on like, not unlike)
+      if (!liked) { res.json({ success: true }); return; }
       const [story, liker] = await Promise.all([
         prisma.story.findUnique({ where: { id: storyId }, select: { userId: true } }),
         prisma.user.findUnique({ where: { id: viewerId }, select: { displayName: true, avatarUrl: true, isVerified: true } }),
