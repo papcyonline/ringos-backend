@@ -321,6 +321,8 @@ export async function likeStory(storyId: string, viewerId: string, liked: boolea
       data: { liked },
     });
   }
+  // Invalidate feed cache so the liked state is fresh on next fetch
+  invalidateFeedCache(viewerId);
 }
 
 // ─── Update Slide Caption ──────────────────────────────────
