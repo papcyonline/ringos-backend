@@ -143,7 +143,7 @@ export async function getConversation(conversationId: string, userId: string) {
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
           },
         },
       },
@@ -181,7 +181,7 @@ export async function getConversations(userId: string) {
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
           },
         },
       },
@@ -407,7 +407,7 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
           },
         },
       },
@@ -434,7 +434,7 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
           },
         },
       },
@@ -801,7 +801,7 @@ export async function getAllGroups(userId: string, limit = 100) {
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
           },
         },
       },
