@@ -317,9 +317,10 @@ export async function likeStory(storyId: string, viewerId: string) {
       data: { storyId, viewerId, liked: true },
     });
   } else {
+    // Toggle liked state
     await prisma.storyView.update({
       where: { id: view.id },
-      data: { liked: true },
+      data: { liked: !view.liked },
     });
   }
 }
