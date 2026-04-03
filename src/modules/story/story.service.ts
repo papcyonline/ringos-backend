@@ -144,7 +144,7 @@ export async function getStoryFeed(requesterId: string) {
       },
       views: {
         where: { viewerId: requesterId },
-        select: { id: true },
+        select: { id: true, liked: true },
       },
       _count: { select: { views: true } },
     },
@@ -224,6 +224,7 @@ export async function getStoryFeed(requesterId: string) {
         position: slide.position,
       })),
       viewed: s.views.length > 0,
+      liked: s.views.some((v) => v.liked),
       viewCount: s._count.views,
     })),
   }));
