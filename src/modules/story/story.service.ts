@@ -306,21 +306,19 @@ export async function getStoryViewers(storyId: string, userId: string) {
 
 // ─── Like Story ────────────────────────────────────────────
 
-export async function likeStory(storyId: string, viewerId: string) {
+export async function likeStory(storyId: string, viewerId: string, liked: boolean = true) {
   const view = await prisma.storyView.findUnique({
     where: { storyId_viewerId: { storyId, viewerId } },
   });
 
   if (!view) {
-    // Create a view + like if they haven't viewed yet
     await prisma.storyView.create({
-      data: { storyId, viewerId, liked: true },
+      data: { storyId, viewerId, liked },
     });
   } else {
-    // Toggle liked state
     await prisma.storyView.update({
       where: { id: view.id },
-      data: { liked: !view.liked },
+      data: { liked },
     });
   }
 }

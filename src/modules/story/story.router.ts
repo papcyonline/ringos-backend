@@ -152,7 +152,8 @@ router.post(
     try {
       const viewerId = req.user!.userId;
       const storyId = req.params.id as string;
-      await likeStory(storyId, viewerId);
+      const liked = req.body?.liked !== false; // default true, pass false to unlike
+      await likeStory(storyId, viewerId, liked);
 
       // Send notification to the story owner
       const [story, liker] = await Promise.all([
