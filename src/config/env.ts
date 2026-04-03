@@ -81,6 +81,9 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
   RATE_LIMIT_MAX: z.coerce.number().default(100),
 
+  // RevenueCat
+  REVENUECAT_WEBHOOK_SECRET: z.string().optional(),
+
   // App Store Links
   APP_STORE_URL: z.string().optional(),
   PLAY_STORE_URL: z.string().optional(),
