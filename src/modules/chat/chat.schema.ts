@@ -3,10 +3,11 @@ import { z } from 'zod';
 export const sendMessageSchema = z.object({
   content: z.string().max(2000).optional().default(''),
   replyToId: z.string().uuid().optional(),
-  imageUrl: z.string().url().optional(),
-  audioUrl: z.string().url().optional(),
+  imageUrl: z.string().optional(),
+  audioUrl: z.string().optional(),
   audioDuration: z.number().int().min(0).optional(),
   viewOnce: z.boolean().optional(),
+  metadata: z.record(z.any()).optional(),
 }).refine(
   (data) => (data.content && data.content.length > 0) || data.imageUrl || data.audioUrl,
   { message: 'Message must have content, image, or audio' },
