@@ -388,6 +388,7 @@ model Message {
   pinnedById     String?
   editedAt       DateTime?
   deletedAt      DateTime?
+  deletedFor     String[]   @default([])
   expiresAt      DateTime?  // set when disappearAfterSecs is active on conversation
   createdAt      DateTime  @default(now())
 

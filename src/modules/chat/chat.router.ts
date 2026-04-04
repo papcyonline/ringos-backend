@@ -242,30 +242,34 @@ router.delete(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      const mode = (req.query.mode as string) === 'me' ? 'me' : 'everyone';
       const message = await chatService.deleteMessage(
         (req.params.messageId as string),
         req.user!.userId,
+        mode,
       );
 
-      // Broadcast deletion to conversation room
-      const io = getIO();
-      const convId = req.params.conversationId as string;
-      const deletePayload = {
-        messageId: message.id,
-        conversationId: convId,
-        deletedAt: message.deletedAt,
-      };
-      io.to(`conversation:${convId}`).emit('chat:deleted', deletePayload);
+      if (mode === 'everyone') {
+        // Broadcast deletion to conversation room
+        const io = getIO();
+        const convId = req.params.conversationId as string;
+        const deletePayload = {
+          messageId: message.id,
+          conversationId: convId,
+          deletedAt: message.deletedAt,
+        };
+        io.to(`conversation:${convId}`).emit('chat:deleted', deletePayload);
 
-      // Also emit to personal rooms so conversation list clears the deleted last message
-      prisma.conversationParticipant.findMany({
-        where: { conversationId: convId, leftAt: null },
-        select: { userId: true },
-      }).then((participants) => {
-        for (const p of participants) {
-          io.to(`user:${p.userId}`).emit('chat:deleted', deletePayload);
-        }
-      }).catch(() => {});
+        // Also emit to personal rooms so conversation list clears the deleted last message
+        prisma.conversationParticipant.findMany({
+          where: { conversationId: convId, leftAt: null },
+          select: { userId: true },
+        }).then((participants) => {
+          for (const p of participants) {
+            io.to(`user:${p.userId}`).emit('chat:deleted', deletePayload);
+          }
+        }).catch(() => {});
+      }
 
       res.json(message);
     } catch (err) {

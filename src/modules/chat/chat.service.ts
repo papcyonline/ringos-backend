@@ -600,21 +600,39 @@ export async function editMessage(messageId: string, userId: string, content: st
 }
 
 /**
- * Soft-delete a message. Only the sender can delete.
+ * Delete a message.
+ * mode = 'everyone' → soft-delete for all (sender only). Clears content/media.
+ * mode = 'me'       → hide from this user only. Adds userId to deletedFor[].
  */
-export async function deleteMessage(messageId: string, userId: string) {
+export async function deleteMessage(messageId: string, userId: string, mode: 'me' | 'everyone' = 'everyone') {
   const message = await prisma.message.findUnique({ where: { id: messageId } });
 
   if (!message) {
     throw new NotFoundError('Message not found');
   }
 
-  if (message.senderId !== userId) {
-    throw new ForbiddenError('You can only delete your own messages');
-  }
-
   if (message.deletedAt) {
     throw new ForbiddenError('Message is already deleted');
+  }
+
+  if (mode === 'me') {
+    // Hide from this user only — no permission check needed
+    const deletedFor = message.deletedFor ?? [];
+    if (deletedFor.includes(userId)) {
+      return message; // already hidden
+    }
+    const updated = await prisma.message.update({
+      where: { id: messageId },
+      data: { deletedFor: { push: userId } },
+      include: messageInclude,
+    });
+    logger.debug({ messageId, userId, mode }, 'Message hidden for user');
+    return updated;
+  }
+
+  // mode === 'everyone' — only the sender can delete for everyone
+  if (message.senderId !== userId) {
+    throw new ForbiddenError('You can only delete your own messages');
   }
 
   await cleanupMediaUrls([message.imageUrl, message.audioUrl]);
@@ -629,7 +647,7 @@ export async function deleteMessage(messageId: string, userId: string) {
     prisma.messageReaction.deleteMany({ where: { messageId } }),
   ]);
 
-  logger.debug({ messageId, userId }, 'Message deleted');
+  logger.debug({ messageId, userId, mode }, 'Message deleted for everyone');
   return updated;
 }
 
@@ -839,7 +857,11 @@ export async function getMessages(
   await verifyParticipant(conversationId, userId);
 
   // Build query: cursor-based if cursor provided, offset-based otherwise
-  const whereClause: any = { conversationId };
+  // Exclude messages the user has deleted for themselves
+  const whereClause: any = {
+    conversationId,
+    NOT: { deletedFor: { has: userId } },
+  };
   let skip: number | undefined;
 
   if (cursor) {
