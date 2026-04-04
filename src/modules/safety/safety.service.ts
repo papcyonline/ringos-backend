@@ -132,8 +132,40 @@ export async function unblockUser(blockerId: string, blockedId: string) {
     throw new NotFoundError('Block record not found');
   }
 
-  await prisma.block.delete({
-    where: { blockerId_blockedId: { blockerId, blockedId } },
+  await prisma.$transaction(async (tx) => {
+    await tx.block.delete({
+      where: { blockerId_blockedId: { blockerId, blockedId } },
+    });
+
+    // Reactivate shared conversations that were ended by the block,
+    // but only if neither party still blocks the other.
+    const reverseBlock = await tx.block.findUnique({
+      where: { blockerId_blockedId: { blockerId: blockedId, blockedId: blockerId } },
+    });
+
+    if (!reverseBlock) {
+      const endedConversations = await tx.conversation.findMany({
+        where: {
+          status: 'ENDED',
+          AND: [
+            { participants: { some: { userId: blockerId } } },
+            { participants: { some: { userId: blockedId } } },
+          ],
+        },
+      });
+
+      if (endedConversations.length > 0) {
+        await tx.conversation.updateMany({
+          where: { id: { in: endedConversations.map((c) => c.id) } },
+          data: { status: 'ACTIVE' },
+        });
+
+        logger.info(
+          { blockerId, blockedId, reactivatedConversations: endedConversations.length },
+          'Reactivated conversations after unblock',
+        );
+      }
+    }
   });
 
   logger.info({ blockerId, blockedId }, 'User unblocked');
