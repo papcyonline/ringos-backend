@@ -856,11 +856,18 @@ export async function getMessages(
 ) {
   await verifyParticipant(conversationId, userId);
 
+  // Check if user has cleared chat history — hide messages before clearedAt
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+    select: { clearedAt: true },
+  });
+
   // Build query: cursor-based if cursor provided, offset-based otherwise
   // Exclude messages the user has deleted for themselves
   const whereClause: any = {
     conversationId,
     NOT: { deletedFor: { has: userId } },
+    ...(participant?.clearedAt ? { createdAt: { gt: participant.clearedAt } } : {}),
   };
   let skip: number | undefined;
 
@@ -1109,10 +1116,10 @@ export async function searchMessages(
 export async function clearHistory(conversationId: string, userId: string) {
   await verifyParticipant(conversationId, userId);
 
-  // Update lastReadAt so cleared messages don't count as unread
+  // Set clearedAt so messages before this point are hidden for this user
   await prisma.conversationParticipant.update({
     where: { conversationId_userId: { conversationId, userId } },
-    data: { lastReadAt: new Date() },
+    data: { clearedAt: new Date(), lastReadAt: new Date() },
   });
 
   logger.info({ conversationId, userId }, 'Chat history cleared');

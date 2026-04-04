@@ -361,6 +361,7 @@ model ConversationParticipant {
   isPinned       Boolean         @default(false)
   isMuted        Boolean         @default(false)
   isArchived     Boolean         @default(false)
+  clearedAt      DateTime?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
