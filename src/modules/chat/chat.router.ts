@@ -505,6 +505,21 @@ router.post(
   },
 );
 
+// GET /conversations/group/check-name - Check if group/channel name is available
+router.get(
+  '/conversations/group/check-name',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const name = req.query.name as string;
+      const isChannel = req.query.isChannel === 'true';
+      if (!name) return res.status(400).json({ error: 'name is required' });
+      const available = await groupService.checkNameAvailable(name, isChannel);
+      res.json({ available });
+    } catch (err) { next(err); }
+  },
+);
+
 // POST /conversations/group - Create a group conversation
 router.post(
   '/conversations/group',

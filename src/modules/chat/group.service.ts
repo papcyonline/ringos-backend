@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
-import { NotFoundError, ForbiddenError } from '../../shared/errors';
+import { NotFoundError, ForbiddenError, ConflictError } from '../../shared/errors';
 
 /**
  * Create a GROUP conversation with the creator as ADMIN.
@@ -15,6 +15,21 @@ export async function createGroup(
   isPublic?: boolean,
   isChannel?: boolean,
 ) {
+  // Check name uniqueness for active groups/channels
+  const existing = await prisma.conversation.findFirst({
+    where: {
+      type: 'GROUP',
+      status: 'ACTIVE',
+      name: { equals: name, mode: 'insensitive' },
+      ...(isChannel ? { isChannel: true } : { isChannel: false }),
+    },
+  });
+  if (existing) {
+    throw new ConflictError(
+      isChannel ? 'A channel with this name already exists' : 'A group with this name already exists',
+    );
+  }
+
   // Ensure creator is not in memberIds (they're added separately as ADMIN)
   const uniqueMembers = [...new Set(memberIds.filter((id) => id !== creatorId))];
 
@@ -447,6 +462,21 @@ export async function makeAdmin(
 
   logger.info({ conversationId, requesterId, targetUserId }, 'Member promoted to admin');
   return updated;
+}
+
+/**
+ * Check if a group/channel name is available.
+ */
+export async function checkNameAvailable(name: string, isChannel: boolean): Promise<boolean> {
+  const existing = await prisma.conversation.findFirst({
+    where: {
+      type: 'GROUP',
+      status: 'ACTIVE',
+      name: { equals: name, mode: 'insensitive' },
+      isChannel,
+    },
+  });
+  return !existing;
 }
 
 /**
