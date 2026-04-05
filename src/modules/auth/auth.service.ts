@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
 import appleSignIn from 'apple-signin-auth';
@@ -7,7 +8,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
-import { UnauthorizedError, BadRequestError, ForbiddenError } from '../../shared/errors';
+import { UnauthorizedError, BadRequestError, ForbiddenError, NotFoundError } from '../../shared/errors';
 import { checkBanStatus } from '../safety/safety.service';
 import {
   generateAccessToken,
@@ -267,11 +268,55 @@ export async function login(rawEmail: string, password: string) {
     );
   }
 
+  // If 2FA is enabled, return a challenge instead of tokens
+  if (user.twoFactorEnabled) {
+    const tempToken = jwt.sign(
+      { userId: user.id, purpose: '2fa' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '5m' },
+    );
+    logger.info({ userId: user.id }, '2FA challenge issued');
+    return { requires2FA: true, tempToken };
+  }
+
   const { accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
     return createTokenPair(tx, user.id, user.isAnonymous);
   });
 
   logger.info({ userId: user.id }, 'Email user logged in');
+
+  return buildAuthResponse(user, { accessToken, refreshToken });
+}
+
+/**
+ * Complete login after 2FA verification.
+ */
+export async function complete2FALogin(tempToken: string, code: string) {
+  let payload: any;
+  try {
+    payload = jwt.verify(tempToken, process.env.JWT_SECRET!);
+  } catch {
+    throw new UnauthorizedError('Invalid or expired 2FA session');
+  }
+
+  if (payload.purpose !== '2fa') {
+    throw new UnauthorizedError('Invalid token purpose');
+  }
+
+  const { validateLogin2FA } = await import('./two_factor.service');
+  const isValid = await validateLogin2FA(payload.userId, code);
+  if (!isValid) {
+    throw new ForbiddenError('Invalid 2FA code');
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+  if (!user) throw new NotFoundError('User not found');
+
+  const { accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
+    return createTokenPair(tx, user.id, user.isAnonymous);
+  });
+
+  logger.info({ userId: user.id }, '2FA login completed');
 
   return buildAuthResponse(user, { accessToken, refreshToken });
 }

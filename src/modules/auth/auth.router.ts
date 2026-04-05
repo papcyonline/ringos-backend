@@ -79,8 +79,12 @@ router.post(
     try {
       const { email, password } = req.body;
       const result = await authService.login(email, password);
-      logger.info({ userId: result.user.id }, 'User logged in');
-      res.status(200).json(result);
+      if ('requires2FA' in result) {
+        res.status(200).json({ requires2FA: true, tempToken: result.tempToken });
+      } else {
+        logger.info({ userId: result.user.id }, 'User logged in');
+        res.status(200).json(result);
+      }
     } catch (err) {
       next(err);
     }
@@ -285,5 +289,55 @@ router.post(
     }
   },
 );
+
+// ── Two-Factor Authentication ──
+
+import * as twoFactorService from './two_factor.service';
+
+// POST /auth/2fa/login — Complete login with 2FA code
+router.post('/2fa/login', authRateLimit('2fa-login', 5, 300), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { tempToken, code } = req.body;
+    if (!tempToken || !code) return res.status(400).json({ error: 'tempToken and code are required' });
+    const result = await authService.complete2FALogin(tempToken, code);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /auth/2fa/setup — Generate TOTP secret + QR code
+router.post('/2fa/setup', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await twoFactorService.setup2FA(req.user!.userId);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /auth/2fa/verify — Verify code and enable 2FA
+router.post('/2fa/verify', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'Code is required' });
+    const result = await twoFactorService.verify2FA(req.user!.userId, code);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /auth/2fa/disable — Disable 2FA
+router.post('/2fa/disable', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'Code is required' });
+    const result = await twoFactorService.disable2FA(req.user!.userId, code);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// GET /auth/2fa/status — Check if 2FA is enabled
+router.get('/2fa/status', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const enabled = await twoFactorService.has2FA(req.user!.userId);
+    res.json({ enabled });
+  } catch (err) { next(err); }
+});
 
 export { router as authRouter };
