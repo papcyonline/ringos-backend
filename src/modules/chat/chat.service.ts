@@ -92,7 +92,7 @@ function computeMessageStatus(
 
 const messageInclude = {
   sender: {
-    select: { id: true, displayName: true, avatarUrl: true },
+    select: { id: true, displayName: true, avatarUrl: true, isVerified: true },
   },
   replyTo: {
     select: {
