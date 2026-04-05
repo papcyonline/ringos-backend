@@ -484,6 +484,11 @@ export async function sendMessage(
     throw new ForbiddenError('You have left this conversation');
   }
 
+  // Check admin-only messaging for groups
+  if (conversation.type === 'GROUP' && conversation.adminsOnlyMessages && participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can send messages in this group');
+  }
+
   // Run block check and reply verification in parallel
   const parallelChecks: Promise<void>[] = [];
 

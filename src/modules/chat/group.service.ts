@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
@@ -12,6 +13,7 @@ export async function createGroup(
   avatarUrl?: string,
   description?: string,
   isPublic?: boolean,
+  isChannel?: boolean,
 ) {
   // Ensure creator is not in memberIds (they're added separately as ADMIN)
   const uniqueMembers = [...new Set(memberIds.filter((id) => id !== creatorId))];
@@ -24,6 +26,9 @@ export async function createGroup(
       description: description || null,
       avatarUrl: avatarUrl || null,
       isPublic: isPublic !== undefined ? isPublic : true,
+      // Channels default to admins-only messaging and public
+      isChannel: isChannel ?? false,
+      adminsOnlyMessages: isChannel ?? false,
       participants: {
         create: [
           { userId: creatorId, role: 'ADMIN' },
@@ -61,8 +66,12 @@ export async function updateGroup(
   if (!participant || participant.leftAt !== null) {
     throw new ForbiddenError('You are not a participant in this conversation');
   }
+
   if (participant.role !== 'ADMIN') {
-    throw new ForbiddenError('Only admins can update group settings');
+    const conv = await prisma.conversation.findUnique({ where: { id: conversationId }, select: { adminsOnlyEditInfo: true } });
+    if (conv?.adminsOnlyEditInfo) {
+      throw new ForbiddenError('Only admins can update group info');
+    }
   }
 
   const conv = await prisma.conversation.findUnique({ where: { id: conversationId }, select: { status: true } });
@@ -108,8 +117,12 @@ export async function addMembers(
   if (!participant) {
     throw new ForbiddenError('You are not a participant in this conversation');
   }
+
   if (participant.role !== 'ADMIN') {
-    throw new ForbiddenError('Only admins can add members');
+    const conv = await prisma.conversation.findUnique({ where: { id: conversationId }, select: { adminsOnlyAddMembers: true } });
+    if (conv?.adminsOnlyAddMembers) {
+      throw new ForbiddenError('Only admins can add members');
+    }
   }
 
   // Find existing participants (both active and those who left)
@@ -433,5 +446,143 @@ export async function makeAdmin(
   });
 
   logger.info({ conversationId, requesterId, targetUserId }, 'Member promoted to admin');
+  return updated;
+}
+
+/**
+ * Demote an admin to member. Requester must be admin. Cannot demote yourself.
+ */
+export async function demoteAdmin(
+  conversationId: string,
+  requesterId: string,
+  targetUserId: string,
+) {
+  if (requesterId === targetUserId) {
+    throw new ForbiddenError('You cannot demote yourself');
+  }
+
+  const requester = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId: requesterId } },
+  });
+  if (!requester || requester.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can demote other admins');
+  }
+
+  const target = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId: targetUserId } },
+  });
+  if (!target || target.leftAt !== null) {
+    throw new NotFoundError('Member not found in this group');
+  }
+  if (target.role !== 'ADMIN') {
+    throw new ForbiddenError('User is not an admin');
+  }
+
+  await prisma.conversationParticipant.update({
+    where: { id: target.id },
+    data: { role: 'MEMBER' },
+  });
+
+  logger.info({ conversationId, requesterId, targetUserId }, 'Admin demoted to member');
+  return { conversationId, demotedUserId: targetUserId };
+}
+
+/**
+ * Generate or regenerate an invite link code for a group. Admin only.
+ */
+export async function generateInviteCode(conversationId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can generate invite links');
+  }
+
+  const code = crypto.randomBytes(8).toString('base64url');
+
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { inviteCode: code },
+  });
+
+  logger.info({ conversationId, userId }, 'Invite code generated');
+  return { inviteCode: code };
+}
+
+/**
+ * Revoke the invite link for a group. Admin only.
+ */
+export async function revokeInviteCode(conversationId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can revoke invite links');
+  }
+
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { inviteCode: null },
+  });
+
+  logger.info({ conversationId, userId }, 'Invite code revoked');
+  return { success: true };
+}
+
+/**
+ * Join a group via invite code. Any user can use a valid code.
+ */
+export async function joinViaInviteCode(inviteCode: string, userId: string) {
+  const conversation = await prisma.conversation.findUnique({
+    where: { inviteCode },
+  });
+
+  if (!conversation || conversation.type !== 'GROUP' || conversation.status !== 'ACTIVE') {
+    throw new NotFoundError('Invalid or expired invite link');
+  }
+
+  await prisma.conversationParticipant.upsert({
+    where: { conversationId_userId: { conversationId: conversation.id, userId } },
+    create: { conversationId: conversation.id, userId, role: 'MEMBER' },
+    update: { leftAt: null, joinedAt: new Date() },
+  });
+
+  logger.info({ conversationId: conversation.id, userId, inviteCode }, 'User joined via invite code');
+  return conversation;
+}
+
+/**
+ * Update group admin settings (announcement mode, edit restrictions, add member restrictions).
+ * Admin only.
+ */
+export async function updateGroupAdminSettings(
+  conversationId: string,
+  userId: string,
+  settings: {
+    adminsOnlyMessages?: boolean;
+    adminsOnlyEditInfo?: boolean;
+    adminsOnlyAddMembers?: boolean;
+    disappearAfterSecs?: number | null;
+  },
+) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can update these settings');
+  }
+
+  const data: Record<string, any> = {};
+  if (settings.adminsOnlyMessages !== undefined) data.adminsOnlyMessages = settings.adminsOnlyMessages;
+  if (settings.adminsOnlyEditInfo !== undefined) data.adminsOnlyEditInfo = settings.adminsOnlyEditInfo;
+  if (settings.adminsOnlyAddMembers !== undefined) data.adminsOnlyAddMembers = settings.adminsOnlyAddMembers;
+  if (settings.disappearAfterSecs !== undefined) data.disappearAfterSecs = settings.disappearAfterSecs;
+
+  const updated = await prisma.conversation.update({
+    where: { id: conversationId },
+    data,
+  });
+
+  logger.info({ conversationId, userId, ...settings }, 'Group admin settings updated');
   return updated;
 }

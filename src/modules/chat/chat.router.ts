@@ -543,6 +543,10 @@ router.post(
       const isPublic = rawIsPublic !== undefined
         ? (typeof rawIsPublic === 'boolean' ? rawIsPublic : rawIsPublic === 'true')
         : undefined;
+      const rawIsChannel = req.body.isChannel;
+      const isChannel = rawIsChannel !== undefined
+        ? (typeof rawIsChannel === 'boolean' ? rawIsChannel : rawIsChannel === 'true')
+        : undefined;
       const conversation = await groupService.createGroup(
         req.user!.userId,
         name,
@@ -550,6 +554,7 @@ router.post(
         avatarUrl,
         description,
         isPublic,
+        isChannel,
       );
       res.status(201).json(conversation);
     } catch (err) {
@@ -739,6 +744,82 @@ router.put(
     } catch (err) {
       next(err);
     }
+  },
+);
+
+// PUT /conversations/:id/members/:userId/demote - Demote admin to member
+router.put(
+  '/conversations/:conversationId/members/:userId/demote',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.demoteAdmin(
+        req.params.conversationId as string,
+        req.user!.userId,
+        req.params.userId as string,
+      );
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('group:members-changed', {
+        conversationId: req.params.conversationId,
+      });
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// POST /conversations/:id/invite-code - Generate invite link
+router.post(
+  '/conversations/:conversationId/invite-code',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.generateInviteCode(req.params.conversationId as string, req.user!.userId);
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// DELETE /conversations/:id/invite-code - Revoke invite link
+router.delete(
+  '/conversations/:conversationId/invite-code',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.revokeInviteCode(req.params.conversationId as string, req.user!.userId);
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// POST /conversations/join/:inviteCode - Join group via invite code
+router.post(
+  '/conversations/join/:inviteCode',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.joinViaInviteCode(req.params.inviteCode as string, req.user!.userId);
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// PUT /conversations/:id/group/admin-settings - Update admin settings
+router.put(
+  '/conversations/:conversationId/group/admin-settings',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.updateGroupAdminSettings(
+        req.params.conversationId as string,
+        req.user!.userId,
+        req.body,
+      );
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('group:settings-changed', {
+        conversationId: req.params.conversationId,
+      });
+      res.json(result);
+    } catch (err) { next(err); }
   },
 );
 
