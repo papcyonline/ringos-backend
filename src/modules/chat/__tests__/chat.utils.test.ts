@@ -8,6 +8,28 @@ vi.mock('../../../config/database', () => ({
   prisma: {},
 }));
 
+vi.mock('../../../config/socket', () => ({
+  getIO: vi.fn(() => ({
+    to: vi.fn(() => ({ emit: vi.fn() })),
+  })),
+}));
+
+vi.mock('../../../config/env', () => ({
+  env: {},
+}));
+
+vi.mock('../../../shared/logger', () => ({
+  logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock('../../notification/notification.service', () => ({
+  notifyChatMessage: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../translation.service', () => ({
+  translateMessage: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { formatMessagePayload } from '../chat.utils';
 
 describe('chat.utils — formatMessagePayload', () => {

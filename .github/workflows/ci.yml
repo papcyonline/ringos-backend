@@ -28,10 +28,3 @@ jobs:
 
       - name: Run tests
         run: npm test -- --run
-        continue-on-error: true
-        env:
-          DATABASE_URL: postgresql://test:test@localhost:5432/test
-          JWT_SECRET: ci-test-secret
-          JWT_REFRESH_SECRET: ci-test-refresh-secret
-          OPENAI_API_KEY: sk-test
-          GEMINI_API_KEY: test-key

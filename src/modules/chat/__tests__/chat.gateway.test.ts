@@ -24,9 +24,13 @@ vi.mock('../../../config/database', () => ({
   prisma: {
     conversationParticipant: {
       findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     message: {
       findUnique: vi.fn(),
+    },
+    user: {
+      findUnique: vi.fn().mockResolvedValue({ hideReadReceipts: false }),
     },
   },
 }));
@@ -127,6 +131,7 @@ describe('chat.gateway', () => {
       (prisma.conversationParticipant.findUnique as any).mockResolvedValue({
         conversationId: 'conv-1',
         userId: 'user-1',
+        leftAt: null,
       });
 
       await handlers['chat:join']({ conversationId: 'conv-1' });
