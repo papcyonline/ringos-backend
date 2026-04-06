@@ -137,6 +137,8 @@ enum NotificationType {
   STORY_LIKED
   MISSED_CALL
   SYSTEM
+  POST_LIKED
+  POST_COMMENTED
 }
 
 enum TransactionType {
@@ -371,6 +373,12 @@ model Post {
   mediaUrl      String?
   mediaType     String?   // "image", "video"
   thumbnailUrl  String?
+  locationName  String?
+  taggedUserIds String[]  @default([])
+  musicTitle    String?
+  musicArtist   String?
+  commentsDisabled Boolean @default(false)
+  hideLikeCount    Boolean @default(false)
   likeCount     Int       @default(0)
   commentCount  Int       @default(0)
   shareCount    Int       @default(0)
@@ -381,9 +389,25 @@ model Post {
   author   User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
   likes    PostLike[]
   comments PostComment[]
+  media    PostMedia[]
 
   @@index([channelId, createdAt])
   @@index([authorId])
+}
+
+model PostMedia {
+  id            String   @id @default(uuid())
+  postId        String
+  type          String   // "IMAGE" or "VIDEO"
+  url           String
+  cloudinaryId  String   @default("")
+  thumbnailUrl  String?
+  position      Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, position])
 }
 
 model PostLike {

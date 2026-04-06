@@ -4,6 +4,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import * as cloudinaryService from './cloudinary.service';
 import { isDriveConfigured, uploadToDrive } from './gdrive.service';
+import { isR2Configured, uploadImageToR2, uploadVideoToR2 } from './r2.service';
 
 // Use memory storage — files live in buffer until uploaded to Cloudinary
 const memoryStorage = multer.memoryStorage();
@@ -202,5 +203,63 @@ export async function fileToStoryVideoUrl(
     }
   }
   const url = saveToDisk(file.buffer, 'uploads/stories', '/uploads/stories', path.extname(file.originalname) || '.mp4');
+  return { secureUrl: url, publicId: '', thumbnailUrl: null };
+}
+
+// ── Post media upload (images + videos, max 10 files, 100MB) ──────────
+
+export const postMediaUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: storyMediaFilter,
+});
+
+export async function fileToPostImageUrl(
+  file: Express.Multer.File,
+  userId: string
+): Promise<{ secureUrl: string; publicId: string }> {
+  // 1. Try R2 (cheapest, no egress)
+  if (isR2Configured) {
+    try {
+      const url = await uploadImageToR2(file.buffer, `posts/${userId}`, file.originalname || 'image.jpg');
+      return { secureUrl: url, publicId: '' };
+    } catch {}
+  }
+  // 2. Fallback to Cloudinary
+  if (cloudinaryService.isCloudinaryConfigured) {
+    const result = await cloudinaryService.uploadBuffer(file.buffer, {
+      folder: `yomeet/posts/${userId}`,
+      transformation: { width: 1080, crop: 'limit', quality: 90 },
+    });
+    if (result) return { secureUrl: result.secureUrl, publicId: result.publicId };
+  }
+  const url = saveToDisk(file.buffer, 'uploads/posts', '/uploads/posts', path.extname(file.originalname) || '.jpg');
+  return { secureUrl: url, publicId: '' };
+}
+
+export async function fileToPostVideoUrl(
+  file: Express.Multer.File,
+  userId: string
+): Promise<{ secureUrl: string; publicId: string; thumbnailUrl: string | null }> {
+  // 1. Try R2 (cheapest, no egress)
+  if (isR2Configured) {
+    try {
+      const result = await uploadVideoToR2(file.buffer, `posts/${userId}`, file.originalname || 'video.mp4');
+      return { secureUrl: result.url, publicId: '', thumbnailUrl: result.thumbnailUrl };
+    } catch {}
+  }
+  // 2. Fallback to Cloudinary
+  if (cloudinaryService.isCloudinaryConfigured) {
+    const result = await cloudinaryService.uploadBuffer(file.buffer, {
+      folder: `yomeet/posts/${userId}`,
+      resourceType: 'video',
+    });
+    if (result) {
+      const optimizedUrl = result.secureUrl.replace('/upload/', '/upload/w_720,q_auto,f_auto/');
+      const thumbnailUrl = optimizedUrl.replace(/\.[^.]+$/, '.jpg');
+      return { secureUrl: optimizedUrl, publicId: result.publicId, thumbnailUrl };
+    }
+  }
+  const url = saveToDisk(file.buffer, 'uploads/posts', '/uploads/posts', path.extname(file.originalname) || '.mp4');
   return { secureUrl: url, publicId: '', thumbnailUrl: null };
 }

@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
+import { createNotification } from '../notification/notification.service';
 
 const postInclude = {
   author: {
@@ -9,6 +10,7 @@ const postInclude = {
   channel: {
     select: { id: true, name: true, avatarUrl: true, isVerified: true, isChannel: true },
   },
+  media: { orderBy: { position: 'asc' as const } },
   _count: { select: { likes: true, comments: true } },
 };
 
@@ -22,6 +24,15 @@ export async function createPost(
   mediaUrl?: string,
   mediaType?: string,
   thumbnailUrl?: string,
+  media?: Array<{ url: string; type: string; thumbnailUrl?: string; cloudinaryId: string; position: number }>,
+  options?: {
+    locationName?: string;
+    taggedUserIds?: string[];
+    musicTitle?: string;
+    musicArtist?: string;
+    commentsDisabled?: boolean;
+    hideLikeCount?: boolean;
+  },
 ) {
   const channel = await prisma.conversation.findUnique({
     where: { id: channelId },
@@ -37,20 +48,66 @@ export async function createPost(
     throw new ForbiddenError('Only channel admins can create posts');
   }
 
+  // Determine top-level mediaUrl/mediaType from first media item for backward compat
+  const firstMedia = media?.[0];
+  const effectiveMediaUrl = mediaUrl ?? firstMedia?.url ?? null;
+  const effectiveMediaType = mediaType ?? (firstMedia ? (firstMedia.type === 'VIDEO' ? 'video' : 'image') : null);
+  const effectiveThumbnailUrl = thumbnailUrl ?? firstMedia?.thumbnailUrl ?? null;
+
   const post = await prisma.post.create({
     data: {
       channelId,
       authorId,
       content,
-      mediaUrl: mediaUrl ?? null,
-      mediaType: mediaType ?? null,
-      thumbnailUrl: thumbnailUrl ?? null,
+      mediaUrl: effectiveMediaUrl,
+      mediaType: effectiveMediaType,
+      thumbnailUrl: effectiveThumbnailUrl,
+      locationName: options?.locationName ?? null,
+      taggedUserIds: options?.taggedUserIds ?? [],
+      musicTitle: options?.musicTitle ?? null,
+      musicArtist: options?.musicArtist ?? null,
+      commentsDisabled: options?.commentsDisabled ?? false,
+      hideLikeCount: options?.hideLikeCount ?? false,
     },
     include: postInclude,
   });
 
-  logger.info({ postId: post.id, channelId, authorId }, 'Post created');
-  return formatPost(post, authorId);
+  // Create PostMedia records
+  if (media && media.length > 0) {
+    await prisma.postMedia.createMany({
+      data: media.map((m) => ({
+        postId: post.id,
+        type: m.type,
+        url: m.url,
+        cloudinaryId: m.cloudinaryId,
+        thumbnailUrl: m.thumbnailUrl ?? null,
+        position: m.position,
+      })),
+    });
+  } else if (effectiveMediaUrl) {
+    // Legacy single-media: auto-create PostMedia record
+    await prisma.postMedia.create({
+      data: {
+        postId: post.id,
+        type: effectiveMediaType === 'video' ? 'VIDEO' : 'IMAGE',
+        url: effectiveMediaUrl,
+        thumbnailUrl: effectiveThumbnailUrl,
+        position: 0,
+      },
+    });
+  }
+
+  // Re-fetch with media included
+  const fullPost = await prisma.post.findUnique({
+    where: { id: post.id },
+    include: {
+      ...postInclude,
+      likes: { where: { userId: authorId }, select: { id: true }, take: 1 },
+    },
+  });
+
+  logger.info({ postId: post.id, channelId, authorId, mediaCount: media?.length ?? (effectiveMediaUrl ? 1 : 0) }, 'Post created');
+  return formatPost(fullPost ?? post, authorId);
 }
 
 /**
@@ -190,6 +247,25 @@ export async function toggleLike(postId: string, userId: string) {
     prisma.postLike.create({ data: { postId, userId } }),
     prisma.post.update({ where: { id: postId }, data: { likeCount: { increment: 1 } } }),
   ]);
+
+  // Notify post author (don't notify self)
+  if (post.authorId !== userId) {
+    const liker = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true, avatarUrl: true, isVerified: true },
+    });
+    if (liker) {
+      createNotification({
+        userId: post.authorId,
+        type: 'POST_LIKED',
+        title: liker.displayName ?? 'Someone',
+        body: 'Liked your post',
+        imageUrl: liker.avatarUrl ?? undefined,
+        data: { postId, channelId: post.channelId, userId, isVerified: liker.isVerified },
+      }).catch((err) => logger.error({ err, postId }, 'Failed to create post like notification'));
+    }
+  }
+
   return { liked: true };
 }
 
@@ -199,6 +275,7 @@ export async function toggleLike(postId: string, userId: string) {
 export async function addComment(postId: string, userId: string, content: string) {
   const post = await prisma.post.findUnique({ where: { id: postId } });
   if (!post) throw new NotFoundError('Post not found');
+  if (post.commentsDisabled) throw new ForbiddenError('Comments are disabled on this post');
 
   const [comment] = await prisma.$transaction([
     prisma.postComment.create({
@@ -209,6 +286,19 @@ export async function addComment(postId: string, userId: string, content: string
     }),
     prisma.post.update({ where: { id: postId }, data: { commentCount: { increment: 1 } } }),
   ]);
+
+  // Notify post author (don't notify self)
+  if (post.authorId !== userId) {
+    const commenter = comment.user;
+    createNotification({
+      userId: post.authorId,
+      type: 'POST_COMMENTED',
+      title: commenter.displayName ?? 'Someone',
+      body: content.length > 100 ? content.substring(0, 97) + '...' : content,
+      imageUrl: commenter.avatarUrl ?? undefined,
+      data: { postId, channelId: post.channelId, userId, isVerified: commenter.isVerified },
+    }).catch((err) => logger.error({ err, postId }, 'Failed to create post comment notification'));
+  }
 
   return comment;
 }
@@ -270,6 +360,13 @@ export async function deletePost(postId: string, userId: string) {
 
 function formatPost(post: any, currentUserId: string) {
   const liked = post.likes?.length > 0;
+  const media = (post.media ?? []).map((m: any) => ({
+    id: m.id,
+    type: m.type,
+    url: m.url,
+    thumbnailUrl: m.thumbnailUrl,
+    position: m.position,
+  }));
   return {
     id: post.id,
     channelId: post.channelId,
@@ -277,6 +374,13 @@ function formatPost(post: any, currentUserId: string) {
     mediaUrl: post.mediaUrl,
     mediaType: post.mediaType,
     thumbnailUrl: post.thumbnailUrl,
+    media,
+    locationName: post.locationName,
+    taggedUserIds: post.taggedUserIds,
+    musicTitle: post.musicTitle,
+    musicArtist: post.musicArtist,
+    commentsDisabled: post.commentsDisabled,
+    hideLikeCount: post.hideLikeCount,
     likeCount: post._count?.likes ?? post.likeCount ?? 0,
     commentCount: post._count?.comments ?? post.commentCount ?? 0,
     shareCount: post.shareCount ?? 0,

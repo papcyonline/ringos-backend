@@ -1,7 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
-import { avatarUpload, fileToAvatarUrl } from '../../shared/upload';
+import { postMediaUpload, fileToPostImageUrl, fileToPostVideoUrl } from '../../shared/upload';
 import * as postService from './post.service';
 
 const router = Router();
@@ -36,14 +36,14 @@ router.get('/channel/:channelId', authenticate, async (req: AuthRequest, res: Re
   } catch (err) { next(err); }
 });
 
-// POST /posts — Create a post (with optional media upload)
+// POST /posts — Create a post (with optional multi-media upload)
 router.post(
   '/',
   authenticate,
   (req: AuthRequest, res: Response, next: NextFunction) => {
     const contentType = req.headers['content-type'] || '';
     if (contentType.includes('multipart/form-data')) {
-      avatarUpload.single('media')(req, res, next);
+      postMediaUpload.array('media', 10)(req, res, next);
     } else {
       next();
     }
@@ -53,12 +53,23 @@ router.post(
       const { channelId, content } = req.body;
       if (!channelId) return res.status(400).json({ error: 'channelId is required' });
 
+      const files = (req.files as Express.Multer.File[]) || [];
+
+      // Upload all files in parallel
+      const media = await Promise.all(files.map(async (file, i) => {
+        const isVideo = file.mimetype.startsWith('video/');
+        if (isVideo) {
+          const result = await fileToPostVideoUrl(file, req.user!.userId);
+          return { url: result.secureUrl, type: 'VIDEO' as const, thumbnailUrl: result.thumbnailUrl ?? undefined, cloudinaryId: result.publicId, position: i };
+        }
+        const result = await fileToPostImageUrl(file, req.user!.userId);
+        return { url: result.secureUrl, type: 'IMAGE' as const, cloudinaryId: result.publicId, position: i };
+      }));
+
+      // Support legacy single mediaUrl in body (no file upload)
       let mediaUrl: string | undefined;
       let mediaType: string | undefined;
-      if (req.file) {
-        mediaUrl = await fileToAvatarUrl(req.file, req.user!.userId);
-        mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
-      } else if (req.body.mediaUrl) {
+      if (files.length === 0 && req.body.mediaUrl) {
         mediaUrl = req.body.mediaUrl;
         mediaType = req.body.mediaType || 'image';
       }
@@ -70,6 +81,15 @@ router.post(
         mediaUrl,
         mediaType,
         req.body.thumbnailUrl,
+        media.length > 0 ? media : undefined,
+        {
+          locationName: req.body.locationName || undefined,
+          taggedUserIds: req.body.taggedUserIds ? JSON.parse(req.body.taggedUserIds) : undefined,
+          musicTitle: req.body.musicTitle || undefined,
+          musicArtist: req.body.musicArtist || undefined,
+          commentsDisabled: req.body.commentsDisabled === 'true',
+          hideLikeCount: req.body.hideLikeCount === 'true',
+        },
       );
       res.status(201).json(post);
     } catch (err) { next(err); }
