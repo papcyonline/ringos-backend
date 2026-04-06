@@ -351,6 +351,7 @@ model Conversation {
   disappearAfterSecs Int?       // null=off, 86400=24h, 604800=7d, 2592000=30d
   inviteCode         String?    @unique
   isChannel          Boolean    @default(false)
+  bannerUrl          String?
   category           String?
   contactEmail       String?
   websiteUrl         String?
