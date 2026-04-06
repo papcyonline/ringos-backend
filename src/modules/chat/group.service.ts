@@ -72,7 +72,11 @@ export async function createGroup(
 export async function updateGroup(
   conversationId: string,
   userId: string,
-  updates: { name?: string; avatarUrl?: string; description?: string; isPublic?: boolean },
+  updates: {
+    name?: string; avatarUrl?: string; description?: string; isPublic?: boolean;
+    category?: string; contactEmail?: string; contactPhone?: string;
+    websiteUrl?: string; location?: string; operatingHours?: string; bannerUrl?: string;
+  },
 ) {
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId } },
@@ -101,6 +105,13 @@ export async function updateGroup(
       ...(updates.description !== undefined ? { description: updates.description } : {}),
       ...(updates.avatarUrl !== undefined ? { avatarUrl: updates.avatarUrl } : {}),
       ...(updates.isPublic !== undefined ? { isPublic: updates.isPublic } : {}),
+      ...(updates.category !== undefined ? { category: updates.category } : {}),
+      ...(updates.contactEmail !== undefined ? { contactEmail: updates.contactEmail } : {}),
+      ...(updates.contactPhone !== undefined ? { contactPhone: updates.contactPhone } : {}),
+      ...(updates.websiteUrl !== undefined ? { websiteUrl: updates.websiteUrl } : {}),
+      ...(updates.location !== undefined ? { location: updates.location } : {}),
+      ...(updates.operatingHours !== undefined ? { operatingHours: updates.operatingHours } : {}),
+      ...(updates.bannerUrl !== undefined ? { bannerUrl: updates.bannerUrl } : {}),
     },
     include: {
       participants: {

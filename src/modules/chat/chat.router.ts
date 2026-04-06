@@ -592,9 +592,8 @@ router.put(
   },
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const { name, description } = req.body;
+      const { name, description, category, contactEmail, contactPhone, websiteUrl, location, operatingHours } = req.body;
       const avatarUrl = req.file ? await fileToAvatarUrl(req.file, req.user!.userId) : req.body.avatarUrl;
-      // Parse isPublic: accept boolean or string "true"/"false" (from FormData)
       const rawIsPublic = req.body.isPublic;
       const isPublic = rawIsPublic !== undefined
         ? (typeof rawIsPublic === 'boolean' ? rawIsPublic : rawIsPublic === 'true')
@@ -602,7 +601,7 @@ router.put(
       const conversation = await groupService.updateGroup(
         (req.params.conversationId as string),
         req.user!.userId,
-        { name, avatarUrl, description, isPublic },
+        { name, avatarUrl, description, isPublic, category, contactEmail, contactPhone, websiteUrl, location, operatingHours },
       );
 
       const io = getIO();
