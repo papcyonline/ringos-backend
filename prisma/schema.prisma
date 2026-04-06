@@ -354,7 +354,10 @@ model Conversation {
   bannerUrl          String?
   category           String?
   contactEmail       String?
+  contactPhone       String?
   websiteUrl         String?
+  location           String?
+  operatingHours     String?   // e.g. "Mon-Fri 9am-5pm"
   adminsOnlyMessages Boolean    @default(false)
   adminsOnlyEditInfo Boolean    @default(false)
   adminsOnlyAddMembers Boolean  @default(false)
