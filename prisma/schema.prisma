@@ -202,6 +202,9 @@ model User {
   reactions        MessageReaction[]
   callLogs         CallLog[]
   spotlightLogs    SpotlightLog[]
+  posts            Post[]
+  postLikes        PostLike[]
+  postComments     PostComment[]
   notifications    Notification[]
   fcmTokens        FcmToken[]
   voipTokens       VoipToken[]
@@ -355,6 +358,58 @@ model Conversation {
   participants ConversationParticipant[]
   messages     Message[]
   callLogs     CallLog[]
+  posts        Post[]
+}
+
+// ── Channel Posts ──
+
+model Post {
+  id            String    @id @default(uuid())
+  channelId     String
+  authorId      String
+  content       String    @default("")
+  mediaUrl      String?
+  mediaType     String?   // "image", "video"
+  thumbnailUrl  String?
+  likeCount     Int       @default(0)
+  commentCount  Int       @default(0)
+  shareCount    Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  channel  Conversation   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  author   User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  likes    PostLike[]
+  comments PostComment[]
+
+  @@index([channelId, createdAt])
+  @@index([authorId])
+}
+
+model PostLike {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([postId])
+}
+
+model PostComment {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  post Post        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt])
 }
 
 model ConversationParticipant {
