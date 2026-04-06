@@ -104,12 +104,12 @@ router.post('/:postId/like', authenticate, async (req: AuthRequest, res: Respons
   } catch (err) { next(err); }
 });
 
-// POST /posts/:postId/comments — Add a comment
+// POST /posts/:postId/comments — Add a comment (or reply)
 router.post('/:postId/comments', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { content } = req.body;
+    const { content, parentId } = req.body;
     if (!content || !content.trim()) return res.status(400).json({ error: 'content is required' });
-    const comment = await postService.addComment(req.params.postId as string, req.user!.userId, content.trim());
+    const comment = await postService.addComment(req.params.postId as string, req.user!.userId, content.trim(), parentId);
     res.status(201).json(comment);
   } catch (err) { next(err); }
 });
@@ -118,7 +118,15 @@ router.post('/:postId/comments', authenticate, async (req: AuthRequest, res: Res
 router.get('/:postId/comments', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const cursor = (req.query.cursor as string) || undefined;
-    const result = await postService.getComments(req.params.postId as string, cursor);
+    const result = await postService.getComments(req.params.postId as string, req.user!.userId, cursor);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /posts/comments/:commentId/like — Toggle like on a comment
+router.post('/comments/:commentId/like', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await postService.toggleCommentLike(req.params.commentId as string, req.user!.userId);
     res.json(result);
   } catch (err) { next(err); }
 });

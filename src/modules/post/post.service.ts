@@ -272,14 +272,19 @@ export async function toggleLike(postId: string, userId: string) {
 /**
  * Add a comment to a post.
  */
-export async function addComment(postId: string, userId: string, content: string) {
+export async function addComment(postId: string, userId: string, content: string, parentId?: string) {
   const post = await prisma.post.findUnique({ where: { id: postId } });
   if (!post) throw new NotFoundError('Post not found');
   if (post.commentsDisabled) throw new ForbiddenError('Comments are disabled on this post');
 
+  if (parentId) {
+    const parent = await prisma.postComment.findUnique({ where: { id: parentId } });
+    if (!parent || parent.postId !== postId) throw new NotFoundError('Parent comment not found');
+  }
+
   const [comment] = await prisma.$transaction([
     prisma.postComment.create({
-      data: { postId, userId, content },
+      data: { postId, userId, content, parentId: parentId ?? null },
       include: {
         user: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
       },
@@ -306,8 +311,8 @@ export async function addComment(postId: string, userId: string, content: string
 /**
  * Get comments for a post.
  */
-export async function getComments(postId: string, cursor?: string, limit = 30) {
-  const where: any = { postId };
+export async function getComments(postId: string, userId: string, cursor?: string, limit = 30) {
+  const where: any = { postId, parentId: null }; // Only top-level comments
   if (cursor) {
     const cursorComment = await prisma.postComment.findUnique({
       where: { id: cursor },
@@ -322,14 +327,63 @@ export async function getComments(postId: string, cursor?: string, limit = 30) {
     take: limit + 1,
     include: {
       user: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
+      reactions: { where: { userId }, select: { emoji: true }, take: 1 },
+      _count: { select: { replies: true, reactions: true } },
+      replies: {
+        take: 3,
+        orderBy: { createdAt: 'asc' },
+        include: {
+          user: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
+          reactions: { where: { userId }, select: { emoji: true }, take: 1 },
+          _count: { select: { replies: true, reactions: true } },
+        },
+      },
     },
   });
 
   const hasMore = comments.length > limit;
+  const sliced = hasMore ? comments.slice(0, limit) : comments;
   return {
-    comments: hasMore ? comments.slice(0, limit) : comments,
+    comments: sliced.map((c: any) => ({
+      ...c,
+      liked: c.reactions?.length > 0,
+      replyCount: c._count?.replies ?? 0,
+      reactionCount: c._count?.reactions ?? 0,
+      replies: (c.replies ?? []).map((r: any) => ({
+        ...r,
+        liked: r.reactions?.length > 0,
+        replyCount: r._count?.replies ?? 0,
+        reactionCount: r._count?.reactions ?? 0,
+      })),
+    })),
     hasMore,
   };
+}
+
+/**
+ * Like/unlike a comment.
+ */
+export async function toggleCommentLike(commentId: string, userId: string) {
+  const comment = await prisma.postComment.findUnique({ where: { id: commentId } });
+  if (!comment) throw new NotFoundError('Comment not found');
+
+  const existing = await prisma.commentReaction.findUnique({
+    where: { commentId_userId: { commentId, userId } },
+  });
+
+  if (existing) {
+    await prisma.$transaction([
+      prisma.commentReaction.delete({ where: { id: existing.id } }),
+      prisma.postComment.update({ where: { id: commentId }, data: { likeCount: { decrement: 1 } } }),
+    ]);
+    return { liked: false };
+  }
+
+  await prisma.$transaction([
+    prisma.commentReaction.create({ data: { commentId, userId, emoji: 'like' } }),
+    prisma.postComment.update({ where: { id: commentId }, data: { likeCount: { increment: 1 } } }),
+  ]);
+  return { liked: true };
 }
 
 /**

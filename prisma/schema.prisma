@@ -207,6 +207,7 @@ model User {
   posts            Post[]
   postLikes        PostLike[]
   postComments     PostComment[]
+  commentReactions CommentReaction[]
   notifications    Notification[]
   fcmTokens        FcmToken[]
   voipTokens       VoipToken[]
@@ -427,13 +428,33 @@ model PostComment {
   id        String   @id @default(uuid())
   postId    String
   userId    String
+  parentId  String?
   content   String
+  likeCount Int      @default(0)
   createdAt DateTime @default(now())
 
-  post Post        @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post    Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent  PostComment?   @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies PostComment[]  @relation("CommentReplies")
+  reactions CommentReaction[]
 
   @@index([postId, createdAt])
+  @@index([parentId])
+}
+
+model CommentReaction {
+  id        String   @id @default(uuid())
+  commentId String
+  userId    String
+  emoji     String   // "like", "love", "laugh", "sad", "angry"
+  createdAt DateTime @default(now())
+
+  comment PostComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId])
+  @@index([commentId])
 }
 
 model ConversationParticipant {
