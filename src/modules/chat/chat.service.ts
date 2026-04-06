@@ -818,7 +818,10 @@ export async function getAllGroups(userId: string, limit = 100) {
     where: {
       type: 'GROUP',
       status: 'ACTIVE',
-      isPublic: true,
+      OR: [
+        { isPublic: true },
+        { participants: { some: { userId, leftAt: null } } },
+      ],
     },
     include: {
       participants: {
