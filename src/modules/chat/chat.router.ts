@@ -616,6 +616,27 @@ router.put(
   },
 );
 
+// PUT /conversations/:id/group/banner - Upload banner image
+router.put(
+  '/conversations/:conversationId/group/banner',
+  authenticate,
+  (req: AuthRequest, res: Response, next: NextFunction) => {
+    avatarUpload.single('banner')(req, res, next);
+  },
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'Banner image required' });
+      const bannerUrl = await fileToAvatarUrl(req.file, req.user!.userId);
+      const conversation = await groupService.updateGroup(
+        (req.params.conversationId as string),
+        req.user!.userId,
+        { bannerUrl },
+      );
+      res.json(conversation);
+    } catch (err) { next(err); }
+  },
+);
+
 // PUT /conversations/:id/group/verify - Toggle group verified (admin only)
 router.put(
   '/conversations/:conversationId/group/verify',
