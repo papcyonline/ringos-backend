@@ -223,7 +223,7 @@ export async function fileToPostImageUrl(
     try {
       const url = await uploadImageToR2(file.buffer, `posts/${userId}`, file.originalname || 'image.jpg');
       return { secureUrl: url, publicId: '' };
-    } catch {}
+    } catch (err) { /* R2 failed, fall back to next storage */ }
   }
   // 2. Fallback to Cloudinary
   if (cloudinaryService.isCloudinaryConfigured) {
@@ -246,7 +246,7 @@ export async function fileToPostVideoUrl(
     try {
       const result = await uploadVideoToR2(file.buffer, `posts/${userId}`, file.originalname || 'video.mp4');
       return { secureUrl: result.url, publicId: '', thumbnailUrl: result.thumbnailUrl };
-    } catch {}
+    } catch (err) { /* R2 failed, fall back to next storage */ }
   }
   // 2. Fallback to Cloudinary
   if (cloudinaryService.isCloudinaryConfigured) {

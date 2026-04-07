@@ -54,48 +54,51 @@ export async function createPost(
   const effectiveMediaType = mediaType ?? (firstMedia ? (firstMedia.type === 'VIDEO' ? 'video' : 'image') : null);
   const effectiveThumbnailUrl = thumbnailUrl ?? firstMedia?.thumbnailUrl ?? null;
 
-  const post = await prisma.post.create({
-    data: {
-      channelId,
-      authorId,
-      content,
-      mediaUrl: effectiveMediaUrl,
-      mediaType: effectiveMediaType,
-      thumbnailUrl: effectiveThumbnailUrl,
-      locationName: options?.locationName ?? null,
-      taggedUserIds: options?.taggedUserIds ?? [],
-      musicTitle: options?.musicTitle ?? null,
-      musicArtist: options?.musicArtist ?? null,
-      commentsDisabled: options?.commentsDisabled ?? false,
-      hideLikeCount: options?.hideLikeCount ?? false,
-    },
-    include: postInclude,
-  });
-
-  // Create PostMedia records
-  if (media && media.length > 0) {
-    await prisma.postMedia.createMany({
-      data: media.map((m) => ({
-        postId: post.id,
-        type: m.type,
-        url: m.url,
-        cloudinaryId: m.cloudinaryId,
-        thumbnailUrl: m.thumbnailUrl ?? null,
-        position: m.position,
-      })),
-    });
-  } else if (effectiveMediaUrl) {
-    // Legacy single-media: auto-create PostMedia record
-    await prisma.postMedia.create({
+  // Create post and media in a transaction
+  const post = await prisma.$transaction(async (tx) => {
+    const created = await tx.post.create({
       data: {
-        postId: post.id,
-        type: effectiveMediaType === 'video' ? 'VIDEO' : 'IMAGE',
-        url: effectiveMediaUrl,
+        channelId,
+        authorId,
+        content,
+        mediaUrl: effectiveMediaUrl,
+        mediaType: effectiveMediaType,
         thumbnailUrl: effectiveThumbnailUrl,
-        position: 0,
+        locationName: options?.locationName ?? null,
+        taggedUserIds: options?.taggedUserIds ?? [],
+        musicTitle: options?.musicTitle ?? null,
+        musicArtist: options?.musicArtist ?? null,
+        commentsDisabled: options?.commentsDisabled ?? false,
+        hideLikeCount: options?.hideLikeCount ?? false,
       },
+      include: postInclude,
     });
-  }
+
+    if (media && media.length > 0) {
+      await tx.postMedia.createMany({
+        data: media.map((m) => ({
+          postId: created.id,
+          type: m.type,
+          url: m.url,
+          cloudinaryId: m.cloudinaryId,
+          thumbnailUrl: m.thumbnailUrl ?? null,
+          position: m.position,
+        })),
+      });
+    } else if (effectiveMediaUrl) {
+      await tx.postMedia.create({
+        data: {
+          postId: created.id,
+          type: effectiveMediaType === 'video' ? 'VIDEO' : 'IMAGE',
+          url: effectiveMediaUrl,
+          thumbnailUrl: effectiveThumbnailUrl,
+          position: 0,
+        },
+      });
+    }
+
+    return created;
+  });
 
   // Re-fetch with media included
   const fullPost = await prisma.post.findUnique({
