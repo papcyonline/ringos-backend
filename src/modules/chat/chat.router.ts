@@ -124,6 +124,15 @@ router.get(
   },
 );
 
+// GET /conversations/channels/search - Search channels
+router.get('/conversations/channels/search', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const query = req.query.q as string || '';
+    const results = await chatService.searchChannels(query, req.user!.userId);
+    res.json(results);
+  } catch (err) { next(err); }
+});
+
 // GET /conversations/groups/public - List all active groups (publicly discoverable)
 router.get(
   '/conversations/groups/public',

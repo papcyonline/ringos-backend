@@ -90,7 +90,7 @@ export async function deleteNotification(userId: string, notificationId: string)
 
 export async function createNotification(data: {
   userId: string;
-  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'MISSED_CALL' | 'SYSTEM' | 'POST_LIKED' | 'POST_COMMENTED';
+  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'MISSED_CALL' | 'SYSTEM' | 'POST_LIKED' | 'POST_COMMENTED' | 'NEW_POST';
   title: string;
   body: string;
   imageUrl?: string;

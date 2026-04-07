@@ -110,6 +110,11 @@ export async function createPost(
   });
 
   logger.info({ postId: post.id, channelId, authorId, mediaCount: media?.length ?? (effectiveMediaUrl ? 1 : 0) }, 'Post created');
+
+  // Notify all channel followers about the new post
+  notifyChannelFollowers(channelId, authorId, post.id, content).catch((err) =>
+    logger.error({ err, channelId }, 'Failed to notify followers about new post'));
+
   return formatPost(fullPost ?? post, authorId);
 }
 
@@ -526,6 +531,37 @@ export async function getChannelAnalytics(channelId: string, userId: string) {
     topPosts,
     channelAge: channel?.createdAt ? Math.floor((now.getTime() - channel.createdAt.getTime()) / (24 * 60 * 60 * 1000)) : 0,
   };
+}
+
+/**
+ * Notify all channel followers about a new post.
+ */
+async function notifyChannelFollowers(channelId: string, authorId: string, postId: string, content: string) {
+  const [channel, author, followers] = await Promise.all([
+    prisma.conversation.findUnique({ where: { id: channelId }, select: { name: true, avatarUrl: true } }),
+    prisma.user.findUnique({ where: { id: authorId }, select: { displayName: true } }),
+    prisma.conversationParticipant.findMany({
+      where: { conversationId: channelId, leftAt: null, userId: { not: authorId } },
+      select: { userId: true, isMuted: true },
+    }),
+  ]);
+
+  if (!channel || followers.length === 0) return;
+
+  const title = channel.name ?? 'Channel';
+  const body = content.length > 100 ? content.substring(0, 97) + '...' : (content || 'New post');
+
+  for (const follower of followers) {
+    if (follower.isMuted) continue;
+    createNotification({
+      userId: follower.userId,
+      type: 'NEW_POST',
+      title,
+      body,
+      imageUrl: channel.avatarUrl ?? undefined,
+      data: { postId, channelId, authorId },
+    }).catch(() => {});
+  }
 }
 
 // ── Helpers ──

@@ -139,6 +139,7 @@ enum NotificationType {
   SYSTEM
   POST_LIKED
   POST_COMMENTED
+  NEW_POST
 }
 
 enum TransactionType {

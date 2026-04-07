@@ -851,6 +851,47 @@ export async function getAllGroups(userId: string, limit = 100) {
 }
 
 /**
+ * Search channels by name or category.
+ */
+export async function searchChannels(query: string, userId: string, limit = 20) {
+  if (!query || query.length < 2) return [];
+
+  const channels = await prisma.conversation.findMany({
+    where: {
+      type: 'GROUP',
+      isChannel: true,
+      isPublic: true,
+      status: 'ACTIVE',
+      OR: [
+        { name: { contains: query, mode: 'insensitive' } },
+        { category: { contains: query, mode: 'insensitive' } },
+        { description: { contains: query, mode: 'insensitive' } },
+      ],
+    },
+    include: {
+      participants: {
+        where: { leftAt: null },
+        select: { userId: true },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: limit,
+  });
+
+  return channels.map((c) => ({
+    id: c.id,
+    name: c.name,
+    description: c.description,
+    avatarUrl: c.avatarUrl,
+    bannerUrl: c.bannerUrl,
+    category: c.category,
+    isVerified: c.isVerified,
+    memberCount: c.participants.length,
+    isMember: c.participants.some((p) => p.userId === userId),
+  }));
+}
+
+/**
  * Get paginated messages for a conversation.
  * Supports cursor-based pagination (preferred) and offset-based (legacy).
  * Computes read/delivered status for the current user's sent messages.
