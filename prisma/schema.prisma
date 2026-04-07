@@ -358,6 +358,7 @@ model Conversation {
   websiteUrl         String?
   location           String?
   operatingHours     String?   // e.g. "Mon-Fri 9am-5pm"
+  pinnedPostId       String?
   adminsOnlyMessages Boolean    @default(false)
   adminsOnlyEditInfo Boolean    @default(false)
   adminsOnlyAddMembers Boolean  @default(false)
@@ -390,6 +391,9 @@ model Post {
   likeCount     Int       @default(0)
   commentCount  Int       @default(0)
   shareCount    Int       @default(0)
+  viewCount     Int       @default(0)
+  scheduledAt   DateTime?
+  isPublished   Boolean   @default(true)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

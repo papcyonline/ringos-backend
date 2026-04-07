@@ -76,6 +76,7 @@ export async function updateGroup(
     name?: string; avatarUrl?: string; description?: string; isPublic?: boolean;
     category?: string; contactEmail?: string; contactPhone?: string;
     websiteUrl?: string; location?: string; operatingHours?: string; bannerUrl?: string;
+    pinnedPostId?: string | null;
   },
 ) {
   const participant = await prisma.conversationParticipant.findUnique({
@@ -112,6 +113,7 @@ export async function updateGroup(
       ...(updates.location !== undefined ? { location: updates.location } : {}),
       ...(updates.operatingHours !== undefined ? { operatingHours: updates.operatingHours } : {}),
       ...(updates.bannerUrl !== undefined ? { bannerUrl: updates.bannerUrl } : {}),
+      ...(updates.pinnedPostId !== undefined ? { pinnedPostId: updates.pinnedPostId } : {}),
     },
     include: {
       participants: {

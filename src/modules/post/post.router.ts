@@ -139,4 +139,37 @@ router.delete('/:postId', authenticate, async (req: AuthRequest, res: Response, 
   } catch (err) { next(err); }
 });
 
+// POST /posts/:postId/pin — Pin/unpin post on channel
+router.post('/:postId/pin', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await postService.togglePinPost(req.params.postId as string, req.user!.userId);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// PATCH /posts/:postId/caption — Edit post caption
+router.patch('/:postId/caption', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { content } = req.body;
+    const result = await postService.editCaption(req.params.postId as string, req.user!.userId, content ?? '');
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /posts/:postId/view — Track post view
+router.post('/:postId/view', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    await postService.trackView(req.params.postId as string);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+// GET /posts/analytics/:channelId — Channel analytics
+router.get('/analytics/:channelId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await postService.getChannelAnalytics(req.params.channelId as string, req.user!.userId);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 export { router as postRouter };

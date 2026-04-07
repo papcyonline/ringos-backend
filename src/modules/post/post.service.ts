@@ -410,6 +410,121 @@ export async function deletePost(postId: string, userId: string) {
   return { deleted: true };
 }
 
+/**
+ * Pin/unpin a post on the channel.
+ */
+export async function togglePinPost(postId: string, userId: string) {
+  const post = await prisma.post.findUnique({ where: { id: postId }, select: { channelId: true } });
+  if (!post) throw new NotFoundError('Post not found');
+
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: post.channelId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') throw new ForbiddenError('Only admins can pin posts');
+
+  const channel = await prisma.conversation.findUnique({ where: { id: post.channelId }, select: { pinnedPostId: true } });
+  const isPinned = channel?.pinnedPostId === postId;
+
+  await prisma.conversation.update({
+    where: { id: post.channelId },
+    data: { pinnedPostId: isPinned ? null : postId },
+  });
+
+  return { pinned: !isPinned };
+}
+
+/**
+ * Edit post caption.
+ */
+export async function editCaption(postId: string, userId: string, content: string) {
+  const post = await prisma.post.findUnique({ where: { id: postId }, select: { authorId: true, channelId: true } });
+  if (!post) throw new NotFoundError('Post not found');
+
+  if (post.authorId !== userId) {
+    const participant = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId: post.channelId, userId } },
+    });
+    if (!participant || participant.role !== 'ADMIN') throw new ForbiddenError('Only the author or admins can edit');
+  }
+
+  const updated = await prisma.post.update({
+    where: { id: postId },
+    data: { content },
+    include: postInclude,
+  });
+  return formatPost(updated, userId);
+}
+
+/**
+ * Track a post view.
+ */
+export async function trackView(postId: string) {
+  await prisma.post.update({
+    where: { id: postId },
+    data: { viewCount: { increment: 1 } },
+  });
+}
+
+/**
+ * Get channel analytics.
+ */
+export async function getChannelAnalytics(channelId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: channelId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') throw new ForbiddenError('Only admins can view analytics');
+
+  const [posts, followers, channel] = await Promise.all([
+    prisma.post.findMany({
+      where: { channelId },
+      select: { id: true, likeCount: true, commentCount: true, shareCount: true, viewCount: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.conversationParticipant.count({
+      where: { conversationId: channelId, leftAt: null },
+    }),
+    prisma.conversation.findUnique({
+      where: { id: channelId },
+      select: { createdAt: true },
+    }),
+  ]);
+
+  const totalLikes = posts.reduce((sum, p) => sum + p.likeCount, 0);
+  const totalComments = posts.reduce((sum, p) => sum + p.commentCount, 0);
+  const totalShares = posts.reduce((sum, p) => sum + p.shareCount, 0);
+  const totalViews = posts.reduce((sum, p) => sum + p.viewCount, 0);
+  const avgEngagement = posts.length > 0
+    ? ((totalLikes + totalComments + totalShares) / posts.length).toFixed(1)
+    : '0';
+
+  // Posts per week (last 4 weeks)
+  const now = new Date();
+  const weeklyPosts = [0, 0, 0, 0];
+  for (const p of posts) {
+    const weeksAgo = Math.floor((now.getTime() - p.createdAt.getTime()) / (7 * 24 * 60 * 60 * 1000));
+    if (weeksAgo < 4) weeklyPosts[weeksAgo]++;
+  }
+
+  // Top posts
+  const topPosts = [...posts]
+    .sort((a, b) => (b.likeCount + b.commentCount) - (a.likeCount + a.commentCount))
+    .slice(0, 5)
+    .map(p => ({ id: p.id, likes: p.likeCount, comments: p.commentCount, views: p.viewCount }));
+
+  return {
+    followers,
+    totalPosts: posts.length,
+    totalLikes,
+    totalComments,
+    totalShares,
+    totalViews,
+    avgEngagement,
+    weeklyPosts,
+    topPosts,
+    channelAge: channel?.createdAt ? Math.floor((now.getTime() - channel.createdAt.getTime()) / (24 * 60 * 60 * 1000)) : 0,
+  };
+}
+
 // ── Helpers ──
 
 function formatPost(post: any, currentUserId: string) {
