@@ -97,6 +97,26 @@ router.post(
   },
 );
 
+// GET /posts/hashtag/:tag — Search posts by hashtag
+router.get('/hashtag/:tag', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const cursor = req.query.cursor as string | undefined;
+    const limit = Math.min(50, parseInt(req.query.limit as string, 10) || 20);
+    const result = await postService.searchByHashtag(req.params.tag as string, req.user!.userId, cursor, limit);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// GET /posts/bookmarks — Get user's bookmarked posts
+router.get('/bookmarks', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const cursor = req.query.cursor as string | undefined;
+    const limit = Math.min(50, parseInt(req.query.limit as string, 10) || 20);
+    const result = await postService.getBookmarkedPosts(req.user!.userId, cursor, limit);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // GET /posts/scheduled/:channelId — Get scheduled posts for a channel (admin only)
 router.get('/scheduled/:channelId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -117,6 +137,14 @@ router.delete('/scheduled/:postId', authenticate, async (req: AuthRequest, res: 
 router.post('/:postId/like', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const result = await postService.toggleLike(req.params.postId as string, req.user!.userId);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /posts/:postId/bookmark — Toggle bookmark on a post
+router.post('/:postId/bookmark', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await postService.toggleBookmark(req.params.postId as string, req.user!.userId);
     res.json(result);
   } catch (err) { next(err); }
 });

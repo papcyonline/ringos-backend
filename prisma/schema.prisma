@@ -139,6 +139,7 @@ enum NotificationType {
   SYSTEM
   POST_LIKED
   POST_COMMENTED
+  POST_MENTION
   NEW_POST
 }
 
@@ -207,6 +208,7 @@ model User {
   spotlightLogs    SpotlightLog[]
   posts            Post[]
   postLikes        PostLike[]
+  postBookmarks    PostBookmark[]
   postComments     PostComment[]
   commentReactions CommentReaction[]
   notifications    Notification[]
@@ -400,7 +402,8 @@ model Post {
 
   channel  Conversation   @relation(fields: [channelId], references: [id], onDelete: Cascade)
   author   User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  likes    PostLike[]
+  likes     PostLike[]
+  bookmarks PostBookmark[]
   comments PostComment[]
   media    PostMedia[]
 
@@ -434,6 +437,19 @@ model PostLike {
 
   @@unique([postId, userId])
   @@index([postId])
+}
+
+model PostBookmark {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([userId, createdAt])
 }
 
 model PostComment {

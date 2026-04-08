@@ -121,6 +121,7 @@ export async function createPost(
     include: {
       ...postInclude,
       likes: { where: { userId: authorId }, select: { id: true }, take: 1 },
+      bookmarks: { where: { userId: authorId }, select: { id: true }, take: 1 },
     },
   });
 
@@ -130,6 +131,13 @@ export async function createPost(
   if (!isScheduled) {
     notifyChannelFollowers(channelId, authorId, post.id, content).catch((err) =>
       logger.error({ err, channelId }, 'Failed to notify followers about new post'));
+
+    // Notify tagged/mentioned users
+    const taggedIds = options?.taggedUserIds ?? [];
+    if (taggedIds.length > 0) {
+      notifyMentionedUsers(taggedIds, authorId, post.id, channelId).catch((err) =>
+        logger.error({ err, postId: post.id }, 'Failed to notify mentioned users'));
+    }
   }
 
   return formatPost(fullPost ?? post, authorId);
@@ -168,6 +176,7 @@ export async function getFeed(userId: string, cursor?: string, limit = 20) {
     include: {
       ...postInclude,
       likes: { where: { userId }, select: { id: true }, take: 1 },
+      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
     },
   });
 
@@ -201,6 +210,7 @@ export async function getChannelPosts(channelId: string, userId: string, cursor?
     include: {
       ...postInclude,
       likes: { where: { userId }, select: { id: true }, take: 1 },
+      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
     },
   });
 
@@ -237,6 +247,44 @@ export async function discoverPosts(userId: string, cursor?: string, limit = 20)
     include: {
       ...postInclude,
       likes: { where: { userId }, select: { id: true }, take: 1 },
+      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
+    },
+  });
+
+  const hasMore = posts.length > limit;
+  const sliced = hasMore ? posts.slice(0, limit) : posts;
+
+  return {
+    posts: sliced.map((p) => formatPost(p, userId)),
+    hasMore,
+    nextCursor: sliced.length > 0 ? sliced[sliced.length - 1].id : undefined,
+  };
+}
+
+/**
+ * Search posts by hashtag.
+ */
+export async function searchByHashtag(hashtag: string, userId: string, cursor?: string, limit = 20) {
+  const tag = hashtag.startsWith('#') ? hashtag : `#${hashtag}`;
+
+  const where: any = {
+    isPublished: true,
+    content: { contains: tag, mode: 'insensitive' },
+    channel: { isChannel: true, status: 'ACTIVE' },
+  };
+  if (cursor) {
+    const cursorPost = await prisma.post.findUnique({ where: { id: cursor }, select: { createdAt: true } });
+    if (cursorPost) where.createdAt = { lt: cursorPost.createdAt };
+  }
+
+  const posts = await prisma.post.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: limit + 1,
+    include: {
+      ...postInclude,
+      likes: { where: { userId }, select: { id: true }, take: 1 },
+      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
     },
   });
 
@@ -613,10 +661,92 @@ function formatPost(post: any, currentUserId: string) {
     commentCount: post._count?.comments ?? post.commentCount ?? 0,
     shareCount: post.shareCount ?? 0,
     liked,
+    bookmarked: post.bookmarks?.length > 0,
     author: post.author,
     channel: post.channel,
     createdAt: post.createdAt,
   };
+}
+
+/**
+ * Toggle bookmark on a post.
+ */
+export async function toggleBookmark(postId: string, userId: string) {
+  const post = await prisma.post.findUnique({ where: { id: postId } });
+  if (!post) throw new NotFoundError('Post not found');
+  if (!post.isPublished) throw new ForbiddenError('Cannot bookmark an unpublished post');
+
+  const existing = await prisma.postBookmark.findUnique({
+    where: { postId_userId: { postId, userId } },
+  });
+
+  if (existing) {
+    await prisma.postBookmark.delete({ where: { id: existing.id } });
+    return { bookmarked: false };
+  }
+
+  await prisma.postBookmark.create({ data: { postId, userId } });
+  return { bookmarked: true };
+}
+
+/**
+ * Get bookmarked posts for a user.
+ */
+export async function getBookmarkedPosts(userId: string, cursor?: string, limit = 20) {
+  const where: any = { userId };
+  if (cursor) {
+    const cursorBookmark = await prisma.postBookmark.findUnique({ where: { id: cursor } });
+    if (cursorBookmark) where.createdAt = { lt: cursorBookmark.createdAt };
+  }
+
+  const bookmarks = await prisma.postBookmark.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: limit + 1,
+    include: {
+      post: {
+        include: {
+          ...postInclude,
+          likes: { where: { userId }, select: { id: true }, take: 1 },
+          bookmarks: { where: { userId }, select: { id: true }, take: 1 },
+        },
+      },
+    },
+  });
+
+  const hasMore = bookmarks.length > limit;
+  const items = hasMore ? bookmarks.slice(0, limit) : bookmarks;
+
+  return {
+    posts: items
+      .filter((b) => b.post.isPublished)
+      .map((b) => ({ ...formatPost(b.post, userId), bookmarked: true })),
+    hasMore,
+    cursor: items.length > 0 ? items[items.length - 1].id : null,
+  };
+}
+
+/**
+ * Notify users who were @mentioned in a post.
+ */
+async function notifyMentionedUsers(userIds: string[], authorId: string, postId: string, channelId: string) {
+  const [author, channel] = await Promise.all([
+    prisma.user.findUnique({ where: { id: authorId }, select: { displayName: true } }),
+    prisma.conversation.findUnique({ where: { id: channelId }, select: { name: true } }),
+  ]);
+  const authorName = author?.displayName ?? 'Someone';
+  const channelName = channel?.name ?? 'a channel';
+
+  for (const userId of userIds) {
+    if (userId === authorId) continue;
+    createNotification({
+      userId,
+      type: 'POST_MENTION',
+      title: `${authorName} mentioned you`,
+      body: `You were tagged in a post on ${channelName}`,
+      data: { postId, channelId, authorId },
+    }).catch(() => {});
+  }
 }
 
 /**
