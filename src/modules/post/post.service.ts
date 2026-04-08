@@ -66,7 +66,7 @@ const postInclude = {
     select: { id: true, displayName: true, avatarUrl: true, isVerified: true },
   },
   channel: {
-    select: { id: true, name: true, avatarUrl: true, isVerified: true, isChannel: true },
+    select: { id: true, name: true, avatarUrl: true, isVerified: true, isChannel: true, pinnedPostId: true },
   },
   media: { orderBy: { position: 'asc' as const } },
   _count: { select: { likes: true, comments: true } },
@@ -604,6 +604,7 @@ function formatPost(post: any, currentUserId: string) {
     shareCount: post.shareCount ?? 0,
     liked,
     bookmarked: post.bookmarks?.length > 0,
+    isPinned: post.channel?.pinnedPostId === post.id,
     author: post.author,
     channel: post.channel,
     createdAt: post.createdAt,
