@@ -884,7 +884,7 @@ export async function getRecommendedChannels(userId: string, category?: string, 
     include: {
       participants: {
         where: { leftAt: null, bannedAt: null },
-        select: { userId: true },
+        select: { userId: true, role: true },
       },
     },
     orderBy: { updatedAt: 'desc' },
@@ -893,17 +893,23 @@ export async function getRecommendedChannels(userId: string, category?: string, 
 
   // Sort by subscriber count descending
   const sorted = channels
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      description: c.description,
-      avatarUrl: c.avatarUrl,
-      bannerUrl: c.bannerUrl,
-      category: c.category,
-      isVerified: c.isVerified,
-      isChannel: c.isChannel,
-      subscriberCount: c.participants.length,
-    }))
+    .map((c) => {
+      const myParticipant = c.participants.find((p) => p.userId === userId);
+      return {
+        id: c.id,
+        name: c.name,
+        description: c.description,
+        avatarUrl: c.avatarUrl,
+        bannerUrl: c.bannerUrl,
+        category: c.category,
+        isVerified: c.isVerified,
+        isChannel: c.isChannel,
+        memberCount: c.participants.length,
+        subscriberCount: c.participants.length,
+        isMember: !!myParticipant,
+        isAdmin: myParticipant?.role === 'ADMIN',
+      };
+    })
     .sort((a, b) => b.subscriberCount - a.subscriberCount)
     .slice(0, limit);
 
@@ -941,25 +947,29 @@ export async function searchChannels(query: string, userId: string, limit = 20) 
     include: {
       participants: {
         where: { leftAt: null },
-        select: { userId: true },
+        select: { userId: true, role: true },
       },
     },
     orderBy: { updatedAt: 'desc' },
     take: limit,
   });
 
-  return channels.map((c) => ({
-    id: c.id,
-    name: c.name,
-    description: c.description,
-    avatarUrl: c.avatarUrl,
-    bannerUrl: c.bannerUrl,
-    category: c.category,
-    isVerified: c.isVerified,
-    isChannel: c.isChannel,
-    memberCount: c.participants.length,
-    isMember: c.participants.some((p) => p.userId === userId),
-  }));
+  return channels.map((c) => {
+    const myParticipant = c.participants.find((p) => p.userId === userId);
+    return {
+      id: c.id,
+      name: c.name,
+      description: c.description,
+      avatarUrl: c.avatarUrl,
+      bannerUrl: c.bannerUrl,
+      category: c.category,
+      isVerified: c.isVerified,
+      isChannel: c.isChannel,
+      memberCount: c.participants.length,
+      isMember: !!myParticipant,
+      isAdmin: myParticipant?.role === 'ADMIN',
+    };
+  });
 }
 
 /**
