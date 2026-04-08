@@ -133,7 +133,7 @@ router.get('/conversations/channels/search', authenticate, async (req: AuthReque
   } catch (err) { next(err); }
 });
 
-// GET /conversations/groups/public - List all active groups (publicly discoverable)
+// GET /conversations/groups/public - List all active groups (excludes channels)
 router.get(
   '/conversations/groups/public',
   authenticate,
@@ -141,6 +141,20 @@ router.get(
     try {
       const groups = await chatService.getAllGroups(req.user!.userId);
       res.json(groups);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /conversations/channels/public - List all active channels (excludes groups)
+router.get(
+  '/conversations/channels/public',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const channels = await chatService.getAllChannels(req.user!.userId);
+      res.json(channels);
     } catch (err) {
       next(err);
     }

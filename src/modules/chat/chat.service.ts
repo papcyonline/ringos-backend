@@ -813,10 +813,14 @@ export async function endConversation(conversationId: string, userId: string) {
  * List all active GROUP conversations, visible to any authenticated user.
  * Includes participant count and whether the requesting user is a member.
  */
-export async function getAllGroups(userId: string, limit = 100) {
-  const groups = await prisma.conversation.findMany({
+/**
+ * List all active groups or channels visible to the user (public + joined).
+ */
+async function listGroupConversations(userId: string, isChannel: boolean, limit = 100) {
+  const conversations = await prisma.conversation.findMany({
     where: {
       type: 'GROUP',
+      isChannel,
       status: 'ACTIVE',
       OR: [
         { isPublic: true },
@@ -836,22 +840,30 @@ export async function getAllGroups(userId: string, limit = 100) {
     take: limit,
   });
 
-  const results = groups.map((g) => {
-    const activeParticipants = g.participants.filter((p) => p.leftAt == null);
-    const isMember = activeParticipants.some((p) => p.userId === userId);
+  return conversations.map((c) => {
+    const activeParticipants = c.participants.filter((p) => p.leftAt == null);
     return {
-      ...g,
+      ...c,
       memberCount: activeParticipants.length,
-      isMember,
+      isMember: activeParticipants.some((p) => p.userId === userId),
     };
   });
+}
 
+export async function getAllGroups(userId: string, limit = 100) {
+  const results = await listGroupConversations(userId, false, limit);
   logger.debug({ userId, count: results.length }, 'Listed all public groups');
   return results;
 }
 
+export async function getAllChannels(userId: string, limit = 100) {
+  const results = await listGroupConversations(userId, true, limit);
+  logger.debug({ userId, count: results.length }, 'Listed all public channels');
+  return results;
+}
+
 /**
- * Search channels by name or category.
+ * Search channels by name, category, or description.
  */
 export async function searchChannels(query: string, userId: string, limit = 20) {
   if (!query || query.length < 2) return [];
@@ -860,12 +872,21 @@ export async function searchChannels(query: string, userId: string, limit = 20) 
     where: {
       type: 'GROUP',
       isChannel: true,
-      isPublic: true,
       status: 'ACTIVE',
-      OR: [
-        { name: { contains: query, mode: 'insensitive' } },
-        { category: { contains: query, mode: 'insensitive' } },
-        { description: { contains: query, mode: 'insensitive' } },
+      AND: [
+        {
+          OR: [
+            { isPublic: true },
+            { participants: { some: { userId, leftAt: null } } },
+          ],
+        },
+        {
+          OR: [
+            { name: { contains: query, mode: 'insensitive' } },
+            { category: { contains: query, mode: 'insensitive' } },
+            { description: { contains: query, mode: 'insensitive' } },
+          ],
+        },
       ],
     },
     include: {
@@ -886,6 +907,7 @@ export async function searchChannels(query: string, userId: string, limit = 20) 
     bannerUrl: c.bannerUrl,
     category: c.category,
     isVerified: c.isVerified,
+    isChannel: c.isChannel,
     memberCount: c.participants.length,
     isMember: c.participants.some((p) => p.userId === userId),
   }));
