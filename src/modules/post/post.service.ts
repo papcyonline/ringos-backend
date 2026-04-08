@@ -14,6 +14,24 @@ async function verifyChannelAdmin(channelId: string, userId: string) {
 }
 
 /**
+ * Verify a user can access a post (channel is public or user is a subscriber).
+ */
+async function verifyPostAccess(post: { channelId: string; isPublished: boolean }, userId: string) {
+  if (!post.isPublished) throw new ForbiddenError('Cannot interact with an unpublished post');
+  const channel = await prisma.conversation.findUnique({
+    where: { id: post.channelId },
+    select: { isPublic: true },
+  });
+  if (channel?.isPublic) return;
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: post.channelId, userId } },
+  });
+  if (!participant || participant.leftAt !== null) {
+    throw new ForbiddenError('You do not have access to this post');
+  }
+}
+
+/**
  * Shared paginated post query. Handles cursor, limit, includes, and formatting.
  */
 async function queryPaginatedPosts(where: any, userId: string, cursor?: string, limit = 20) {
@@ -165,7 +183,7 @@ export async function createPost(
     // Notify tagged/mentioned users
     const taggedIds = options?.taggedUserIds ?? [];
     if (taggedIds.length > 0) {
-      notifyMentionedUsers(taggedIds, authorId, post.id, channelId).catch((err) =>
+      notifyTaggedUsers(taggedIds, authorId, post.id, channelId).catch((err) =>
         logger.error({ err, postId: post.id }, 'Failed to notify mentioned users'));
     }
   }
@@ -228,7 +246,7 @@ export async function searchByHashtag(hashtag: string, userId: string, cursor?: 
 export async function toggleLike(postId: string, userId: string) {
   const post = await prisma.post.findUnique({ where: { id: postId } });
   if (!post) throw new NotFoundError('Post not found');
-  if (!post.isPublished) throw new ForbiddenError('Cannot interact with an unpublished post');
+  await verifyPostAccess(post, userId);
 
   const existing = await prisma.postLike.findUnique({
     where: { postId_userId: { postId, userId } },
@@ -274,7 +292,7 @@ export async function toggleLike(postId: string, userId: string) {
 export async function addComment(postId: string, userId: string, content: string, parentId?: string) {
   const post = await prisma.post.findUnique({ where: { id: postId } });
   if (!post) throw new NotFoundError('Post not found');
-  if (!post.isPublished) throw new ForbiddenError('Cannot interact with an unpublished post');
+  await verifyPostAccess(post, userId);
   if (post.commentsDisabled) throw new ForbiddenError('Comments are disabled on this post');
 
   if (parentId) {
@@ -598,7 +616,7 @@ function formatPost(post: any, currentUserId: string) {
 export async function toggleBookmark(postId: string, userId: string) {
   const post = await prisma.post.findUnique({ where: { id: postId } });
   if (!post) throw new NotFoundError('Post not found');
-  if (!post.isPublished) throw new ForbiddenError('Cannot bookmark an unpublished post');
+  await verifyPostAccess(post, userId);
 
   const existing = await prisma.postBookmark.findUnique({
     where: { postId_userId: { postId, userId } },
@@ -651,9 +669,9 @@ export async function getBookmarkedPosts(userId: string, cursor?: string, limit 
 }
 
 /**
- * Notify users who were @mentioned in a post.
+ * Notify users who were tagged in a post.
  */
-async function notifyMentionedUsers(userIds: string[], authorId: string, postId: string, channelId: string) {
+async function notifyTaggedUsers(userIds: string[], authorId: string, postId: string, channelId: string) {
   const [author, channel] = await Promise.all([
     prisma.user.findUnique({ where: { id: authorId }, select: { displayName: true } }),
     prisma.conversation.findUnique({ where: { id: channelId }, select: { name: true } }),
