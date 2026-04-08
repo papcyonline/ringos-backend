@@ -842,10 +842,12 @@ async function listGroupConversations(userId: string, isChannel: boolean, limit 
 
   return conversations.map((c) => {
     const activeParticipants = c.participants.filter((p) => p.leftAt == null);
+    const myParticipant = activeParticipants.find((p) => p.userId === userId);
     return {
       ...c,
       memberCount: activeParticipants.length,
-      isMember: activeParticipants.some((p) => p.userId === userId),
+      isMember: !!myParticipant,
+      isAdmin: myParticipant?.role === 'ADMIN',
     };
   });
 }

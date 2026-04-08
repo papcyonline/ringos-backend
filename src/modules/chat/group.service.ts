@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../shared/errors';
+import { isPro } from '../../shared/usage.service';
 
 /**
  * Verify that a user is an admin in a conversation. Throws if not.
@@ -28,6 +29,24 @@ export async function createGroup(
   isPublic?: boolean,
   isChannel?: boolean,
 ) {
+  // Free users can only create 1 channel
+  if (isChannel) {
+    const pro = await isPro(creatorId);
+    if (!pro) {
+      const channelCount = await prisma.conversation.count({
+        where: {
+          type: 'GROUP',
+          isChannel: true,
+          status: 'ACTIVE',
+          participants: { some: { userId: creatorId, role: 'ADMIN', leftAt: null } },
+        },
+      });
+      if (channelCount >= 1) {
+        throw new ForbiddenError('Free users can create 1 channel. Upgrade to Pro for unlimited channels.');
+      }
+    }
+  }
+
   // Check name uniqueness for active groups/channels
   const existing = await prisma.conversation.findFirst({
     where: {
