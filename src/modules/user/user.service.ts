@@ -1,4 +1,5 @@
 import { prisma } from '../../config/database';
+import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { UpdatePreferenceInput, UpdateAvailabilityInput, UpdatePrivacyInput, UpdateProfileInput } from './user.schema';
 import { isBlocked } from '../safety/safety.service';
@@ -484,8 +485,100 @@ export async function deleteAccount(userId: string) {
   const user = await findUserOrThrow(userId);
   const email = (user as any).email as string | null;
   const displayName = (user as any).displayName as string | null;
+
+  // Collect all media file references BEFORE deleting the user (cascade will remove records)
+  const [postMedia, storySlides, userAvatar, ownedChannels] = await Promise.all([
+    // Post media (images/videos uploaded by this user)
+    prisma.postMedia.findMany({
+      where: { post: { authorId: userId } },
+      select: { cloudinaryId: true, url: true },
+    }),
+    // Story slides
+    prisma.storySlide.findMany({
+      where: { story: { userId } },
+      select: { cloudinaryId: true, mediaUrl: true },
+    }),
+    // User avatar URL
+    Promise.resolve((user as any).avatarUrl as string | null),
+    // Channels where user is the sole admin (should be deleted)
+    prisma.conversation.findMany({
+      where: {
+        type: 'GROUP',
+        isChannel: true,
+        status: 'ACTIVE',
+        participants: { some: { userId, role: 'ADMIN', leftAt: null } },
+      },
+      select: { id: true, avatarUrl: true, bannerUrl: true },
+    }),
+  ]);
+
+  // Delete the user (cascades all related records)
   await prisma.user.delete({ where: { id: userId } });
+
+  // Soft-delete owned channels (set status to ENDED)
+  for (const ch of ownedChannels) {
+    // Check if any other admins remain
+    const otherAdmins = await prisma.conversationParticipant.count({
+      where: { conversationId: ch.id, role: 'ADMIN', leftAt: null },
+    });
+    if (otherAdmins === 0) {
+      await prisma.conversation.update({
+        where: { id: ch.id },
+        data: { status: 'ENDED' },
+      });
+    }
+  }
+
+  // Clean up external media storage (fire-and-forget, don't block response)
+  _cleanupUserMedia(postMedia, storySlides, userAvatar, ownedChannels).catch((err) =>
+    logger.error({ err, userId }, 'Failed to clean up media files after account deletion'));
+
+  logger.info({ userId, email }, 'Account deleted');
   return { email, displayName };
+}
+
+/**
+ * Clean up all media files from Cloudinary/R2 for a deleted user.
+ */
+async function _cleanupUserMedia(
+  postMedia: { cloudinaryId: string; url: string }[],
+  storySlides: { cloudinaryId: string; mediaUrl: string }[],
+  avatarUrl: string | null,
+  channels: { avatarUrl: string | null; bannerUrl: string | null }[],
+) {
+  const { deleteFile } = await import('../../shared/cloudinary.service');
+
+  // Delete post media
+  for (const m of postMedia) {
+    if (m.cloudinaryId) {
+      const isVideo = m.url.includes('/video/') || m.url.endsWith('.mp4');
+      deleteFile(m.cloudinaryId, isVideo ? 'video' : 'image').catch(() => {});
+    }
+  }
+
+  // Delete story slides
+  for (const s of storySlides) {
+    if (s.cloudinaryId) {
+      const isVideo = s.mediaUrl.includes('/video/') || s.mediaUrl.endsWith('.mp4');
+      deleteFile(s.cloudinaryId, isVideo ? 'video' : 'image').catch(() => {});
+    }
+  }
+
+  // Delete user avatar
+  if (avatarUrl && avatarUrl.includes('cloudinary.com')) {
+    const match = avatarUrl.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.\w+)?$/);
+    if (match) deleteFile(match[1]).catch(() => {});
+  }
+
+  // Delete channel avatars/banners
+  for (const ch of channels) {
+    for (const url of [ch.avatarUrl, ch.bannerUrl]) {
+      if (url && url.includes('cloudinary.com')) {
+        const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.\w+)?$/);
+        if (match) deleteFile(match[1]).catch(() => {});
+      }
+    }
+  }
 }
 
 // ─── Phone & Contact Sync ────────────────────────────────
