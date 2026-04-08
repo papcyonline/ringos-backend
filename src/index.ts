@@ -14,6 +14,7 @@ import { startSessionCleanupJob } from './jobs/sessionCleanup';
 import { startAvailabilityExpiryJob } from './jobs/availabilityExpiry';
 import { startStoryCleanupJob } from './jobs/storyCleanup';
 import { startMessageExpiryJob } from './jobs/messageExpiry';
+import { startScheduledPostsJob } from './jobs/scheduledPosts';
 import { logger } from './shared/logger';
 import { initSentry } from './shared/sentry.service';
 import { initRedis, closeRedis } from './shared/redis.service';
@@ -43,6 +44,7 @@ async function main() {
   startAvailabilityExpiryJob();
   startStoryCleanupJob();
   startMessageExpiryJob();
+  startScheduledPostsJob();
 
   server.listen(env.PORT, '0.0.0.0', () => {
     logger.info(`Server running on port ${env.PORT} in ${env.NODE_ENV} mode`);

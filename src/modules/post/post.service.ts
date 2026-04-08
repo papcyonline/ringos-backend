@@ -32,6 +32,7 @@ export async function createPost(
     musicArtist?: string;
     commentsDisabled?: boolean;
     hideLikeCount?: boolean;
+    scheduledAt?: string;
   },
 ) {
   const channel = await prisma.conversation.findUnique({
@@ -54,6 +55,9 @@ export async function createPost(
   const effectiveMediaType = mediaType ?? (firstMedia ? (firstMedia.type === 'VIDEO' ? 'video' : 'image') : null);
   const effectiveThumbnailUrl = thumbnailUrl ?? firstMedia?.thumbnailUrl ?? null;
 
+  const scheduledAt = options?.scheduledAt ? new Date(options.scheduledAt) : null;
+  const isScheduled = scheduledAt && scheduledAt > new Date();
+
   // Create post and media in a transaction
   const post = await prisma.$transaction(async (tx) => {
     const created = await tx.post.create({
@@ -70,6 +74,7 @@ export async function createPost(
         musicArtist: options?.musicArtist ?? null,
         commentsDisabled: options?.commentsDisabled ?? false,
         hideLikeCount: options?.hideLikeCount ?? false,
+        ...(isScheduled ? { scheduledAt, isPublished: false } : {}),
       },
       include: postInclude,
     });
@@ -109,11 +114,13 @@ export async function createPost(
     },
   });
 
-  logger.info({ postId: post.id, channelId, authorId, mediaCount: media?.length ?? (effectiveMediaUrl ? 1 : 0) }, 'Post created');
+  logger.info({ postId: post.id, channelId, authorId, mediaCount: media?.length ?? (effectiveMediaUrl ? 1 : 0), scheduled: !!isScheduled }, 'Post created');
 
-  // Notify all channel followers about the new post
-  notifyChannelFollowers(channelId, authorId, post.id, content).catch((err) =>
-    logger.error({ err, channelId }, 'Failed to notify followers about new post'));
+  // Only notify for immediately published posts (not scheduled)
+  if (!isScheduled) {
+    notifyChannelFollowers(channelId, authorId, post.id, content).catch((err) =>
+      logger.error({ err, channelId }, 'Failed to notify followers about new post'));
+  }
 
   return formatPost(fullPost ?? post, authorId);
 }
@@ -135,7 +142,7 @@ export async function getFeed(userId: string, cursor?: string, limit = 20) {
 
   if (channelIds.length === 0) return { posts: [], hasMore: false };
 
-  const where: any = { channelId: { in: channelIds } };
+  const where: any = { channelId: { in: channelIds }, isPublished: true };
   if (cursor) {
     const cursorPost = await prisma.post.findUnique({
       where: { id: cursor },
@@ -168,7 +175,7 @@ export async function getFeed(userId: string, cursor?: string, limit = 20) {
  * Get posts for a specific channel.
  */
 export async function getChannelPosts(channelId: string, userId: string, cursor?: string, limit = 20) {
-  const where: any = { channelId };
+  const where: any = { channelId, isPublished: true };
   if (cursor) {
     const cursorPost = await prisma.post.findUnique({
       where: { id: cursor },
@@ -202,6 +209,7 @@ export async function getChannelPosts(channelId: string, userId: string, cursor?
  */
 export async function discoverPosts(userId: string, cursor?: string, limit = 20) {
   const where: any = {
+    isPublished: true,
     channel: { isChannel: true, isPublic: true, status: 'ACTIVE' },
   };
   if (cursor) {
@@ -238,6 +246,7 @@ export async function discoverPosts(userId: string, cursor?: string, limit = 20)
 export async function toggleLike(postId: string, userId: string) {
   const post = await prisma.post.findUnique({ where: { id: postId } });
   if (!post) throw new NotFoundError('Post not found');
+  if (!post.isPublished) throw new ForbiddenError('Cannot interact with an unpublished post');
 
   const existing = await prisma.postLike.findUnique({
     where: { postId_userId: { postId, userId } },
@@ -283,6 +292,7 @@ export async function toggleLike(postId: string, userId: string) {
 export async function addComment(postId: string, userId: string, content: string, parentId?: string) {
   const post = await prisma.post.findUnique({ where: { id: postId } });
   if (!post) throw new NotFoundError('Post not found');
+  if (!post.isPublished) throw new ForbiddenError('Cannot interact with an unpublished post');
   if (post.commentsDisabled) throw new ForbiddenError('Comments are disabled on this post');
 
   if (parentId) {
@@ -484,7 +494,7 @@ export async function getChannelAnalytics(channelId: string, userId: string) {
 
   const [posts, followers, channel] = await Promise.all([
     prisma.post.findMany({
-      where: { channelId },
+      where: { channelId, isPublished: true },
       select: { id: true, likeCount: true, commentCount: true, shareCount: true, viewCount: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
     }),
@@ -597,4 +607,77 @@ function formatPost(post: any, currentUserId: string) {
     channel: post.channel,
     createdAt: post.createdAt,
   };
+}
+
+/**
+ * Get scheduled (unpublished) posts for a channel. Admin only.
+ */
+export async function getScheduledPosts(channelId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: channelId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can view scheduled posts');
+  }
+
+  const posts = await prisma.post.findMany({
+    where: { channelId, isPublished: false, scheduledAt: { not: null } },
+    include: { ...postInclude, media: { orderBy: { position: 'asc' } } },
+    orderBy: { scheduledAt: 'asc' },
+  });
+
+  return posts.map((p) => formatPost(p, userId));
+}
+
+/**
+ * Publish all scheduled posts whose scheduledAt has passed.
+ * Called periodically by a cron job or interval.
+ */
+export async function publishScheduledPosts() {
+  const now = new Date();
+  const posts = await prisma.post.findMany({
+    where: {
+      isPublished: false,
+      scheduledAt: { not: null, lte: now },
+    },
+    select: { id: true, channelId: true, authorId: true, content: true },
+  });
+
+  if (posts.length === 0) return;
+
+  await prisma.post.updateMany({
+    where: { id: { in: posts.map((p) => p.id) } },
+    data: { isPublished: true },
+  });
+
+  // Notify subscribers for each published post
+  for (const post of posts) {
+    notifyChannelFollowers(post.channelId, post.authorId, post.id, post.content ?? '').catch((err) =>
+      logger.error({ err, postId: post.id }, 'Failed to notify for scheduled post'));
+  }
+
+  logger.info({ count: posts.length }, 'Published scheduled posts');
+}
+
+/**
+ * Delete a scheduled (unpublished) post. Admin only.
+ */
+export async function deleteScheduledPost(postId: string, userId: string) {
+  const post = await prisma.post.findUnique({
+    where: { id: postId },
+    select: { channelId: true, isPublished: true, scheduledAt: true },
+  });
+  if (!post) throw new NotFoundError('Post not found');
+  if (post.isPublished) throw new ForbiddenError('Cannot delete a published post this way');
+
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: post.channelId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can delete scheduled posts');
+  }
+
+  await prisma.post.delete({ where: { id: postId } });
+  logger.info({ postId, userId }, 'Scheduled post deleted');
+  return { deleted: true };
 }

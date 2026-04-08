@@ -89,12 +89,29 @@ router.post(
           musicArtist: req.body.musicArtist || undefined,
           commentsDisabled: req.body.commentsDisabled === 'true',
           hideLikeCount: req.body.hideLikeCount === 'true',
+          scheduledAt: req.body.scheduledAt || undefined,
         },
       );
       res.status(201).json(post);
     } catch (err) { next(err); }
   },
 );
+
+// GET /posts/scheduled/:channelId — Get scheduled posts for a channel (admin only)
+router.get('/scheduled/:channelId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const posts = await postService.getScheduledPosts(req.params.channelId as string, req.user!.userId);
+    res.json({ posts });
+  } catch (err) { next(err); }
+});
+
+// DELETE /posts/scheduled/:postId — Delete a scheduled post (admin only)
+router.delete('/scheduled/:postId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await postService.deleteScheduledPost(req.params.postId as string, req.user!.userId);
+    res.json(result);
+  } catch (err) { next(err); }
+});
 
 // POST /posts/:postId/like — Toggle like on a post
 router.post('/:postId/like', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {

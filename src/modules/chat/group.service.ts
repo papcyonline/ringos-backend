@@ -298,6 +298,14 @@ export async function joinGroup(conversationId: string, userId: string) {
     throw new ForbiddenError('This is a private group. You must be invited to join.');
   }
 
+  // Check if user is banned
+  const existing = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+  if (existing?.bannedAt) {
+    throw new ForbiddenError('You have been banned from this group');
+  }
+
   // Upsert to prevent race condition on concurrent join requests
   await prisma.conversationParticipant.upsert({
     where: { conversationId_userId: { conversationId, userId } },
@@ -584,6 +592,14 @@ export async function joinViaInviteCode(inviteCode: string, userId: string) {
     throw new NotFoundError('Invalid or expired invite link');
   }
 
+  // Check if user is banned
+  const existing = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: conversation.id, userId } },
+  });
+  if (existing?.bannedAt) {
+    throw new ForbiddenError('You have been banned from this group');
+  }
+
   await prisma.conversationParticipant.upsert({
     where: { conversationId_userId: { conversationId: conversation.id, userId } },
     create: { conversationId: conversation.id, userId, role: 'MEMBER' },
@@ -628,4 +644,62 @@ export async function updateGroupAdminSettings(
 
   logger.info({ conversationId, userId, ...settings }, 'Group admin settings updated');
   return updated;
+}
+
+/**
+ * Ban a member from a group/channel. Admin only. Removes them and prevents rejoining.
+ */
+export async function banMember(
+  conversationId: string,
+  adminId: string,
+  targetUserId: string,
+) {
+  const admin = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId: adminId } },
+  });
+  if (!admin || admin.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can ban members');
+  }
+
+  const target = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId: targetUserId } },
+  });
+  if (!target) {
+    throw new NotFoundError('User is not in this group');
+  }
+  if (target.role === 'ADMIN') {
+    throw new ForbiddenError('Cannot ban an admin');
+  }
+
+  await prisma.conversationParticipant.update({
+    where: { conversationId_userId: { conversationId, userId: targetUserId } },
+    data: { leftAt: new Date(), bannedAt: new Date() },
+  });
+
+  logger.info({ conversationId, adminId, targetUserId }, 'Member banned');
+  return { conversationId, bannedUserId: targetUserId };
+}
+
+/**
+ * Unban a member from a group/channel. Admin only.
+ */
+export async function unbanMember(
+  conversationId: string,
+  adminId: string,
+  targetUserId: string,
+) {
+  const admin = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId: adminId } },
+  });
+  if (!admin || admin.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can unban members');
+  }
+
+  await prisma.conversationParticipant.update({
+    where: { conversationId_userId: { conversationId, userId: targetUserId } },
+    data: { bannedAt: null },
+  });
+
+  logger.info({ conversationId, adminId, targetUserId }, 'Member unbanned');
+  return { conversationId, unbannedUserId: targetUserId };
 }

@@ -124,6 +124,20 @@ router.get(
   },
 );
 
+// GET /conversations/channels/recommended - Get recommended channels for user
+router.get(
+  '/conversations/channels/recommended',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const category = req.query.category as string | undefined;
+      const limit = Math.min(50, parseInt(req.query.limit as string, 10) || 20);
+      const channels = await chatService.getRecommendedChannels(req.user!.userId, category, limit);
+      res.json(channels);
+    } catch (err) { next(err); }
+  },
+);
+
 // GET /conversations/channels/search - Search channels
 router.get('/conversations/channels/search', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -876,6 +890,45 @@ router.put(
       io.to(`conversation:${req.params.conversationId}`).emit('group:settings-changed', {
         conversationId: req.params.conversationId,
       });
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// PUT /conversations/:id/members/:userId/ban - Ban a member
+router.put(
+  '/conversations/:conversationId/members/:userId/ban',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.banMember(
+        req.params.conversationId as string,
+        req.user!.userId,
+        req.params.userId as string,
+      );
+      const io = getIO();
+      io.to(`conversation:${req.params.conversationId}`).emit('group:members-changed', {
+        conversationId: req.params.conversationId,
+      });
+      io.to(`user:${req.params.userId}`).emit('group:removed', {
+        conversationId: req.params.conversationId,
+      });
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// DELETE /conversations/:id/members/:userId/ban - Unban a member
+router.delete(
+  '/conversations/:conversationId/members/:userId/ban',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await groupService.unbanMember(
+        req.params.conversationId as string,
+        req.user!.userId,
+        req.params.userId as string,
+      );
       res.json(result);
     } catch (err) { next(err); }
   },

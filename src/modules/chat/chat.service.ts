@@ -863,6 +863,53 @@ export async function getAllChannels(userId: string, limit = 100) {
 }
 
 /**
+ * Get recommended channels the user hasn't joined, sorted by subscriber count.
+ * Optionally filter by category.
+ */
+export async function getRecommendedChannels(userId: string, category?: string, limit = 20) {
+  const channels = await prisma.conversation.findMany({
+    where: {
+      type: 'GROUP',
+      isChannel: true,
+      isPublic: true,
+      status: 'ACTIVE',
+      ...(category ? { category: { equals: category, mode: 'insensitive' } } : {}),
+      // Exclude channels user is already a member of
+      NOT: {
+        participants: { some: { userId, leftAt: null } },
+      },
+    },
+    include: {
+      participants: {
+        where: { leftAt: null, bannedAt: null },
+        select: { userId: true },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: limit * 3, // Fetch extra to sort by subscriber count
+  });
+
+  // Sort by subscriber count descending
+  const sorted = channels
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      description: c.description,
+      avatarUrl: c.avatarUrl,
+      bannerUrl: c.bannerUrl,
+      category: c.category,
+      isVerified: c.isVerified,
+      isChannel: c.isChannel,
+      subscriberCount: c.participants.length,
+    }))
+    .sort((a, b) => b.subscriberCount - a.subscriberCount)
+    .slice(0, limit);
+
+  logger.debug({ userId, count: sorted.length, category }, 'Listed recommended channels');
+  return sorted;
+}
+
+/**
  * Search channels by name, category, or description.
  */
 export async function searchChannels(query: string, userId: string, limit = 20) {

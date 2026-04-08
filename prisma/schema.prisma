@@ -482,6 +482,7 @@ model ConversationParticipant {
   isMuted        Boolean         @default(false)
   isArchived     Boolean         @default(false)
   clearedAt      DateTime?
+  bannedAt       DateTime?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
