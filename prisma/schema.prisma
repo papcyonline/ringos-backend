@@ -373,6 +373,7 @@ model Conversation {
   messages     Message[]
   callLogs     CallLog[]
   posts        Post[]
+  stories      Story[]
 }
 
 // ── Channel Posts ──
@@ -689,19 +690,22 @@ model SpotlightLog {
 }
 
 model Story {
-  id        String       @id @default(uuid())
+  id          String       @id @default(uuid())
   userId      String
+  channelId   String?
   createdAt   DateTime     @default(now())
   expiresAt   DateTime
   isPermanent Boolean      @default(false)
 
-  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  slides StorySlide[]
-  views  StoryView[]
-  boosts StoryBoost[]
-  gifts  StoryGift[]
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel Conversation? @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  slides  StorySlide[]
+  views   StoryView[]
+  boosts  StoryBoost[]
+  gifts   StoryGift[]
 
   @@index([userId, expiresAt])
+  @@index([channelId, expiresAt])
   @@index([expiresAt])
 }
 

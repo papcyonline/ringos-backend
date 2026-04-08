@@ -84,7 +84,8 @@ router.post(
       }
 
       const isPermanent = req.body.isPermanent === 'true' || req.body.isPermanent === true;
-      const story = await createStory(userId, files, slidesMetadata, { isPermanent });
+      const channelId = req.body.channelId as string | undefined;
+      const story = await createStory(userId, files, slidesMetadata, { isPermanent, channelId });
 
       // Notify all connected users so their feed refreshes instantly
       try {

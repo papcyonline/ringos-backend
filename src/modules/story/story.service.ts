@@ -1,5 +1,6 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
+import { ForbiddenError } from '../../shared/errors';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
 import { isPro } from '../../shared/usage.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
@@ -41,8 +42,18 @@ export async function createStory(
   userId: string,
   files: Express.Multer.File[],
   slidesMetadata?: SlideMetadata[],
-  options?: { isPermanent?: boolean },
+  options?: { isPermanent?: boolean; channelId?: string },
 ) {
+  // If posting as a channel, verify user is admin
+  if (options?.channelId) {
+    const participant = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId: options.channelId, userId } },
+    });
+    if (!participant || participant.role !== 'ADMIN') {
+      throw new ForbiddenError('Only channel admins can post channel stories');
+    }
+  }
+
   const pro = await isPro(userId);
   const permanent = options?.isPermanent === true && pro;
   const hoursToExpire = pro ? 48 : 24;
@@ -86,6 +97,7 @@ export async function createStory(
   const story = await prisma.story.create({
     data: {
       userId,
+      ...(options?.channelId ? { channelId: options.channelId } : {}),
       expiresAt,
       isPermanent: permanent,
       slides: {
@@ -109,9 +121,13 @@ export async function getStoryFeed(requesterId: string) {
     return cached.data;
   }
 
-  const [blockedIds, boostedStoryIds] = await Promise.all([
+  const [blockedIds, boostedStoryIds, subscribedChannelIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getBoostedStoryIds(),
+    prisma.conversationParticipant.findMany({
+      where: { userId: requesterId, leftAt: null, conversation: { isChannel: true, status: 'ACTIVE' } },
+      select: { conversationId: true },
+    }).then((subs) => subs.map((s) => s.conversationId)),
   ]);
   const now = new Date();
 
@@ -119,6 +135,13 @@ export async function getStoryFeed(requesterId: string) {
     where: {
       OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
       userId: { notIn: Array.from(blockedIds) },
+      // Include personal stories + channel stories from subscribed channels
+      AND: {
+        OR: [
+          { channelId: null }, // personal stories
+          { channelId: { in: subscribedChannelIds } }, // channel stories
+        ],
+      },
     },
     include: {
       slides: {
@@ -142,6 +165,9 @@ export async function getStoryFeed(requesterId: string) {
           verifiedRole: true,
         },
       },
+      channel: {
+        select: { id: true, name: true, avatarUrl: true, isVerified: true },
+      },
       views: {
         where: { viewerId: requesterId },
         select: { id: true, liked: true },
@@ -151,13 +177,15 @@ export async function getStoryFeed(requesterId: string) {
     orderBy: { createdAt: 'desc' },
   });
 
-  // Group stories by user
+  // Group stories by user (or by channel for channel stories)
   const userMap = new Map<string, {
     userId: string;
+    channelId?: string;
     displayName: string;
     avatarUrl: string | null;
     isVerified: boolean;
     isOfficial: boolean;
+    isChannel: boolean;
     stories: typeof stories;
     hasUnviewed: boolean;
     latestCreatedAt: Date;
@@ -166,17 +194,21 @@ export async function getStoryFeed(requesterId: string) {
   }>();
 
   for (const story of stories) {
-    const uid = story.userId;
+    // Use channelId as grouping key for channel stories, userId for personal
+    const key = story.channelId ?? story.userId;
     const hasViewed = story.views.length > 0;
     const boostTier = boostedStoryIds.get(story.id) || null;
+    const isChannelStory = !!story.channelId;
 
-    if (!userMap.has(uid)) {
-      userMap.set(uid, {
-        userId: uid,
-        displayName: story.user.displayName,
-        avatarUrl: story.user.avatarUrl,
-        isVerified: story.user.isVerified,
-        isOfficial: story.user.verifiedRole === 'official',
+    if (!userMap.has(key)) {
+      userMap.set(key, {
+        userId: story.userId,
+        ...(isChannelStory ? { channelId: story.channelId! } : {}),
+        displayName: isChannelStory ? (story.channel?.name ?? 'Channel') : story.user.displayName,
+        avatarUrl: isChannelStory ? (story.channel?.avatarUrl ?? null) : story.user.avatarUrl,
+        isVerified: isChannelStory ? (story.channel?.isVerified ?? false) : story.user.isVerified,
+        isOfficial: !isChannelStory && story.user.verifiedRole === 'official',
+        isChannel: isChannelStory,
         stories: [],
         hasUnviewed: false,
         latestCreatedAt: story.createdAt,
@@ -185,7 +217,7 @@ export async function getStoryFeed(requesterId: string) {
       });
     }
 
-    const entry = userMap.get(uid)!;
+    const entry = userMap.get(key)!;
     entry.stories.push(story);
     if (!hasViewed) entry.hasUnviewed = true;
     if (story.createdAt > entry.latestCreatedAt) {
