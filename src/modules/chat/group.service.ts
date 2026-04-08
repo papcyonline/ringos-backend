@@ -269,19 +269,12 @@ export async function removeMember(
 }
 
 /**
- * Delete (soft-delete) a group. Admin only. Sets status to ENDED and marks all participants as left.
+ * Delete a group/channel permanently. Admin only.
+ * For channels: deletes all posts, media, participants, messages, then the conversation.
+ * For groups: soft-deletes (status ENDED) to preserve chat history.
  */
 export async function deleteGroup(conversationId: string, userId: string) {
-  const participant = await prisma.conversationParticipant.findUnique({
-    where: { conversationId_userId: { conversationId, userId } },
-  });
-
-  if (!participant) {
-    throw new ForbiddenError('You are not a participant in this conversation');
-  }
-  if (participant.role !== 'ADMIN') {
-    throw new ForbiddenError('Only admins can delete a group');
-  }
+  await verifyAdmin(conversationId, userId);
 
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -291,20 +284,38 @@ export async function deleteGroup(conversationId: string, userId: string) {
     throw new NotFoundError('Group not found');
   }
 
-  const now = new Date();
+  if (conversation.isChannel) {
+    // Channel: hard delete everything
+    // 1. Collect media file references for cleanup
+    const postMedia = await prisma.postMedia.findMany({
+      where: { post: { channelId: conversationId } },
+      select: { cloudinaryId: true, url: true },
+    });
 
-  await prisma.$transaction([
-    prisma.conversation.update({
-      where: { id: conversationId },
-      data: { status: 'ENDED' },
-    }),
-    prisma.conversationParticipant.updateMany({
-      where: { conversationId, leftAt: null },
-      data: { leftAt: now },
-    }),
-  ]);
+    // 2. Delete the conversation (cascades: participants, messages, posts, stories)
+    await prisma.conversation.delete({ where: { id: conversationId } });
 
-  logger.info({ conversationId, userId }, 'Group deleted');
+    // 3. Clean up external media storage (fire-and-forget)
+    _cleanupChannelMedia(postMedia, conversation.avatarUrl, conversation.bannerUrl).catch((err) =>
+      logger.error({ err, conversationId }, 'Failed to clean up channel media'));
+
+    logger.info({ conversationId, userId, type: 'channel' }, 'Channel permanently deleted');
+  } else {
+    // Group: soft delete to preserve history
+    const now = new Date();
+    await prisma.$transaction([
+      prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: 'ENDED' },
+      }),
+      prisma.conversationParticipant.updateMany({
+        where: { conversationId, leftAt: null },
+        data: { leftAt: now },
+      }),
+    ]);
+    logger.info({ conversationId, userId, type: 'group' }, 'Group soft-deleted');
+  }
+
   return { conversationId, deleted: true };
 }
 
@@ -712,4 +723,27 @@ export async function unbanMember(conversationId: string, adminId: string, targe
 
   logger.info({ conversationId, adminId, targetUserId }, 'Member unbanned');
   return { conversationId, unbannedUserId: targetUserId };
+}
+
+/**
+ * Clean up Cloudinary media for a deleted channel.
+ */
+async function _cleanupChannelMedia(
+  postMedia: { cloudinaryId: string; url: string }[],
+  avatarUrl: string | null,
+  bannerUrl: string | null,
+) {
+  const { deleteFile } = await import('../../shared/cloudinary.service');
+  for (const m of postMedia) {
+    if (m.cloudinaryId) {
+      const isVideo = m.url.includes('/video/') || m.url.endsWith('.mp4');
+      deleteFile(m.cloudinaryId, isVideo ? 'video' : 'image').catch(() => {});
+    }
+  }
+  for (const url of [avatarUrl, bannerUrl]) {
+    if (url && url.includes('cloudinary.com')) {
+      const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.\w+)?$/);
+      if (match) deleteFile(match[1]).catch(() => {});
+    }
+  }
 }
