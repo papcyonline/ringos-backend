@@ -97,6 +97,15 @@ router.post(
   },
 );
 
+// GET /posts/trending-hashtags — Get trending hashtags
+router.get('/trending-hashtags', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const limit = Math.min(20, parseInt(req.query.limit as string, 10) || 10);
+    const hashtags = await postService.getTrendingHashtags(limit);
+    res.json({ hashtags });
+  } catch (err) { next(err); }
+});
+
 // GET /posts/hashtag/:tag — Search posts by hashtag
 router.get('/hashtag/:tag', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

@@ -242,6 +242,34 @@ export async function searchByHashtag(hashtag: string, userId: string, cursor?: 
 }
 
 /**
+ * Get trending hashtags from recent posts.
+ */
+export async function getTrendingHashtags(limit = 10) {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // last 7 days
+  const posts = await prisma.post.findMany({
+    where: { isPublished: true, createdAt: { gte: since }, content: { contains: '#' } },
+    select: { content: true },
+  });
+
+  const counts = new Map<string, number>();
+  const tagRegex = /#\w+/g;
+  for (const p of posts) {
+    const matches = p.content.match(tagRegex);
+    if (matches) {
+      for (const tag of matches) {
+        const lower = tag.toLowerCase();
+        counts.set(lower, (counts.get(lower) ?? 0) + 1);
+      }
+    }
+  }
+
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([tag, count]) => ({ tag, count }));
+}
+
+/**
  * Like or unlike a post.
  */
 export async function toggleLike(postId: string, userId: string) {
