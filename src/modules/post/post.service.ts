@@ -3,6 +3,16 @@ import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { createNotification } from '../notification/notification.service';
 
+async function verifyChannelAdmin(channelId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: channelId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only channel admins can perform this action');
+  }
+  return participant;
+}
+
 const postInclude = {
   author: {
     select: { id: true, displayName: true, avatarUrl: true, isVerified: true },
@@ -613,12 +623,7 @@ function formatPost(post: any, currentUserId: string) {
  * Get scheduled (unpublished) posts for a channel. Admin only.
  */
 export async function getScheduledPosts(channelId: string, userId: string) {
-  const participant = await prisma.conversationParticipant.findUnique({
-    where: { conversationId_userId: { conversationId: channelId, userId } },
-  });
-  if (!participant || participant.role !== 'ADMIN') {
-    throw new ForbiddenError('Only admins can view scheduled posts');
-  }
+  await verifyChannelAdmin(channelId, userId);
 
   const posts = await prisma.post.findMany({
     where: { channelId, isPublished: false, scheduledAt: { not: null } },
@@ -670,12 +675,7 @@ export async function deleteScheduledPost(postId: string, userId: string) {
   if (!post) throw new NotFoundError('Post not found');
   if (post.isPublished) throw new ForbiddenError('Cannot delete a published post this way');
 
-  const participant = await prisma.conversationParticipant.findUnique({
-    where: { conversationId_userId: { conversationId: post.channelId, userId } },
-  });
-  if (!participant || participant.role !== 'ADMIN') {
-    throw new ForbiddenError('Only admins can delete scheduled posts');
-  }
+  await verifyChannelAdmin(post.channelId, userId);
 
   await prisma.post.delete({ where: { id: postId } });
   logger.info({ postId, userId }, 'Scheduled post deleted');

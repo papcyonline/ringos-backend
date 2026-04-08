@@ -4,6 +4,19 @@ import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../shared/errors';
 
 /**
+ * Verify that a user is an admin in a conversation. Throws if not.
+ */
+async function verifyAdmin(conversationId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only admins can perform this action');
+  }
+  return participant;
+}
+
+/**
  * Create a GROUP conversation with the creator as ADMIN.
  */
 export async function createGroup(
@@ -649,27 +662,14 @@ export async function updateGroupAdminSettings(
 /**
  * Ban a member from a group/channel. Admin only. Removes them and prevents rejoining.
  */
-export async function banMember(
-  conversationId: string,
-  adminId: string,
-  targetUserId: string,
-) {
-  const admin = await prisma.conversationParticipant.findUnique({
-    where: { conversationId_userId: { conversationId, userId: adminId } },
-  });
-  if (!admin || admin.role !== 'ADMIN') {
-    throw new ForbiddenError('Only admins can ban members');
-  }
+export async function banMember(conversationId: string, adminId: string, targetUserId: string) {
+  await verifyAdmin(conversationId, adminId);
 
   const target = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId: targetUserId } },
   });
-  if (!target) {
-    throw new NotFoundError('User is not in this group');
-  }
-  if (target.role === 'ADMIN') {
-    throw new ForbiddenError('Cannot ban an admin');
-  }
+  if (!target) throw new NotFoundError('User is not in this group');
+  if (target.role === 'ADMIN') throw new ForbiddenError('Cannot ban an admin');
 
   await prisma.conversationParticipant.update({
     where: { conversationId_userId: { conversationId, userId: targetUserId } },
@@ -683,17 +683,8 @@ export async function banMember(
 /**
  * Unban a member from a group/channel. Admin only.
  */
-export async function unbanMember(
-  conversationId: string,
-  adminId: string,
-  targetUserId: string,
-) {
-  const admin = await prisma.conversationParticipant.findUnique({
-    where: { conversationId_userId: { conversationId, userId: adminId } },
-  });
-  if (!admin || admin.role !== 'ADMIN') {
-    throw new ForbiddenError('Only admins can unban members');
-  }
+export async function unbanMember(conversationId: string, adminId: string, targetUserId: string) {
+  await verifyAdmin(conversationId, adminId);
 
   await prisma.conversationParticipant.update({
     where: { conversationId_userId: { conversationId, userId: targetUserId } },
