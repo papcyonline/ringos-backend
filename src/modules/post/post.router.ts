@@ -133,6 +133,16 @@ router.delete('/scheduled/:postId', authenticate, async (req: AuthRequest, res: 
   } catch (err) { next(err); }
 });
 
+// POST /posts/:postId/react — Toggle reaction on a post
+router.post('/:postId/react', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { emoji } = req.body;
+    if (!emoji || typeof emoji !== 'string') return res.status(400).json({ error: 'emoji is required' });
+    const result = await postService.toggleReaction(req.params.postId as string, req.user!.userId, emoji);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // POST /posts/:postId/like — Toggle like on a post
 router.post('/:postId/like', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

@@ -209,6 +209,7 @@ model User {
   posts            Post[]
   postLikes        PostLike[]
   postBookmarks    PostBookmark[]
+  postReactions    PostReaction[]
   postComments     PostComment[]
   commentReactions CommentReaction[]
   notifications    Notification[]
@@ -404,7 +405,8 @@ model Post {
   channel  Conversation   @relation(fields: [channelId], references: [id], onDelete: Cascade)
   author   User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
   likes     PostLike[]
-  bookmarks PostBookmark[]
+  bookmarks  PostBookmark[]
+  reactions  PostReaction[]
   comments PostComment[]
   media    PostMedia[]
 
@@ -431,6 +433,20 @@ model PostLike {
   id        String   @id @default(uuid())
   postId    String
   userId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([postId])
+}
+
+model PostReaction {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  emoji     String   // 🔥 😂 😮 😢 😡 👏
   createdAt DateTime @default(now())
 
   post Post @relation(fields: [postId], references: [id], onDelete: Cascade)

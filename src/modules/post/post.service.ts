@@ -48,6 +48,7 @@ async function queryPaginatedPosts(where: any, userId: string, cursor?: string, 
       ...postInclude,
       likes: { where: { userId }, select: { id: true }, take: 1 },
       bookmarks: { where: { userId }, select: { id: true }, take: 1 },
+      reactions: { select: { emoji: true, userId: true } },
     },
   });
 
@@ -605,10 +606,48 @@ function formatPost(post: any, currentUserId: string) {
     liked,
     bookmarked: post.bookmarks?.length > 0,
     isPinned: post.channel?.pinnedPostId === post.id,
+    myReaction: (post.reactions ?? []).find((r: any) => r.userId === currentUserId)?.emoji ?? null,
+    reactionCounts: _countReactions(post.reactions ?? []),
     author: post.author,
     channel: post.channel,
     createdAt: post.createdAt,
   };
+}
+
+function _countReactions(reactions: { emoji: string }[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const r of reactions) {
+    counts[r.emoji] = (counts[r.emoji] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * Set or remove a reaction on a post. Same emoji = remove. Different emoji = replace.
+ */
+export async function toggleReaction(postId: string, userId: string, emoji: string) {
+  const post = await prisma.post.findUnique({ where: { id: postId } });
+  if (!post) throw new NotFoundError('Post not found');
+  await verifyPostAccess(post, userId);
+
+  const existing = await prisma.postReaction.findUnique({
+    where: { postId_userId: { postId, userId } },
+  });
+
+  if (existing) {
+    if (existing.emoji === emoji) {
+      // Same emoji — remove reaction
+      await prisma.postReaction.delete({ where: { id: existing.id } });
+      return { reaction: null };
+    }
+    // Different emoji — update
+    await prisma.postReaction.update({ where: { id: existing.id }, data: { emoji } });
+    return { reaction: emoji };
+  }
+
+  // New reaction
+  await prisma.postReaction.create({ data: { postId, userId, emoji } });
+  return { reaction: emoji };
 }
 
 /**
