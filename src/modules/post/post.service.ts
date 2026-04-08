@@ -13,6 +13,36 @@ async function verifyChannelAdmin(channelId: string, userId: string) {
   return participant;
 }
 
+/**
+ * Shared paginated post query. Handles cursor, limit, includes, and formatting.
+ */
+async function queryPaginatedPosts(where: any, userId: string, cursor?: string, limit = 20) {
+  if (cursor) {
+    const cursorPost = await prisma.post.findUnique({ where: { id: cursor }, select: { createdAt: true } });
+    if (cursorPost) where.createdAt = { lt: cursorPost.createdAt };
+  }
+
+  const posts = await prisma.post.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: limit + 1,
+    include: {
+      ...postInclude,
+      likes: { where: { userId }, select: { id: true }, take: 1 },
+      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
+    },
+  });
+
+  const hasMore = posts.length > limit;
+  const sliced = hasMore ? posts.slice(0, limit) : posts;
+
+  return {
+    posts: sliced.map((p) => formatPost(p, userId)),
+    hasMore,
+    nextCursor: sliced.length > 0 ? sliced[sliced.length - 1].id : undefined,
+  };
+}
+
 const postInclude = {
   author: {
     select: { id: true, displayName: true, avatarUrl: true, isVerified: true },
@@ -160,105 +190,24 @@ export async function getFeed(userId: string, cursor?: string, limit = 20) {
 
   if (channelIds.length === 0) return { posts: [], hasMore: false };
 
-  const where: any = { channelId: { in: channelIds }, isPublished: true };
-  if (cursor) {
-    const cursorPost = await prisma.post.findUnique({
-      where: { id: cursor },
-      select: { createdAt: true },
-    });
-    if (cursorPost) where.createdAt = { lt: cursorPost.createdAt };
-  }
-
-  const posts = await prisma.post.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: limit + 1,
-    include: {
-      ...postInclude,
-      likes: { where: { userId }, select: { id: true }, take: 1 },
-      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
-    },
-  });
-
-  const hasMore = posts.length > limit;
-  const sliced = hasMore ? posts.slice(0, limit) : posts;
-
-  return {
-    posts: sliced.map((p) => formatPost(p, userId)),
-    hasMore,
-    nextCursor: sliced.length > 0 ? sliced[sliced.length - 1].id : undefined,
-  };
+  return queryPaginatedPosts({ channelId: { in: channelIds }, isPublished: true }, userId, cursor, limit);
 }
 
 /**
  * Get posts for a specific channel.
  */
 export async function getChannelPosts(channelId: string, userId: string, cursor?: string, limit = 20) {
-  const where: any = { channelId, isPublished: true };
-  if (cursor) {
-    const cursorPost = await prisma.post.findUnique({
-      where: { id: cursor },
-      select: { createdAt: true },
-    });
-    if (cursorPost) where.createdAt = { lt: cursorPost.createdAt };
-  }
-
-  const posts = await prisma.post.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: limit + 1,
-    include: {
-      ...postInclude,
-      likes: { where: { userId }, select: { id: true }, take: 1 },
-      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
-    },
-  });
-
-  const hasMore = posts.length > limit;
-  const sliced = hasMore ? posts.slice(0, limit) : posts;
-
-  return {
-    posts: sliced.map((p) => formatPost(p, userId)),
-    hasMore,
-    nextCursor: sliced.length > 0 ? sliced[sliced.length - 1].id : undefined,
-  };
+  return queryPaginatedPosts({ channelId, isPublished: true }, userId, cursor, limit);
 }
 
 /**
  * Discover posts — public channel posts for non-subscribers.
  */
 export async function discoverPosts(userId: string, cursor?: string, limit = 20) {
-  const where: any = {
+  return queryPaginatedPosts({
     isPublished: true,
     channel: { isChannel: true, isPublic: true, status: 'ACTIVE' },
-  };
-  if (cursor) {
-    const cursorPost = await prisma.post.findUnique({
-      where: { id: cursor },
-      select: { createdAt: true },
-    });
-    if (cursorPost) where.createdAt = { lt: cursorPost.createdAt };
-  }
-
-  const posts = await prisma.post.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: limit + 1,
-    include: {
-      ...postInclude,
-      likes: { where: { userId }, select: { id: true }, take: 1 },
-      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
-    },
-  });
-
-  const hasMore = posts.length > limit;
-  const sliced = hasMore ? posts.slice(0, limit) : posts;
-
-  return {
-    posts: sliced.map((p) => formatPost(p, userId)),
-    hasMore,
-    nextCursor: sliced.length > 0 ? sliced[sliced.length - 1].id : undefined,
-  };
+  }, userId, cursor, limit);
 }
 
 /**
@@ -266,36 +215,11 @@ export async function discoverPosts(userId: string, cursor?: string, limit = 20)
  */
 export async function searchByHashtag(hashtag: string, userId: string, cursor?: string, limit = 20) {
   const tag = hashtag.startsWith('#') ? hashtag : `#${hashtag}`;
-
-  const where: any = {
+  return queryPaginatedPosts({
     isPublished: true,
     content: { contains: tag, mode: 'insensitive' },
     channel: { isChannel: true, status: 'ACTIVE' },
-  };
-  if (cursor) {
-    const cursorPost = await prisma.post.findUnique({ where: { id: cursor }, select: { createdAt: true } });
-    if (cursorPost) where.createdAt = { lt: cursorPost.createdAt };
-  }
-
-  const posts = await prisma.post.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: limit + 1,
-    include: {
-      ...postInclude,
-      likes: { where: { userId }, select: { id: true }, take: 1 },
-      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
-    },
-  });
-
-  const hasMore = posts.length > limit;
-  const sliced = hasMore ? posts.slice(0, limit) : posts;
-
-  return {
-    posts: sliced.map((p) => formatPost(p, userId)),
-    hasMore,
-    nextCursor: sliced.length > 0 ? sliced[sliced.length - 1].id : undefined,
-  };
+  }, userId, cursor, limit);
 }
 
 /**
