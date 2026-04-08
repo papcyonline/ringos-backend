@@ -430,6 +430,51 @@ export async function deletePost(postId: string, userId: string) {
 }
 
 /**
+ * Bulk delete posts. Admin only.
+ */
+export async function bulkDeletePosts(postIds: string[], userId: string) {
+  if (postIds.length === 0) return { deleted: 0 };
+
+  // Verify user is admin of the channel these posts belong to
+  const posts = await prisma.post.findMany({
+    where: { id: { in: postIds } },
+    select: { id: true, channelId: true },
+  });
+  if (posts.length === 0) throw new NotFoundError('No posts found');
+
+  const channelIds = [...new Set(posts.map((p) => p.channelId))];
+  for (const channelId of channelIds) {
+    const participant = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId: channelId, userId } },
+    });
+    if (!participant || participant.role !== 'ADMIN') {
+      throw new ForbiddenError('Only channel admins can bulk delete posts');
+    }
+  }
+
+  // Collect media for cleanup
+  const media = await prisma.postMedia.findMany({
+    where: { postId: { in: postIds } },
+    select: { cloudinaryId: true, url: true },
+  });
+
+  await prisma.post.deleteMany({ where: { id: { in: postIds } } });
+
+  // Clean up media (fire-and-forget)
+  import('../../shared/cloudinary.service').then(({ deleteFile }) => {
+    for (const m of media) {
+      if (m.cloudinaryId) {
+        const isVideo = m.url.includes('/video/') || m.url.endsWith('.mp4');
+        deleteFile(m.cloudinaryId, isVideo ? 'video' : 'image').catch(() => {});
+      }
+    }
+  }).catch(() => {});
+
+  logger.info({ postIds, userId, count: posts.length }, 'Bulk deleted posts');
+  return { deleted: posts.length };
+}
+
+/**
  * Pin/unpin a post on the channel.
  */
 export async function togglePinPost(postId: string, userId: string) {

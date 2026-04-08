@@ -186,6 +186,18 @@ router.post('/comments/:commentId/like', authenticate, async (req: AuthRequest, 
   } catch (err) { next(err); }
 });
 
+// POST /posts/bulk-delete — Bulk delete posts (admin only)
+router.post('/bulk-delete', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { postIds } = req.body;
+    if (!Array.isArray(postIds) || postIds.length === 0) {
+      return res.status(400).json({ error: 'postIds array is required' });
+    }
+    const result = await postService.bulkDeletePosts(postIds, req.user!.userId);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // DELETE /posts/:postId — Delete a post
 router.delete('/:postId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
