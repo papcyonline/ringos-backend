@@ -64,7 +64,9 @@ router.post(
       // Upload all files in parallel
       const media = await Promise.all(files.map(async (file, i) => {
         const caption = captions[i] || null;
-        const isVideo = file.mimetype.startsWith('video/');
+        const ext = (file.originalname || '').split('.').pop()?.toLowerCase() || '';
+        const videoExts = ['mp4', 'mov', 'm4v', 'avi', 'mkv'];
+        const isVideo = file.mimetype.startsWith('video/') || videoExts.includes(ext);
         if (isVideo) {
           const result = await fileToPostVideoUrl(file, req.user!.userId);
           return { url: result.secureUrl, type: 'VIDEO' as const, thumbnailUrl: result.thumbnailUrl ?? undefined, cloudinaryId: result.publicId, position: i, caption };

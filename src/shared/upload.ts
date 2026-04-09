@@ -21,6 +21,12 @@ function saveToDisk(buffer: Buffer, dir: string, urlPrefix: string, ext: string)
 function imageFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
   if (file.mimetype.startsWith('image/')) {
     cb(null, true);
+    return;
+  }
+  const ext = (file.originalname || '').split('.').pop()?.toLowerCase() || '';
+  const imageExts = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'gif', 'bmp'];
+  if (imageExts.includes(ext)) {
+    cb(null, true);
   } else {
     cb(new Error('Only image files are allowed'));
   }
@@ -141,7 +147,15 @@ export async function fileToChatDocumentUrl(file: Express.Multer.File, conversat
 }
 
 function storyMediaFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
+  // Check mime type first
   if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
+    cb(null, true);
+    return;
+  }
+  // Fallback: check file extension for cases where mime type is application/octet-stream (e.g. HEIC from iOS)
+  const ext = (file.originalname || '').split('.').pop()?.toLowerCase() || '';
+  const mediaExts = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'gif', 'bmp', 'mp4', 'mov', 'm4v', 'avi', 'mkv'];
+  if (mediaExts.includes(ext)) {
     cb(null, true);
   } else {
     cb(new Error('Only image and video files are allowed'));
