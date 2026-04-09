@@ -43,7 +43,18 @@ router.post(
   (req: AuthRequest, res: Response, next: NextFunction) => {
     const contentType = req.headers['content-type'] || '';
     if (contentType.includes('multipart/form-data')) {
-      postMediaUpload.array('media', 10)(req, res, next);
+      postMediaUpload.array('media', 10)(req, res, (err?: any) => {
+        if (err) {
+          console.error('[PostUpload] Multer error:', err.message, err.code);
+          return res.status(400).json({ error: { message: err.message || 'Upload failed', code: 'UPLOAD_ERROR' } });
+        }
+        // Log file info for debugging
+        const files = (req.files as Express.Multer.File[]) || [];
+        for (const f of files) {
+          console.log(`[PostUpload] File: ${f.originalname}, mime: ${f.mimetype}, size: ${f.size}`);
+        }
+        next();
+      });
     } else {
       next();
     }

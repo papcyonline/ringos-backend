@@ -154,11 +154,11 @@ function storyMediaFilter(_req: unknown, file: Express.Multer.File, cb: multer.F
   }
   // Fallback: check file extension for cases where mime type is application/octet-stream (e.g. HEIC from iOS)
   const ext = (file.originalname || '').split('.').pop()?.toLowerCase() || '';
-  const mediaExts = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'gif', 'bmp', 'mp4', 'mov', 'm4v', 'avi', 'mkv'];
+  const mediaExts = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'gif', 'bmp', 'tiff', 'dng', 'raw', 'mp4', 'mov', 'm4v', 'avi', 'mkv'];
   if (mediaExts.includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error('Only image and video files are allowed'));
+    cb(new Error(`Unsupported file: ${file.originalname} (${file.mimetype})`));
   }
 }
 
