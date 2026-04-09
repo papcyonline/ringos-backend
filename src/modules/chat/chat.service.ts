@@ -446,6 +446,125 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
 }
 
 /**
+ * Get or create a DM linked to a channel. Subscriber sees the channel identity.
+ */
+export async function getOrCreateChannelDM(channelId: string, subscriberUserId: string) {
+  // Find the channel
+  const channel = await prisma.conversation.findUnique({
+    where: { id: channelId },
+    select: { id: true, name: true, avatarUrl: true, isChannel: true, status: true },
+  });
+  if (!channel || !channel.isChannel || channel.status !== 'ACTIVE') {
+    throw new NotFoundError('Channel not found');
+  }
+
+  // Find the channel's primary admin
+  const admin = await prisma.conversationParticipant.findFirst({
+    where: { conversationId: channelId, role: 'ADMIN', leftAt: null },
+    select: { userId: true },
+  });
+  if (!admin) throw new NotFoundError('Channel has no admin');
+
+  if (subscriberUserId === admin.userId) {
+    throw new ForbiddenError('Cannot message your own channel');
+  }
+
+  // Check for existing channel DM
+  const existing = await prisma.conversation.findFirst({
+    where: {
+      type: 'HUMAN_MATCHED',
+      channelSourceId: channelId,
+      status: 'ACTIVE',
+      AND: [
+        { participants: { some: { userId: subscriberUserId } } },
+      ],
+    },
+    include: {
+      participants: {
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (existing) return existing;
+
+  // Create new channel DM
+  const conversation = await prisma.conversation.create({
+    data: {
+      type: 'HUMAN_MATCHED',
+      status: 'ACTIVE',
+      channelSourceId: channelId,
+      name: channel.name,
+      avatarUrl: channel.avatarUrl,
+      participants: {
+        create: [
+          { userId: subscriberUserId },
+          { userId: admin.userId },
+        ],
+      },
+    },
+    include: {
+      participants: {
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
+          },
+        },
+      },
+    },
+  });
+
+  logger.info({ conversationId: conversation.id, channelId, subscriberUserId }, 'Created channel DM');
+  return conversation;
+}
+
+/**
+ * Get all channel DMs (inbox) for a channel. Admin only.
+ */
+export async function getChannelInbox(channelId: string, userId: string) {
+  // Verify admin
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: channelId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only channel admins can view the inbox');
+  }
+
+  const conversations = await prisma.conversation.findMany({
+    where: {
+      channelSourceId: channelId,
+      type: 'HUMAN_MATCHED',
+      status: 'ACTIVE',
+    },
+    include: {
+      participants: {
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
+          },
+        },
+      },
+      messages: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: { id: true, content: true, senderId: true, createdAt: true },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  return conversations.map((c) => ({
+    ...c,
+    lastMessage: c.messages[0] ?? null,
+    messages: undefined,
+  }));
+}
+
+/**
  * Send a message in a conversation.
  */
 export async function sendMessage(

@@ -161,6 +161,36 @@ router.get(
   },
 );
 
+// POST /conversations/channel-dm/:channelId - Create or get a channel DM
+router.post(
+  '/conversations/channel-dm/:channelId',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const conversation = await chatService.getOrCreateChannelDM(
+        req.params.channelId as string,
+        req.user!.userId,
+      );
+      res.json(conversation);
+    } catch (err) { next(err); }
+  },
+);
+
+// GET /conversations/channel-inbox/:channelId - Get channel inbox (admin only)
+router.get(
+  '/conversations/channel-inbox/:channelId',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const conversations = await chatService.getChannelInbox(
+        req.params.channelId as string,
+        req.user!.userId,
+      );
+      res.json(conversations);
+    } catch (err) { next(err); }
+  },
+);
+
 // GET /conversations/channels/public - List all active channels (excludes groups)
 router.get(
   '/conversations/channels/public',

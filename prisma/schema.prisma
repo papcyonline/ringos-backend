@@ -362,6 +362,7 @@ model Conversation {
   websiteUrl         String?
   location           String?
   operatingHours     String?   // e.g. "Mon-Fri 9am-5pm"
+  channelSourceId    String?    // For channel DMs: links to the channel conversation
   pinnedPostId       String?
   adminsOnlyMessages Boolean    @default(false)
   adminsOnlyEditInfo Boolean    @default(false)
