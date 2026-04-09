@@ -182,11 +182,62 @@ router.get(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const conversations = await chatService.getChannelInbox(
+      const cursor = req.query.cursor as string | undefined;
+      const limit = parseInt(req.query.limit as string || '20') || 20;
+      const result = await chatService.getChannelInbox(
+        req.params.channelId as string,
+        req.user!.userId,
+        cursor,
+        limit,
+      );
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// GET /conversations/channel-inbox/:channelId/unread-count - Get total unread count for inbox badge
+router.get(
+  '/conversations/channel-inbox/:channelId/unread-count',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.getChannelInboxUnreadCount(
         req.params.channelId as string,
         req.user!.userId,
       );
-      res.json(conversations);
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// POST /conversations/channel-inbox/:channelId/block/:subscriberUserId - Block subscriber
+router.post(
+  '/conversations/channel-inbox/:channelId/block/:subscriberUserId',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.blockChannelSubscriber(
+        req.params.channelId as string,
+        req.user!.userId,
+        req.params.subscriberUserId as string,
+      );
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// DELETE /conversations/channel-inbox/:channelId/:conversationId - Delete channel DM from inbox
+router.delete(
+  '/conversations/channel-inbox/:channelId/:conversationId',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.deleteChannelDM(
+        req.params.channelId as string,
+        req.params.conversationId as string,
+        req.user!.userId,
+      );
+      res.json(result);
     } catch (err) { next(err); }
   },
 );

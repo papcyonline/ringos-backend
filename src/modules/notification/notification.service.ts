@@ -315,6 +315,18 @@ async function sendPushToUser(userId: string, payload: {
 }
 
 /**
+ * Send a push notification for post interactions (likes, comments, new posts).
+ */
+export async function sendPostPush(userId: string, payload: {
+  title: string;
+  body: string;
+  imageUrl?: string;
+  data: Record<string, string>;
+}) {
+  return sendPushToUser(userId, payload);
+}
+
+/**
  * Send a high-priority call push notification.
  * On iOS, this triggers through VoIP push (APNs) for CallKit integration.
  * On Android, this sends a high-priority FCM data message.

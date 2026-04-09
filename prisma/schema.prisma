@@ -422,6 +422,7 @@ model PostMedia {
   url           String
   cloudinaryId  String   @default("")
   thumbnailUrl  String?
+  caption       String?
   position      Int      @default(0)
   createdAt     DateTime @default(now())
 

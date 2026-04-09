@@ -19,10 +19,10 @@ function saveToDisk(buffer: Buffer, dir: string, urlPrefix: string, ext: string)
 }
 
 function imageFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
-  if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+  if (['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Only JPEG, PNG, and WebP images are allowed'));
+    cb(new Error('Only JPEG, PNG, WebP, and HEIC images are allowed'));
   }
 }
 
@@ -142,13 +142,13 @@ export async function fileToChatDocumentUrl(file: Express.Multer.File, conversat
 
 function storyMediaFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
   const allowed = [
-    'image/jpeg', 'image/png', 'image/webp',
+    'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',
     'video/mp4', 'video/quicktime', 'video/x-m4v',
   ];
   if (allowed.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Only JPEG, PNG, WebP images and MP4, MOV, M4V videos are allowed'));
+    cb(new Error('Only JPEG, PNG, WebP, HEIC images and MP4, MOV, M4V videos are allowed'));
   }
 }
 

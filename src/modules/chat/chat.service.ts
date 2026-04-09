@@ -1,7 +1,7 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
-import { isBlocked } from '../safety/safety.service';
+import { isBlocked, blockUser } from '../safety/safety.service';
 import { getLimits } from '../../shared/usage.service';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import ogs from 'open-graph-scraper';
@@ -531,7 +531,7 @@ export async function getOrCreateChannelDM(channelId: string, subscriberUserId: 
 /**
  * Get all channel DMs (inbox) for a channel. Admin only.
  */
-export async function getChannelInbox(channelId: string, userId: string) {
+export async function getChannelInbox(channelId: string, userId: string, cursor?: string, limit = 20) {
   // Verify admin — inline check (verifyAdmin is in group.service.ts, not imported here)
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId: channelId, userId } },
@@ -540,12 +540,24 @@ export async function getChannelInbox(channelId: string, userId: string) {
     throw new ForbiddenError('Only channel admins can view the inbox');
   }
 
+  const where: any = {
+    channelSourceId: channelId,
+    type: 'HUMAN_MATCHED',
+    status: 'ACTIVE',
+  };
+
+  if (cursor) {
+    const cursorConv = await prisma.conversation.findUnique({
+      where: { id: cursor },
+      select: { updatedAt: true },
+    });
+    if (cursorConv) {
+      where.updatedAt = { lt: cursorConv.updatedAt };
+    }
+  }
+
   const conversations = await prisma.conversation.findMany({
-    where: {
-      channelSourceId: channelId,
-      type: 'HUMAN_MATCHED',
-      status: 'ACTIVE',
-    },
+    where,
     include: {
       participants: {
         include: {
@@ -561,13 +573,139 @@ export async function getChannelInbox(channelId: string, userId: string) {
       },
     },
     orderBy: { updatedAt: 'desc' },
+    take: limit + 1,
   });
 
-  return conversations.map((c) => ({
+  const hasMore = conversations.length > limit;
+  const sliced = hasMore ? conversations.slice(0, limit) : conversations;
+
+  // Batch unread counts for the admin across all returned conversations
+  const convIds = sliced.map((c) => c.id);
+  const unreadGroups = convIds.length > 0
+    ? await prisma.message.groupBy({
+        by: ['conversationId'],
+        _count: { id: true },
+        where: {
+          conversationId: { in: convIds },
+          senderId: { not: userId },
+          deletedAt: null,
+        },
+      })
+    : [];
+  const unreadMap = new Map<string, number>();
+  for (const g of unreadGroups) {
+    unreadMap.set(g.conversationId, g._count.id);
+  }
+
+  const items = sliced.map((c) => ({
     ...c,
     lastMessage: c.messages[0] ?? null,
     messages: undefined,
+    unreadCount: unreadMap.get(c.id) ?? 0,
   }));
+
+  return {
+    items,
+    hasMore,
+    nextCursor: sliced.length > 0 ? sliced[sliced.length - 1].id : undefined,
+  };
+}
+
+/**
+ * Get total unread message count across all channel DMs. Lightweight endpoint for badge display.
+ */
+export async function getChannelInboxUnreadCount(channelId: string, userId: string) {
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: channelId, userId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only channel admins can view the inbox');
+  }
+
+  const dmConvIds = await prisma.conversation.findMany({
+    where: { channelSourceId: channelId, type: 'HUMAN_MATCHED', status: 'ACTIVE' },
+    select: { id: true },
+  });
+
+  if (dmConvIds.length === 0) return { count: 0 };
+
+  const result = await prisma.message.count({
+    where: {
+      conversationId: { in: dmConvIds.map((c) => c.id) },
+      senderId: { not: userId },
+      deletedAt: null,
+    },
+  });
+
+  return { count: result };
+}
+
+/**
+ * Block a subscriber from messaging a channel. Admin only.
+ * Blocks the user and deactivates their channel DM.
+ */
+export async function blockChannelSubscriber(channelId: string, adminUserId: string, subscriberUserId: string) {
+  // Verify caller is admin of the channel
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: channelId, userId: adminUserId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only channel admins can block subscribers');
+  }
+
+  // Block the subscriber (uses existing safety service)
+  // Ignore ConflictError if already blocked
+  try {
+    await blockUser(adminUserId, subscriberUserId);
+  } catch (err: any) {
+    if (err?.statusCode !== 409) throw err;
+  }
+
+  // Deactivate the channel DM conversation
+  const dm = await prisma.conversation.findFirst({
+    where: {
+      channelSourceId: channelId,
+      type: 'HUMAN_MATCHED',
+      status: 'ACTIVE',
+      participants: { some: { userId: subscriberUserId } },
+    },
+  });
+  if (dm) {
+    await prisma.conversation.update({
+      where: { id: dm.id },
+      data: { status: 'ENDED' },
+    });
+  }
+
+  logger.info({ channelId, adminUserId, subscriberUserId }, 'Blocked channel subscriber');
+  return { blocked: true };
+}
+
+/**
+ * Delete (close) a channel DM conversation from the inbox. Admin only.
+ */
+export async function deleteChannelDM(channelId: string, conversationId: string, adminUserId: string) {
+  // Verify caller is admin of the channel
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId: channelId, userId: adminUserId } },
+  });
+  if (!participant || participant.role !== 'ADMIN') {
+    throw new ForbiddenError('Only channel admins can delete inbox conversations');
+  }
+
+  // Verify the conversation belongs to this channel
+  const conv = await prisma.conversation.findUnique({ where: { id: conversationId } });
+  if (!conv || conv.channelSourceId !== channelId) {
+    throw new NotFoundError('Conversation not found in this channel');
+  }
+
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { status: 'ENDED' },
+  });
+
+  logger.info({ channelId, conversationId, adminUserId }, 'Deleted channel DM from inbox');
+  return { deleted: true };
 }
 
 /**
@@ -760,9 +898,15 @@ export async function deleteMessage(messageId: string, userId: string, mode: 'me
     return updated;
   }
 
-  // mode === 'everyone' — only the sender can delete for everyone
+  // mode === 'everyone' — sender or group/channel admin can delete for everyone
   if (message.senderId !== userId) {
-    throw new ForbiddenError('You can only delete your own messages');
+    // Check if the user is an admin of this conversation
+    const participant = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId: message.conversationId, userId } },
+    });
+    if (!participant || participant.role !== 'ADMIN') {
+      throw new ForbiddenError('You can only delete your own messages');
+    }
   }
 
   await cleanupMediaUrls([message.imageUrl, message.audioUrl]);

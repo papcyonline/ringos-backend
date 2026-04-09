@@ -55,15 +55,22 @@ router.post(
 
       const files = (req.files as Express.Multer.File[]) || [];
 
+      // Parse per-media captions (JSON array matching file order)
+      let captions: (string | null)[] = [];
+      try {
+        if (req.body.captions) captions = JSON.parse(req.body.captions);
+      } catch { /* ignore parse errors */ }
+
       // Upload all files in parallel
       const media = await Promise.all(files.map(async (file, i) => {
+        const caption = captions[i] || null;
         const isVideo = file.mimetype.startsWith('video/');
         if (isVideo) {
           const result = await fileToPostVideoUrl(file, req.user!.userId);
-          return { url: result.secureUrl, type: 'VIDEO' as const, thumbnailUrl: result.thumbnailUrl ?? undefined, cloudinaryId: result.publicId, position: i };
+          return { url: result.secureUrl, type: 'VIDEO' as const, thumbnailUrl: result.thumbnailUrl ?? undefined, cloudinaryId: result.publicId, position: i, caption };
         }
         const result = await fileToPostImageUrl(file, req.user!.userId);
-        return { url: result.secureUrl, type: 'IMAGE' as const, cloudinaryId: result.publicId, position: i };
+        return { url: result.secureUrl, type: 'IMAGE' as const, cloudinaryId: result.publicId, position: i, caption };
       }));
 
       // Support legacy single mediaUrl in body (no file upload)
@@ -245,6 +252,14 @@ router.get('/analytics/:channelId', authenticate, async (req: AuthRequest, res: 
   try {
     const result = await postService.getChannelAnalytics(req.params.channelId as string, req.user!.userId);
     res.json(result);
+  } catch (err) { next(err); }
+});
+
+// GET /posts/:postId — Get a single post (must be LAST to avoid shadowing named routes)
+router.get('/:postId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const post = await postService.getPost(req.params.postId as string, req.user!.userId);
+    res.json(post);
   } catch (err) { next(err); }
 });
 

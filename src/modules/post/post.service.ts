@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { createNotification } from '../notification/notification.service';
+import { enqueuePostNotification } from '../notification/notification-batcher';
 
 async function verifyChannelAdmin(channelId: string, userId: string) {
   const participant = await prisma.conversationParticipant.findUnique({
@@ -29,6 +30,23 @@ async function verifyPostAccess(post: { channelId: string; isPublished: boolean 
   if (!participant || participant.leftAt !== null) {
     throw new ForbiddenError('You do not have access to this post');
   }
+}
+
+/**
+ * Get a single post by ID.
+ */
+export async function getPost(postId: string, userId: string) {
+  const post = await prisma.post.findUnique({
+    where: { id: postId },
+    include: {
+      ...postInclude,
+      likes: { where: { userId }, select: { id: true }, take: 1 },
+      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
+      reactions: { select: { emoji: true, userId: true } },
+    },
+  });
+  if (!post) throw new NotFoundError('Post not found');
+  return formatPost(post, userId);
 }
 
 /**
@@ -83,7 +101,7 @@ export async function createPost(
   mediaUrl?: string,
   mediaType?: string,
   thumbnailUrl?: string,
-  media?: Array<{ url: string; type: string; thumbnailUrl?: string; cloudinaryId: string; position: number }>,
+  media?: Array<{ url: string; type: string; thumbnailUrl?: string; cloudinaryId: string; position: number; caption?: string | null }>,
   options?: {
     locationName?: string;
     taggedUserIds?: string[];
@@ -146,6 +164,7 @@ export async function createPost(
           url: m.url,
           cloudinaryId: m.cloudinaryId,
           thumbnailUrl: m.thumbnailUrl ?? null,
+          caption: m.caption ?? null,
           position: m.position,
         })),
       });
@@ -294,21 +313,21 @@ export async function toggleLike(postId: string, userId: string) {
     prisma.post.update({ where: { id: postId }, data: { likeCount: { increment: 1 } } }),
   ]);
 
-  // Notify post author (don't notify self)
+  // Notify post author (don't notify self) — batched to avoid notification spam
   if (post.authorId !== userId) {
     const liker = await prisma.user.findUnique({
       where: { id: userId },
-      select: { displayName: true, avatarUrl: true, isVerified: true },
+      select: { displayName: true, avatarUrl: true },
     });
     if (liker) {
-      createNotification({
-        userId: post.authorId,
+      enqueuePostNotification({
+        authorId: post.authorId,
+        postId,
+        channelId: post.channelId,
         type: 'POST_LIKED',
-        title: liker.displayName ?? 'Someone',
-        body: 'Liked your post',
-        imageUrl: liker.avatarUrl ?? undefined,
-        data: { postId, channelId: post.channelId, userId, isVerified: liker.isVerified },
-      }).catch((err) => logger.error({ err, postId }, 'Failed to create post like notification'));
+        actorName: liker.displayName ?? 'Someone',
+        actorAvatar: liker.avatarUrl ?? undefined,
+      });
     }
   }
 
@@ -339,17 +358,17 @@ export async function addComment(postId: string, userId: string, content: string
     prisma.post.update({ where: { id: postId }, data: { commentCount: { increment: 1 } } }),
   ]);
 
-  // Notify post author (don't notify self)
+  // Notify post author (don't notify self) — batched to avoid notification spam
   if (post.authorId !== userId) {
     const commenter = comment.user;
-    createNotification({
-      userId: post.authorId,
+    enqueuePostNotification({
+      authorId: post.authorId,
+      postId,
+      channelId: post.channelId,
       type: 'POST_COMMENTED',
-      title: commenter.displayName ?? 'Someone',
-      body: content.length > 100 ? content.substring(0, 97) + '...' : content,
-      imageUrl: commenter.avatarUrl ?? undefined,
-      data: { postId, channelId: post.channelId, userId, isVerified: commenter.isVerified },
-    }).catch((err) => logger.error({ err, postId }, 'Failed to create post comment notification'));
+      actorName: commenter.displayName ?? 'Someone',
+      actorAvatar: commenter.avatarUrl ?? undefined,
+    });
   }
 
   return comment;
@@ -657,6 +676,7 @@ function formatPost(post: any, currentUserId: string) {
     type: m.type,
     url: m.url,
     thumbnailUrl: m.thumbnailUrl,
+    caption: m.caption ?? null,
     position: m.position,
   }));
   return {
