@@ -469,6 +469,12 @@ export async function getOrCreateChannelDM(channelId: string, subscriberUserId: 
     throw new ForbiddenError('Cannot message your own channel');
   }
 
+  // Check if blocked
+  const blocked = await isBlocked(subscriberUserId, admin.userId);
+  if (blocked) {
+    throw new ForbiddenError('Cannot message this channel');
+  }
+
   // Check for existing channel DM
   const existing = await prisma.conversation.findFirst({
     where: {
@@ -526,7 +532,7 @@ export async function getOrCreateChannelDM(channelId: string, subscriberUserId: 
  * Get all channel DMs (inbox) for a channel. Admin only.
  */
 export async function getChannelInbox(channelId: string, userId: string) {
-  // Verify admin
+  // Verify admin — inline check (verifyAdmin is in group.service.ts, not imported here)
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId: channelId, userId } },
   });
