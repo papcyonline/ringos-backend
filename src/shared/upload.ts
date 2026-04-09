@@ -217,7 +217,7 @@ export async function fileToPostImageUrl(
   // 1. Try R2 (cheapest, no egress)
   if (isR2Configured) {
     try {
-      const url = await uploadImageToR2(file.buffer, `posts/${userId}`, file.originalname || 'image.jpg');
+      const url = await uploadImageToR2(file.buffer, `posts/${userId}`, file.originalname || 'image.jpg', file.mimetype);
       return { secureUrl: url, publicId: '' };
     } catch (err) { /* R2 failed, fall back to next storage */ }
   }

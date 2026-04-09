@@ -60,8 +60,15 @@ export async function uploadImageToR2(
   buffer: Buffer,
   folder: string,
   originalName: string,
+  mimeType?: string,
 ): Promise<string> {
-  return uploadToR2(buffer, folder, originalName, 'image/jpeg');
+  const ext = (originalName.split('.').pop() || '').toLowerCase();
+  const contentType = mimeType || {
+    'heic': 'image/heic', 'heif': 'image/heif',
+    'png': 'image/png', 'webp': 'image/webp',
+    'gif': 'image/gif',
+  }[ext] || 'image/jpeg';
+  return uploadToR2(buffer, folder, originalName, contentType);
 }
 
 /**
