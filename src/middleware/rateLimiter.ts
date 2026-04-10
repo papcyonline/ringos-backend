@@ -1,33 +1,33 @@
 import { Request, Response, NextFunction } from 'express';
 import { TooManyRequestsError } from '../shared/errors';
+import { checkRateLimit } from '../shared/redis.service';
 
-const requests = new Map<string, { count: number; resetAt: number }>();
-
+/**
+ * Distributed rate limiter (Redis-backed, falls back to in-memory if Redis unavailable).
+ * Use this as the global API rate limit. Per-endpoint limits should use authRateLimit.
+ *
+ * @param windowMs - Window size in milliseconds (default 60s)
+ * @param max - Max requests per window per IP (default 100)
+ */
 export function rateLimiter(windowMs = 60000, max = 100) {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const key = req.ip || 'unknown';
-    const now = Date.now();
-    const entry = requests.get(key);
+  const windowSeconds = Math.ceil(windowMs / 1000);
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const key = `global:${req.ip || 'unknown'}`;
+    try {
+      const result = await checkRateLimit(key, max, windowSeconds);
 
-    if (!entry || now > entry.resetAt) {
-      requests.set(key, { count: 1, resetAt: now + windowMs });
-      return next();
+      // Add rate limit headers for client visibility
+      res.setHeader('X-RateLimit-Limit', String(max));
+      res.setHeader('X-RateLimit-Remaining', String(Math.max(0, result.remaining)));
+      res.setHeader('X-RateLimit-Reset', String(Math.ceil(result.resetAt / 1000)));
+
+      if (!result.allowed) {
+        return next(new TooManyRequestsError());
+      }
+      next();
+    } catch (err) {
+      // Fail open on unexpected errors so the API doesn't go down
+      next();
     }
-
-    entry.count++;
-    if (entry.count > max) {
-      return next(new TooManyRequestsError());
-    }
-
-    next();
   };
 }
-
-// Clean up stale entries periodically (unref so it won't block shutdown)
-const _cleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of requests) {
-    if (now > entry.resetAt) requests.delete(key);
-  }
-}, 60000);
-_cleanup.unref();

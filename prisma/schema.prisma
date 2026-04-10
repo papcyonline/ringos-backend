@@ -184,6 +184,8 @@ model User {
   twoFactorSecret   String?
   twoFactorEnabled  Boolean @default(false)
   twoFactorRecovery String[]  @default([])
+  failedLoginAttempts Int      @default(0)
+  lockedUntil         DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -191,6 +193,7 @@ model User {
   moderation     UserModeration?
   subscription   Subscription?
   refreshTokens  RefreshToken[]
+  devices        UserDevice[]
   aiSessions     AiSession[]
   matchRequests  MatchRequest[]
   conversations  ConversationParticipant[]
@@ -276,6 +279,35 @@ model RefreshToken {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+model SecurityAuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  event      String   // LOGIN_SUCCESS, LOGIN_FAILED, LOGOUT, PASSWORD_RESET, 2FA_ENABLED, etc.
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([event, createdAt])
+}
+
+model UserDevice {
+  id           String   @id @default(uuid())
+  userId       String
+  fingerprint  String   // Hash of userAgent + ipCountry
+  userAgent    String?
+  ipCountry    String?
+  ipAddress    String?
+  lastSeenAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fingerprint])
+  @@index([userId])
 }
 
 model OtpCode {

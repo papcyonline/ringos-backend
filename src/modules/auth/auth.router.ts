@@ -78,7 +78,7 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { email, password } = req.body;
-      const result = await authService.login(email, password);
+      const result = await authService.login(email, password, req);
       if ('requires2FA' in result) {
         res.status(200).json({ requires2FA: true, tempToken: result.tempToken });
       } else {
@@ -299,7 +299,7 @@ router.post('/2fa/login', authRateLimit('2fa-login', 5, 300), async (req: Reques
   try {
     const { tempToken, code } = req.body;
     if (!tempToken || !code) return res.status(400).json({ error: 'tempToken and code are required' });
-    const result = await authService.complete2FALogin(tempToken, code);
+    const result = await authService.complete2FALogin(tempToken, code, req);
     res.json(result);
   } catch (err) { next(err); }
 });

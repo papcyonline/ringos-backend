@@ -330,6 +330,36 @@ export async function sendOtpEmail(to: string, code: string): Promise<boolean> {
   });
 }
 
+export async function sendNewDeviceLoginEmail(
+  to: string,
+  details: { deviceName: string; country: string; time: string }
+): Promise<boolean> {
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #1a1a1a;">
+      <h2 style="font-size: 22px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px;">New login detected</h2>
+      <p style="font-size: 15px; line-height: 1.5; color: #444; margin: 0 0 20px;">
+        We noticed a new sign-in to your Yomeet account from a device or location we haven't seen before.
+      </p>
+      <div style="background: #f5f5f5; border-radius: 12px; padding: 16px 20px; margin: 0 0 20px;">
+        <p style="margin: 0 0 8px; font-size: 14px;"><strong>Device:</strong> ${details.deviceName}</p>
+        <p style="margin: 0 0 8px; font-size: 14px;"><strong>Location:</strong> ${details.country}</p>
+        <p style="margin: 0; font-size: 14px;"><strong>Time:</strong> ${details.time}</p>
+      </div>
+      <p style="font-size: 14px; line-height: 1.5; color: #666; margin: 0 0 12px;">
+        If this was you, no action is needed.
+      </p>
+      <p style="font-size: 14px; line-height: 1.5; color: #b00; margin: 0;">
+        <strong>If this wasn't you</strong>, change your password immediately and enable two-factor authentication in your account settings.
+      </p>
+    </div>
+  `;
+  return sendEmail({
+    to,
+    subject: 'New login to your Yomeet account',
+    html,
+  });
+}
+
 function getGoodbyeEmailTemplate(displayName: string): string {
   const content = `
     <h1 style="margin: 0 0 8px; font-size: 28px; font-weight: 300; color: #ffffff; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">

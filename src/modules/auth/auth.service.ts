@@ -5,11 +5,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
 import appleSignIn from 'apple-signin-auth';
 import type { Prisma } from '@prisma/client';
+import type { Request } from 'express';
 import { prisma } from '../../config/database';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
 import { UnauthorizedError, BadRequestError, ForbiddenError, NotFoundError } from '../../shared/errors';
 import { checkBanStatus } from '../safety/safety.service';
+import { logSecurityEvent } from '../../shared/audit.service';
+import { trackDeviceAndAlert } from '../../shared/device.service';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -246,15 +249,70 @@ export async function resendEmailOtp(rawEmail: string) {
   return { message: 'OTP resent' };
 }
 
-export async function login(rawEmail: string, password: string) {
+/**
+ * Compute lock duration in minutes based on failed attempt count.
+ * 5 fails → 15 min, 10 fails → 1 hour, 20+ fails → 24 hours.
+ */
+function computeLockMinutes(attempts: number): number | null {
+  if (attempts >= 20) return 24 * 60;
+  if (attempts >= 10) return 60;
+  if (attempts >= 5) return 15;
+  return null;
+}
+
+/**
+ * Throw if the user is locked. Logs LOGIN_LOCKED security event before throwing.
+ */
+function assertNotLocked(userId: string, lockedUntil: Date | null, req?: Request) {
+  if (lockedUntil && lockedUntil > new Date()) {
+    logSecurityEvent({ userId, event: 'LOGIN_LOCKED', req });
+    const minutesRemaining = Math.ceil((lockedUntil.getTime() - Date.now()) / 60000);
+    throw new UnauthorizedError(
+      `Account locked due to too many failed login attempts. Try again in ${minutesRemaining} minute${minutesRemaining > 1 ? 's' : ''}.`
+    );
+  }
+}
+
+/**
+ * Record a failed login attempt and lock the account if threshold reached.
+ */
+async function recordFailedLogin(userId: string, currentAttempts: number) {
+  const newAttempts = currentAttempts + 1;
+  const lockMinutes = computeLockMinutes(newAttempts);
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      failedLoginAttempts: newAttempts,
+      lockedUntil: lockMinutes ? new Date(Date.now() + lockMinutes * 60 * 1000) : null,
+    },
+  });
+}
+
+/**
+ * Reset failed login counter on successful authentication.
+ */
+async function resetFailedLogins(userId: string) {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { failedLoginAttempts: 0, lockedUntil: null },
+  });
+}
+
+export async function login(rawEmail: string, password: string, req?: Request) {
   const email = normalizeEmail(rawEmail);
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !user.passwordHash) {
+    logSecurityEvent({ event: 'LOGIN_FAILED', req, metadata: { email, reason: 'no_user' } });
     throw new UnauthorizedError('Invalid email or password');
   }
 
+  // Block locked accounts before checking the password (prevents enumeration via timing)
+  assertNotLocked(user.id, user.lockedUntil, req);
+
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
+    await recordFailedLogin(user.id, user.failedLoginAttempts);
+    logSecurityEvent({ userId: user.id, event: 'LOGIN_FAILED', req, metadata: { reason: 'wrong_password' } });
     throw new UnauthorizedError('Invalid email or password');
   }
 
@@ -268,7 +326,8 @@ export async function login(rawEmail: string, password: string) {
     );
   }
 
-  // If 2FA is enabled, return a challenge instead of tokens
+  // If 2FA is enabled, return a challenge instead of tokens.
+  // Don't reset the counter yet — only reset after the full 2FA flow succeeds.
   if (user.twoFactorEnabled) {
     const tempToken = jwt.sign(
       { userId: user.id, purpose: '2fa' },
@@ -279,11 +338,20 @@ export async function login(rawEmail: string, password: string) {
     return { requires2FA: true, tempToken };
   }
 
+  // Successful password login → reset counter
+  await resetFailedLogins(user.id);
+
   const { accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
     return createTokenPair(tx, user.id, user.isAnonymous);
   });
 
   logger.info({ userId: user.id }, 'Email user logged in');
+  logSecurityEvent({ userId: user.id, event: 'LOGIN_SUCCESS', req });
+
+  // Track new device + send alert if unrecognized
+  await trackDeviceAndAlert(user.id, user.email, req).catch((err) =>
+    logger.error({ err, userId: user.id }, 'Device tracking failed')
+  );
 
   return buildAuthResponse(user, { accessToken, refreshToken });
 }
@@ -291,7 +359,7 @@ export async function login(rawEmail: string, password: string) {
 /**
  * Complete login after 2FA verification.
  */
-export async function complete2FALogin(tempToken: string, code: string) {
+export async function complete2FALogin(tempToken: string, code: string, req?: Request) {
   let payload: any;
   try {
     payload = jwt.verify(tempToken, process.env.JWT_SECRET!);
@@ -303,20 +371,39 @@ export async function complete2FALogin(tempToken: string, code: string) {
     throw new UnauthorizedError('Invalid token purpose');
   }
 
+  // Check lock status before verifying — failed 2FA attempts also count toward lockout
+  const userPrelock = await prisma.user.findUnique({
+    where: { id: payload.userId },
+    select: { failedLoginAttempts: true, lockedUntil: true },
+  });
+  if (!userPrelock) throw new NotFoundError('User not found');
+  assertNotLocked(payload.userId, userPrelock.lockedUntil, req);
+
   const { validateLogin2FA } = await import('./two_factor.service');
   const isValid = await validateLogin2FA(payload.userId, code);
   if (!isValid) {
+    await recordFailedLogin(payload.userId, userPrelock.failedLoginAttempts);
+    logSecurityEvent({ userId: payload.userId, event: '2FA_FAILED', req });
     throw new ForbiddenError('Invalid 2FA code');
   }
 
   const user = await prisma.user.findUnique({ where: { id: payload.userId } });
   if (!user) throw new NotFoundError('User not found');
 
+  // Successful full 2FA login → reset counter
+  await resetFailedLogins(user.id);
+
   const { accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
     return createTokenPair(tx, user.id, user.isAnonymous);
   });
 
   logger.info({ userId: user.id }, '2FA login completed');
+  logSecurityEvent({ userId: user.id, event: 'LOGIN_SUCCESS', req, metadata: { method: '2fa' } });
+
+  // Track new device + send alert if unrecognized
+  await trackDeviceAndAlert(user.id, user.email, req).catch((err) =>
+    logger.error({ err, userId: user.id }, 'Device tracking failed')
+  );
 
   return buildAuthResponse(user, { accessToken, refreshToken });
 }

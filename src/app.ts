@@ -26,6 +26,13 @@ const app = express();
 // Trust first proxy (Render, etc.) so req.ip returns the real client IP
 app.set('trust proxy', 1);
 
+// CORS hardening: reject wildcard in production with credentials enabled.
+// Wildcard + credentials is exploitable — any origin can send authenticated requests.
+if (env.NODE_ENV === 'production' && (env.CORS_ORIGIN === '*' || !env.CORS_ORIGIN)) {
+  throw new Error(
+    'SECURITY: CORS_ORIGIN must be set to explicit origins in production (e.g. "https://app.yomeet.com,https://yomeet.app"). Wildcard "*" is not allowed with credentials.'
+  );
+}
 const corsOrigin = env.CORS_ORIGIN === '*' ? '*' : env.CORS_ORIGIN.split(',').map((o) => o.trim());
 
 // Sentry request handler (must be first)
