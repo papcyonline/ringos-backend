@@ -253,7 +253,7 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { refreshToken } = req.body;
-      const result = await authService.refreshTokens(refreshToken);
+      const result = await authService.refreshTokens(refreshToken, req);
       res.status(200).json(result);
     } catch (err) {
       next(err);
@@ -283,6 +283,38 @@ router.post(
     try {
       const userId = req.user!.userId;
       const result = await authService.logoutAll(userId);
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /auth/sessions — List all active sessions for the current user
+router.get(
+  '/sessions',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const sessions = await authService.getUserSessions(req.user!.userId);
+      res.status(200).json({ sessions });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /auth/sessions/:sessionId — Revoke a specific session
+router.delete(
+  '/sessions/:sessionId',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await authService.revokeSession(
+        req.user!.userId,
+        req.params.sessionId as string,
+        req,
+      );
       res.status(200).json(result);
     } catch (err) {
       next(err);

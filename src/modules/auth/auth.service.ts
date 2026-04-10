@@ -56,17 +56,17 @@ async function createTokenPair(
   tx: Prisma.TransactionClient,
   userId: string,
   isAnonymous: boolean,
-): Promise<{ accessToken: string; refreshToken: string }> {
+): Promise<{ accessToken: string; refreshToken: string; refreshTokenId: string }> {
   const accessToken = generateAccessToken({ userId, isAnonymous });
   const refreshToken = generateRefreshToken({ userId });
-  await tx.refreshToken.create({
+  const created = await tx.refreshToken.create({
     data: {
       userId,
       token: refreshToken,
       expiresAt: refreshTokenExpiryDate(),
     },
   });
-  return { accessToken, refreshToken };
+  return { accessToken, refreshToken, refreshTokenId: created.id };
 }
 
 /** Normalize email to lowercase and trimmed. */
@@ -683,7 +683,7 @@ export async function verifyOtp(phone: string, code: string) {
   return buildAuthResponse(user, { accessToken, refreshToken });
 }
 
-export async function refreshTokens(token: string) {
+export async function refreshTokens(token: string, req?: Request) {
   let payload: { userId: string };
   try {
     payload = verifyRefreshToken(token);
@@ -695,23 +695,47 @@ export async function refreshTokens(token: string) {
     const existing = await tx.refreshToken.findUnique({ where: { token } });
 
     if (!existing) {
-      throw new UnauthorizedError('Refresh token not found or already used');
+      throw new UnauthorizedError('Invalid refresh token');
+    }
+
+    // Defense in depth: ensure the JWT's userId matches the DB record's userId
+    if (existing.userId !== payload.userId) {
+      throw new UnauthorizedError('Invalid refresh token');
+    }
+
+    // Token reuse detection: if a previously rotated token is presented again,
+    // assume it was stolen and revoke ALL tokens for the user (RFC 6819 §5.2.2.3).
+    if (existing.revokedAt) {
+      await tx.refreshToken.updateMany({
+        where: { userId: existing.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      logSecurityEvent({
+        userId: existing.userId,
+        event: 'TOKEN_REUSE_DETECTED',
+        req,
+        metadata: { tokenId: existing.id, replacedBy: existing.replacedBy },
+      });
+      throw new UnauthorizedError('Refresh token has been revoked. Please log in again.');
     }
 
     if (existing.expiresAt < new Date()) {
-      await tx.refreshToken.delete({ where: { id: existing.id } });
       throw new UnauthorizedError('Refresh token has expired');
     }
 
-    await tx.refreshToken.delete({ where: { id: existing.id } });
-
-    const user = await tx.user.findUnique({ where: { id: payload.userId } });
-
+    const user = await tx.user.findUnique({ where: { id: existing.userId } });
     if (!user) {
       throw new UnauthorizedError('User not found');
     }
 
-    return createTokenPair(tx, user.id, user.isAnonymous);
+    // Rotate: create new pair, then mark old token as revoked + replaced
+    const newPair = await createTokenPair(tx, user.id, user.isAnonymous);
+    await tx.refreshToken.update({
+      where: { id: existing.id },
+      data: { revokedAt: new Date(), replacedBy: newPair.refreshTokenId },
+    });
+
+    return { accessToken: newPair.accessToken, refreshToken: newPair.refreshToken };
   });
 }
 
@@ -763,6 +787,42 @@ export async function logout(userId: string, token: string) {
   logger.info({ userId }, 'User logged out');
 
   return { message: 'Logged out successfully' };
+}
+
+/**
+ * List active (non-revoked, non-expired) sessions for a user.
+ * Each session corresponds to one refresh token.
+ */
+export async function getUserSessions(userId: string) {
+  const tokens = await prisma.refreshToken.findMany({
+    where: {
+      userId,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    select: {
+      id: true,
+      createdAt: true,
+      expiresAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  return tokens;
+}
+
+/**
+ * Revoke a specific session (refresh token) by id. User must own it.
+ */
+export async function revokeSession(userId: string, sessionId: string, req?: Request) {
+  const result = await prisma.refreshToken.updateMany({
+    where: { id: sessionId, userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  if (result.count === 0) {
+    throw new NotFoundError('Session not found');
+  }
+  logSecurityEvent({ userId, event: 'SESSION_REVOKED', req, metadata: { sessionId } });
+  return { message: 'Session revoked' };
 }
 
 export async function logoutAll(userId: string) {

@@ -269,11 +269,15 @@ model UserPreference {
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  id          String    @id @default(uuid())
+  userId      String
+  token       String    @unique
+  expiresAt   DateTime
+  // Rotation tracking — when set, the token has been used and replaced.
+  // Reuse of a revoked token indicates token theft (RFC 6819 §5.2.2.3).
+  revokedAt   DateTime?
+  replacedBy  String?
+  createdAt   DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

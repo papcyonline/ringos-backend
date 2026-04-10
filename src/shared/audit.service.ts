@@ -10,7 +10,9 @@ export type SecurityEvent =
   | 'LOGIN_FAILED'
   | 'LOGIN_LOCKED'
   | '2FA_FAILED'
-  | 'NEW_DEVICE_LOGIN';
+  | 'NEW_DEVICE_LOGIN'
+  | 'TOKEN_REUSE_DETECTED'
+  | 'SESSION_REVOKED';
 
 interface LogParams {
   userId?: string | null;
