@@ -2,6 +2,8 @@ import { Router, Response, NextFunction } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { postMediaUpload, fileToPostImageUrl, fileToPostVideoUrl } from '../../shared/upload';
+import { isModerationConfigured, moderateImageUrl, moderateVideoUrl } from '../../shared/moderation.service';
+import * as cloudinaryService from '../../shared/cloudinary.service';
 import * as postService from './post.service';
 
 const router = Router();
@@ -85,6 +87,27 @@ router.post(
         const result = await fileToPostImageUrl(file, req.user!.userId);
         return { url: result.secureUrl, type: 'IMAGE' as const, cloudinaryId: result.publicId, position: i, caption };
       }));
+
+      // Content moderation — check each media item for inappropriate content
+      if (isModerationConfigured) {
+        for (const item of media) {
+          const result = item.type === 'VIDEO'
+            ? await moderateVideoUrl(item.url)
+            : await moderateImageUrl(item.url);
+          if (!result.safe) {
+            console.warn(`[PostUpload] Rejected media: ${result.reason}`, result.scores);
+            // Best-effort cleanup of uploaded media (fire and forget)
+            for (const m of media) {
+              if (m.cloudinaryId) {
+                cloudinaryService.deleteFile(m.cloudinaryId, m.type === 'VIDEO' ? 'video' : 'image').catch(() => {});
+              }
+            }
+            return res.status(400).json({
+              error: { message: result.reason || 'Content violates community guidelines', code: 'CONTENT_BLOCKED' }
+            });
+          }
+        }
+      }
 
       // Support legacy single mediaUrl in body (no file upload)
       let mediaUrl: string | undefined;
