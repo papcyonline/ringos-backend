@@ -1,5 +1,6 @@
 import { Router, Response, NextFunction } from 'express';
 import { authenticate } from '../../middleware/auth';
+import { userRateLimit } from '../../middleware/userRateLimit';
 import { AuthRequest } from '../../shared/types';
 import { postMediaUpload, fileToPostImageUrl, fileToPostVideoUrl } from '../../shared/upload';
 import { isModerationConfigured, moderateImageUrl, moderateVideoUrl } from '../../shared/moderation.service';
@@ -43,6 +44,7 @@ router.get('/channel/:channelId', authenticate, async (req: AuthRequest, res: Re
 router.post(
   '/',
   authenticate,
+  userRateLimit('post-create', 30, 3600), // 30 posts per hour per user
   (req: AuthRequest, res: Response, next: NextFunction) => {
     const contentType = req.headers['content-type'] || '';
     if (contentType.includes('multipart/form-data')) {
@@ -221,7 +223,7 @@ router.post('/:postId/bookmark', authenticate, async (req: AuthRequest, res: Res
 });
 
 // POST /posts/:postId/comments — Add a comment (or reply)
-router.post('/:postId/comments', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.post('/:postId/comments', authenticate, userRateLimit('comment-create', 60, 600), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { content, parentId } = req.body;
     if (!content || !content.trim()) return res.status(400).json({ error: 'content is required' });

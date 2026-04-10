@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
+import { userRateLimit } from '../../middleware/userRateLimit';
 
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
@@ -303,6 +304,7 @@ router.get(
 router.post(
   '/conversations/:conversationId/messages',
   authenticate,
+  userRateLimit('message-send', 120, 60), // 120 messages per minute (2/sec)
   validate(sendMessageSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -644,6 +646,7 @@ router.get(
 router.post(
   '/conversations/group',
   authenticate,
+  userRateLimit('group-create', 5, 3600), // 5 channels/groups per hour
   (req: AuthRequest, res: Response, next: NextFunction) => {
     const contentType = req.headers['content-type'] || '';
     if (contentType.includes('multipart/form-data')) {

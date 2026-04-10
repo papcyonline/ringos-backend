@@ -8,9 +8,13 @@ const envSchema = z.object({
   // Database
   DATABASE_URL: z.string(),
 
-  // JWT
+  // JWT — current secrets used to sign new tokens
   JWT_SECRET: z.string(),
   JWT_REFRESH_SECRET: z.string(),
+  // Optional previous secrets — accepted during verification only.
+  // Set these during a rotation, leave for ~30 days, then remove.
+  JWT_SECRET_PREVIOUS: z.string().optional(),
+  JWT_REFRESH_SECRET_PREVIOUS: z.string().optional(),
   JWT_EXPIRES_IN: z.string().default('1h'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
 
