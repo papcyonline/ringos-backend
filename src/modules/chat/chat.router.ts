@@ -184,11 +184,13 @@ router.get(
     try {
       const cursor = req.query.cursor as string | undefined;
       const limit = parseInt(req.query.limit as string || '20') || 20;
+      const archived = req.query.archived === 'true';
       const result = await chatService.getChannelInbox(
         req.params.channelId as string,
         req.user!.userId,
         cursor,
         limit,
+        archived,
       );
       res.json(result);
     } catch (err) { next(err); }

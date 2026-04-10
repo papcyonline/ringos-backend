@@ -531,7 +531,7 @@ export async function getOrCreateChannelDM(channelId: string, subscriberUserId: 
 /**
  * Get all channel DMs (inbox) for a channel. Admin only.
  */
-export async function getChannelInbox(channelId: string, userId: string, cursor?: string, limit = 20) {
+export async function getChannelInbox(channelId: string, userId: string, cursor?: string, limit = 20, archived = false) {
   // Verify admin — inline check (verifyAdmin is in group.service.ts, not imported here)
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId: channelId, userId } },
@@ -544,6 +544,10 @@ export async function getChannelInbox(channelId: string, userId: string, cursor?
     channelSourceId: channelId,
     type: 'HUMAN_MATCHED',
     status: 'ACTIVE',
+    // Filter by admin's archive state — match conversations where THIS admin's participant has isArchived = archived
+    participants: {
+      some: { userId, isArchived: archived },
+    },
   };
 
   if (cursor) {
@@ -579,22 +583,20 @@ export async function getChannelInbox(channelId: string, userId: string, cursor?
   const hasMore = conversations.length > limit;
   const sliced = hasMore ? conversations.slice(0, limit) : conversations;
 
-  // Batch unread counts for the admin across all returned conversations
-  const convIds = sliced.map((c) => c.id);
-  const unreadGroups = convIds.length > 0
-    ? await prisma.message.groupBy({
-        by: ['conversationId'],
-        _count: { id: true },
-        where: {
-          conversationId: { in: convIds },
-          senderId: { not: userId },
-          deletedAt: null,
-        },
-      })
-    : [];
+  // Compute per-conversation unread counts respecting each conversation's lastReadAt
   const unreadMap = new Map<string, number>();
-  for (const g of unreadGroups) {
-    unreadMap.set(g.conversationId, g._count.id);
+  for (const c of sliced) {
+    const myPart = c.participants.find((p: any) => p.userId === userId);
+    const lastRead = myPart?.lastReadAt;
+    const count = await prisma.message.count({
+      where: {
+        conversationId: c.id,
+        senderId: { not: userId },
+        deletedAt: null,
+        ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
+      },
+    });
+    unreadMap.set(c.id, count);
   }
 
   const items = sliced.map((c) => ({
@@ -622,22 +624,41 @@ export async function getChannelInboxUnreadCount(channelId: string, userId: stri
     throw new ForbiddenError('Only channel admins can view the inbox');
   }
 
-  const dmConvIds = await prisma.conversation.findMany({
-    where: { channelSourceId: channelId, type: 'HUMAN_MATCHED', status: 'ACTIVE' },
-    select: { id: true },
-  });
-
-  if (dmConvIds.length === 0) return { count: 0 };
-
-  const result = await prisma.message.count({
+  // Only count from non-archived conversations, with the admin's participant info
+  const dmConvs = await prisma.conversation.findMany({
     where: {
-      conversationId: { in: dmConvIds.map((c) => c.id) },
-      senderId: { not: userId },
-      deletedAt: null,
+      channelSourceId: channelId,
+      type: 'HUMAN_MATCHED',
+      status: 'ACTIVE',
+      participants: { some: { userId, isArchived: false } },
+    },
+    select: {
+      id: true,
+      participants: {
+        where: { userId },
+        select: { lastReadAt: true },
+      },
     },
   });
 
-  return { count: result };
+  if (dmConvs.length === 0) return { count: 0 };
+
+  // Count unread per conversation respecting each conversation's lastReadAt
+  let total = 0;
+  for (const conv of dmConvs) {
+    const lastRead = conv.participants[0]?.lastReadAt;
+    const count = await prisma.message.count({
+      where: {
+        conversationId: conv.id,
+        senderId: { not: userId },
+        deletedAt: null,
+        ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
+      },
+    });
+    total += count;
+  }
+
+  return { count: total };
 }
 
 /**
