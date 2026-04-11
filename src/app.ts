@@ -18,7 +18,6 @@ import { spotlightRouter } from './modules/spotlight/spotlight.router';
 import { storyRouter } from './modules/story/story.router';
 import { coinsRouter } from './modules/coins/coins.router';
 import { mediaRouter } from './modules/media/media.router';
-import { webhooksRouter } from './modules/webhooks/webhooks.router';
 import { sentryRequestHandler, sentryErrorHandler } from './shared/sentry.service';
 
 const app = express();
@@ -83,7 +82,6 @@ app.use('/api/spotlight', spotlightRouter);
 app.use('/api/stories', storyRouter);
 app.use('/api/coins', coinsRouter);
 app.use('/media', mediaRouter);
-app.use('/webhooks', webhooksRouter);
 
 // Sentry error handler (must be before custom error handler)
 app.use(sentryErrorHandler);

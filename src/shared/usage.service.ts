@@ -52,7 +52,7 @@ export async function isPro(userId: string): Promise<boolean> {
     });
     if (!user) return false;
     if (user.isVerified) return true;
-    // Check for active RevenueCat subscription
+    // Check for active subscription (updated via store webhooks / client receipt validation)
     const subStatus = user.subscription?.status;
     return subStatus === 'active' || subStatus === 'trialing';
   } catch (err) {
