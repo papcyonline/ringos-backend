@@ -316,6 +316,17 @@ export async function login(rawEmail: string, password: string, req?: Request) {
     throw new UnauthorizedError('Invalid email or password');
   }
 
+  // If user registered but never verified OTP, resend OTP instead of logging in
+  if (user.isAnonymous && user.authProvider === 'EMAIL') {
+    const code = generateOtpCode();
+    await storeOtp(`email:${email}`, code);
+    const emailSent = await sendOtpEmail(email, code);
+    if (!emailSent) {
+      logger.info({ email, code }, 'Email OTP re-generated (email not configured — logged for dev)');
+    }
+    return { requiresOtp: true, message: 'Please verify your email. A new OTP has been sent.' };
+  }
+
   // Check if user is banned
   const ban = await checkBanStatus(user.id);
   if (ban.banned) {

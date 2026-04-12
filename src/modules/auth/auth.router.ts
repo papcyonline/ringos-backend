@@ -79,7 +79,9 @@ router.post(
     try {
       const { email, password } = req.body;
       const result = await authService.login(email, password, req);
-      if ('requires2FA' in result) {
+      if ('requiresOtp' in result) {
+        res.status(200).json(result);
+      } else if ('requires2FA' in result) {
         res.status(200).json({ requires2FA: true, tempToken: result.tempToken });
       } else {
         logger.info({ userId: result.user.id }, 'User logged in');
