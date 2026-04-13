@@ -239,13 +239,147 @@ export async function getChannelPosts(channelId: string, userId: string, cursor?
 }
 
 /**
- * Discover posts — public channel posts for non-subscribers.
+ * Discover posts — public channel posts. Supports multiple algorithms.
+ *   - 'recent'    : pure chronological (newest first)
+ *   - 'trending'  : engagement-weighted (hot posts rise)
+ *   - 'foryou'    : blended recency + engagement + variety (default)
  */
-export async function discoverPosts(userId: string, cursor?: string, limit = 20) {
-  return queryPaginatedPosts({
+export async function discoverPosts(userId: string, cursor?: string, limit = 20, algorithm = 'foryou') {
+  if (algorithm === 'recent') {
+    return queryPaginatedPosts({
+      isPublished: true,
+      channel: { isChannel: true, isPublic: true, status: 'ACTIVE' },
+    }, userId, cursor, limit);
+  }
+
+  // For 'trending' and 'foryou', fetch all posts in the time window and rank in-memory
+  const page = parseInt(cursor || '0') || 0;
+
+  const where: any = {
     isPublished: true,
     channel: { isChannel: true, isPublic: true, status: 'ACTIVE' },
-  }, userId, cursor, limit);
+  };
+
+  // For trending, look at last 7 days; for foryou, last 14 days
+  const daysBack = algorithm === 'trending' ? 7 : 14;
+  where.createdAt = { gte: new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000) };
+
+  const posts = await prisma.post.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: 500, // cap to prevent runaway queries
+    include: {
+      ...postInclude,
+      likes: { where: { userId }, select: { id: true }, take: 1 },
+      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
+      reactions: { select: { emoji: true, userId: true } },
+    },
+  });
+
+  // Score each post
+  const now = Date.now();
+  const scored = posts.map((p) => {
+    const ageHours = (now - p.createdAt.getTime()) / (1000 * 60 * 60);
+    const engagement = (p._count?.likes ?? 0) * 2 + (p._count?.comments ?? 0) * 3 + p.shareCount + p.viewCount * 0.1;
+
+    let score: number;
+    if (algorithm === 'trending') {
+      // Wilson-style: engagement / age decay
+      score = engagement / Math.pow(ageHours + 2, 1.5);
+    } else {
+      // 'foryou': blend recency + engagement + small random for variety
+      const recencyScore = 1 / Math.pow(ageHours + 1, 0.8);
+      const engagementScore = Math.log2(engagement + 1);
+      const variety = Math.random() * 0.3;
+      score = recencyScore * 3 + engagementScore * 2 + variety;
+    }
+    return { post: p, score };
+  });
+
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+
+  // Paginate
+  const start = page * limit;
+  const sliced = scored.slice(start, start + limit + 1);
+  const hasMore = sliced.length > limit;
+  const result = hasMore ? sliced.slice(0, limit) : sliced;
+
+  return {
+    posts: result.map((s) => formatPost(s.post, userId)),
+    hasMore,
+    nextCursor: hasMore ? String(page + 1) : undefined,
+  };
+}
+
+/**
+ * Get the feed for subscribed channels. Supports same algorithms.
+ */
+export async function getFeedWithAlgorithm(userId: string, cursor?: string, limit = 20, algorithm = 'recent') {
+  // Get channel IDs the user subscribes to
+  const subscriptions = await prisma.conversationParticipant.findMany({
+    where: {
+      userId,
+      leftAt: null,
+      conversation: { isChannel: true, status: 'ACTIVE' },
+    },
+    select: { conversationId: true },
+  });
+  const channelIds = subscriptions.map((s) => s.conversationId);
+  if (channelIds.length === 0) return { posts: [], hasMore: false };
+
+  if (algorithm === 'recent') {
+    return queryPaginatedPosts({ channelId: { in: channelIds }, isPublished: true }, userId, cursor, limit);
+  }
+
+  const page = parseInt(cursor || '0') || 0;
+  const daysBack = algorithm === 'trending' ? 7 : 14;
+
+  const posts = await prisma.post.findMany({
+    where: {
+      channelId: { in: channelIds },
+      isPublished: true,
+      createdAt: { gte: new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000) },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+    include: {
+      ...postInclude,
+      likes: { where: { userId }, select: { id: true }, take: 1 },
+      bookmarks: { where: { userId }, select: { id: true }, take: 1 },
+      reactions: { select: { emoji: true, userId: true } },
+    },
+  });
+
+  const now = Date.now();
+  const scored = posts.map((p) => {
+    const ageHours = (now - p.createdAt.getTime()) / (1000 * 60 * 60);
+    const engagement = (p._count?.likes ?? 0) * 2 + (p._count?.comments ?? 0) * 3 + p.shareCount + p.viewCount * 0.1;
+
+    let score: number;
+    if (algorithm === 'trending') {
+      score = engagement / Math.pow(ageHours + 2, 1.5);
+    } else {
+      const recencyScore = 1 / Math.pow(ageHours + 1, 0.8);
+      const engagementScore = Math.log2(engagement + 1);
+      const variety = Math.random() * 0.3;
+      score = recencyScore * 3 + engagementScore * 2 + variety;
+    }
+    return { post: p, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const start = page * limit;
+  const sliced = scored.slice(start, start + limit + 1);
+  const hasMore = sliced.length > limit;
+  const result = hasMore ? sliced.slice(0, limit) : sliced;
+
+  return {
+    posts: result.map((s) => formatPost(s.post, userId)),
+    hasMore,
+    nextCursor: hasMore ? String(page + 1) : undefined,
+  };
 }
 
 /**

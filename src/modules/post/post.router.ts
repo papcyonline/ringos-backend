@@ -15,7 +15,10 @@ router.get('/feed', authenticate, async (req: AuthRequest, res: Response, next: 
   try {
     const cursor = (req.query.cursor as string) || undefined;
     const limit = parseInt(req.query.limit as string || '20') || 20;
-    const result = await postService.getFeed(req.user!.userId, cursor, limit);
+    const algorithm = (req.query.algorithm as string) || 'recent';
+    const result = algorithm === 'recent'
+      ? await postService.getFeed(req.user!.userId, cursor, limit)
+      : await postService.getFeedWithAlgorithm(req.user!.userId, cursor, limit, algorithm);
     res.json(result);
   } catch (err) { next(err); }
 });
@@ -25,7 +28,8 @@ router.get('/discover', authenticate, async (req: AuthRequest, res: Response, ne
   try {
     const cursor = (req.query.cursor as string) || undefined;
     const limit = parseInt(req.query.limit as string || '20') || 20;
-    const result = await postService.discoverPosts(req.user!.userId, cursor, limit);
+    const algorithm = (req.query.algorithm as string) || 'foryou';
+    const result = await postService.discoverPosts(req.user!.userId, cursor, limit, algorithm);
     res.json(result);
   } catch (err) { next(err); }
 });

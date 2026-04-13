@@ -583,20 +583,54 @@ export async function getChannelInbox(channelId: string, userId: string, cursor?
   const hasMore = conversations.length > limit;
   const sliced = hasMore ? conversations.slice(0, limit) : conversations;
 
-  // Compute per-conversation unread counts respecting each conversation's lastReadAt
-  const unreadMap = new Map<string, number>();
+  // Batch unread counts — single query instead of N+1 per conversation
+  const lastReadMap = new Map<string, Date | null>();
   for (const c of sliced) {
     const myPart = c.participants.find((p: any) => p.userId === userId);
-    const lastRead = myPart?.lastReadAt;
-    const count = await prisma.message.count({
+    lastReadMap.set(c.id, myPart?.lastReadAt ?? null);
+  }
+
+  const slicedIds = sliced.map((c) => c.id);
+  const idsWithLastRead = slicedIds.filter((id) => lastReadMap.get(id) != null);
+  const idsWithoutLastRead = slicedIds.filter((id) => lastReadMap.get(id) == null);
+
+  const unreadMap = new Map<string, number>();
+
+  // For conversations without lastReadAt — count all unread
+  if (idsWithoutLastRead.length > 0) {
+    const counts = await prisma.message.groupBy({
+      by: ['conversationId'],
+      _count: { id: true },
       where: {
-        conversationId: c.id,
+        conversationId: { in: idsWithoutLastRead },
         senderId: { not: userId },
         deletedAt: null,
-        ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
       },
     });
-    unreadMap.set(c.id, count);
+    for (const g of counts) unreadMap.set(g.conversationId, g._count.id);
+  }
+
+  // For conversations with lastReadAt — fetch messages after earliest lastRead, filter in JS
+  if (idsWithLastRead.length > 0) {
+    const lastReadDates = idsWithLastRead.map((id) => lastReadMap.get(id)!);
+    const earliest = new Date(Math.min(...lastReadDates.map((d) => d.getTime())));
+
+    const msgs = await prisma.message.findMany({
+      where: {
+        conversationId: { in: idsWithLastRead },
+        senderId: { not: userId },
+        deletedAt: null,
+        createdAt: { gt: earliest },
+      },
+      select: { conversationId: true, createdAt: true },
+    });
+
+    for (const msg of msgs) {
+      const lastRead = lastReadMap.get(msg.conversationId);
+      if (lastRead && msg.createdAt > lastRead) {
+        unreadMap.set(msg.conversationId, (unreadMap.get(msg.conversationId) ?? 0) + 1);
+      }
+    }
   }
 
   const items = sliced.map((c) => ({
@@ -643,19 +677,49 @@ export async function getChannelInboxUnreadCount(channelId: string, userId: stri
 
   if (dmConvs.length === 0) return { count: 0 };
 
-  // Count unread per conversation respecting each conversation's lastReadAt
-  let total = 0;
+  // Batch unread count — single query instead of N+1
+  const convIds = dmConvs.map((c) => c.id);
+  const lastReadPerConv = new Map<string, Date | null>();
   for (const conv of dmConvs) {
-    const lastRead = conv.participants[0]?.lastReadAt;
-    const count = await prisma.message.count({
+    lastReadPerConv.set(conv.id, conv.participants[0]?.lastReadAt ?? null);
+  }
+
+  const idsWithRead = convIds.filter((id) => lastReadPerConv.get(id) != null);
+  const idsWithoutRead = convIds.filter((id) => lastReadPerConv.get(id) == null);
+
+  let total = 0;
+
+  // Conversations without lastReadAt — count all unread
+  if (idsWithoutRead.length > 0) {
+    const result = await prisma.message.count({
       where: {
-        conversationId: conv.id,
+        conversationId: { in: idsWithoutRead },
         senderId: { not: userId },
         deletedAt: null,
-        ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
       },
     });
-    total += count;
+    total += result;
+  }
+
+  // Conversations with lastReadAt — fetch after earliest, filter in JS
+  if (idsWithRead.length > 0) {
+    const dates = idsWithRead.map((id) => lastReadPerConv.get(id)!);
+    const earliest = new Date(Math.min(...dates.map((d) => d.getTime())));
+
+    const msgs = await prisma.message.findMany({
+      where: {
+        conversationId: { in: idsWithRead },
+        senderId: { not: userId },
+        deletedAt: null,
+        createdAt: { gt: earliest },
+      },
+      select: { conversationId: true, createdAt: true },
+    });
+
+    for (const msg of msgs) {
+      const lastRead = lastReadPerConv.get(msg.conversationId);
+      if (lastRead && msg.createdAt > lastRead) total++;
+    }
   }
 
   return { count: total };

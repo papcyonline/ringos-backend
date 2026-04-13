@@ -594,6 +594,7 @@ model Message {
   @@index([conversationId, createdAt])
   @@index([conversationId, senderId, deletedAt, createdAt])
   @@index([senderId])
+  @@index([replyToId])
 }
 
 model MessageReaction {
