@@ -434,20 +434,48 @@ export async function updateProfile(userId: string, data: UpdateProfileInput) {
 
 export async function setVerified(userId: string) {
   await findUserOrThrow(userId);
-  return prisma.user.update({
+  const user = await prisma.user.update({
     where: { id: userId },
     data: { isVerified: true, verifiedAt: new Date() },
     select: { id: true, isVerified: true, verifiedAt: true, verifiedRole: true },
   });
+
+  // Auto-verify all channels where this user is admin
+  const adminChannels = await prisma.conversationParticipant.findMany({
+    where: { userId, role: 'ADMIN', leftAt: null, conversation: { isChannel: true, status: 'ACTIVE' } },
+    select: { conversationId: true },
+  });
+  if (adminChannels.length > 0) {
+    await prisma.conversation.updateMany({
+      where: { id: { in: adminChannels.map((c) => c.conversationId) } },
+      data: { isVerified: true },
+    });
+  }
+
+  return user;
 }
 
 export async function removeVerified(userId: string) {
   await findUserOrThrow(userId);
-  return prisma.user.update({
+  const user = await prisma.user.update({
     where: { id: userId },
     data: { isVerified: false, verifiedAt: null },
     select: { id: true, isVerified: true, verifiedAt: true, verifiedRole: true },
   });
+
+  // Remove verification from channels where this user is admin
+  const adminChannels = await prisma.conversationParticipant.findMany({
+    where: { userId, role: 'ADMIN', leftAt: null, conversation: { isChannel: true, status: 'ACTIVE' } },
+    select: { conversationId: true },
+  });
+  if (adminChannels.length > 0) {
+    await prisma.conversation.updateMany({
+      where: { id: { in: adminChannels.map((c) => c.conversationId) } },
+      data: { isVerified: false },
+    });
+  }
+
+  return user;
 }
 
 export async function adminSetVerified(identifier: string, verified: boolean, role?: string) {
@@ -463,7 +491,7 @@ export async function adminSetVerified(identifier: string, verified: boolean, ro
   });
   if (!user) throw new NotFoundError('User not found');
 
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: user.id },
     data: {
       isVerified: verified,
@@ -479,6 +507,20 @@ export async function adminSetVerified(identifier: string, verified: boolean, ro
       verifiedRole: true,
     },
   });
+
+  // Cascade verification to all channels where this user is admin
+  const adminChannels = await prisma.conversationParticipant.findMany({
+    where: { userId: user.id, role: 'ADMIN', leftAt: null, conversation: { isChannel: true, status: 'ACTIVE' } },
+    select: { conversationId: true },
+  });
+  if (adminChannels.length > 0) {
+    await prisma.conversation.updateMany({
+      where: { id: { in: adminChannels.map((c) => c.conversationId) } },
+      data: { isVerified: verified },
+    });
+  }
+
+  return updated;
 }
 
 export async function deleteAccount(userId: string) {

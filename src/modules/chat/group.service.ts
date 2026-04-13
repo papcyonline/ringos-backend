@@ -65,6 +65,13 @@ export async function createGroup(
   // Ensure creator is not in memberIds (they're added separately as ADMIN)
   const uniqueMembers = [...new Set(memberIds.filter((id) => id !== creatorId))];
 
+  // Auto-verify channel if creator is a verified user
+  let autoVerify = false;
+  if (isChannel) {
+    const creator = await prisma.user.findUnique({ where: { id: creatorId }, select: { isVerified: true } });
+    autoVerify = creator?.isVerified ?? false;
+  }
+
   const conversation = await prisma.conversation.create({
     data: {
       type: 'GROUP',
@@ -75,6 +82,7 @@ export async function createGroup(
       isPublic: isPublic !== undefined ? isPublic : true,
       // Channels default to admins-only messaging and public
       isChannel: isChannel ?? false,
+      isVerified: autoVerify,
       adminsOnlyMessages: isChannel ?? false,
       participants: {
         create: [
