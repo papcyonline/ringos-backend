@@ -6,16 +6,7 @@ import { sendCallPush, sendMissedCallNotification } from '../notification/notifi
 import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
 import { generateCallToken, LIVEKIT_URL } from './call.livekit';
 import { isBlocked } from '../safety/safety.service';
-
-interface ActiveCall {
-  callId: string;
-  conversationId: string;
-  initiatorId: string;
-  participantIds: Set<string>;
-  isGroup: boolean;
-  callType: 'AUDIO' | 'VIDEO';
-  answeredAt?: Date;
-}
+import { ActiveCall, CallStateStore, getCallStateStore } from './call.state.store';
 
 /**
  * Maximum time (ms) to wait for an answer before cleaning up server-side.
@@ -27,68 +18,20 @@ const CALL_TIMEOUT_MS = 45_000;
 /** Grace period (ms) before ending a call on disconnect. Allows brief reconnections. */
 const DISCONNECT_GRACE_MS = 10_000;
 
-/** Encapsulates all in-memory call state: active calls, user→call mapping, timeouts, and disconnect grace periods. */
-class CallStateManager {
-  /** Active calls keyed by callId. */
-  readonly calls = new Map<string, ActiveCall>();
-
-  /** Reverse index: userId → callId for quick lookup. */
-  readonly userCall = new Map<string, string>();
-
-  /** Timeout handles for unanswered calls (server-side cleanup). */
-  readonly timeouts = new Map<string, ReturnType<typeof setTimeout>>();
-
-  /** Pending disconnect timers: userId → { timeout, callId }. */
-  readonly disconnectGrace = new Map<string, { timeout: ReturnType<typeof setTimeout>; callId: string }>();
-
-  isUserInCall(userId: string): boolean {
-    return this.userCall.has(userId);
-  }
-
-  getCall(callId: string): ActiveCall | undefined {
-    return this.calls.get(callId);
-  }
-
-  getUserCallId(userId: string): string | undefined {
-    return this.userCall.get(userId);
-  }
-
-  addCall(call: ActiveCall): void {
-    this.calls.set(call.callId, call);
-  }
-
-  mapUserToCall(userId: string, callId: string): void {
-    this.userCall.set(userId, callId);
-  }
-
-  unmapUser(userId: string): void {
-    this.userCall.delete(userId);
-  }
-
-  setTimeout(callId: string, timeout: ReturnType<typeof globalThis.setTimeout>): void {
-    this.timeouts.set(callId, timeout);
-  }
-
-  clearTimeout(callId: string): void {
-    const timeout = this.timeouts.get(callId);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.timeouts.delete(callId);
-    }
-  }
-
-  cleanup(callId: string): void {
-    const call = this.calls.get(callId);
-    if (!call) return;
-    this.clearTimeout(callId);
-    for (const participantId of call.participantIds) {
-      this.userCall.delete(participantId);
-    }
-    this.calls.delete(callId);
-  }
-}
-
-const callState = new CallStateManager();
+/**
+ * Shared state across every backend instance (Redis-backed when configured,
+ * in-memory otherwise). Wrapped in a proxy so the store is resolved lazily
+ * on first access — Redis isn't connected yet at module-eval time, so eager
+ * resolution would pick the in-memory fallback even when REDIS_URL is set.
+ * See call.state.store.ts for the interface.
+ */
+const callState: CallStateStore = new Proxy({} as CallStateStore, {
+  get(_, prop) {
+    const real = getCallStateStore();
+    const value = Reflect.get(real, prop);
+    return typeof value === 'function' ? value.bind(real) : value;
+  },
+});
 
 /**
  * Shared call-end logic: calculate duration, update DB, track minutes, remove sockets, cleanup state.
@@ -120,11 +63,11 @@ async function finalizeCallEnd(io: Server, callId: string, call: ActiveCall): Pr
   const sockets = await io.in(`call:${callId}`).fetchSockets();
   for (const s of sockets) s.leave(`call:${callId}`);
 
-  callState.cleanup(callId);
+  await callState.cleanup(callId);
 }
 
 /** Check whether a user is currently in an active call. */
-export function isUserInCall(userId: string): boolean {
+export async function isUserInCall(userId: string): Promise<boolean> {
   return callState.isUserInCall(userId);
 }
 
@@ -133,12 +76,12 @@ export function isUserInCall(userId: string): boolean {
  * Used by Spotlight direct-connect to skip the incoming-call flow.
  * Returns the generated callId.
  */
-export function createDirectCall(params: {
+export async function createDirectCall(params: {
   conversationId: string;
   initiatorId: string;
   participantIds: string[];
   callType: 'AUDIO' | 'VIDEO';
-}): string {
+}): Promise<string> {
   const callId = randomUUID();
   const call: ActiveCall = {
     callId,
@@ -149,22 +92,23 @@ export function createDirectCall(params: {
     callType: params.callType,
     answeredAt: new Date(), // Already answered — skip ringing
   };
-  callState.addCall(call);
-  for (const pid of params.participantIds) {
-    callState.mapUserToCall(pid, callId);
-  }
+  await callState.addCall(call);
+  await Promise.all(params.participantIds.map((pid) => callState.mapUserToCall(pid, callId)));
   return callId;
 }
 
-export function registerCallHandlers(io: Server, socket: Socket): void {
+export async function registerCallHandlers(io: Server, socket: Socket): Promise<void> {
   const userId: string = (socket as any).userId;
 
   // ── Reconnection: cancel pending disconnect grace if user reconnects ──
-  const pending = callState.disconnectGrace.get(userId);
+  // Only works when the user reconnects to the SAME backend instance. When
+  // they reconnect to a different instance, this call returns undefined; the
+  // original instance's grace timer still runs but its callback re-checks
+  // socket presence via Socket.IO's Redis adapter (see disconnect handler),
+  // so the call isn't ended on a false positive.
+  const pending = callState.takeDisconnectGrace(userId);
   if (pending) {
-    clearTimeout(pending.timeout);
-    callState.disconnectGrace.delete(userId);
-    const call = callState.getCall(pending.callId);
+    const call = await callState.getCall(pending.callId);
     if (call) {
       socket.join(`call:${pending.callId}`);
       logger.info({ userId, callId: pending.callId }, 'User reconnected during call — grace period cancelled');
@@ -194,18 +138,18 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       logger.info({ userId, conversationId, targetUserIds, callType: resolvedCallType }, 'call:initiate received');
 
       // Clean up any stale call entry from a previous session
-      const staleCallId = callState.getUserCallId(userId);
+      const staleCallId = await callState.getUserCallId(userId);
       if (staleCallId) {
-        const staleCall = callState.getCall(staleCallId);
+        const staleCall = await callState.getCall(staleCallId);
         if (staleCall) {
           if (!staleCall.answeredAt) {
-            callState.cleanup(staleCallId);
+            await callState.cleanup(staleCallId);
           } else {
             socket.emit('call:error', { message: 'You are already in a call' });
             return;
           }
         } else {
-          callState.unmapUser(userId);
+          await callState.unmapUser(userId);
         }
       }
 
@@ -290,9 +234,9 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       if (targetUserIds.length === 1) {
         try {
           const [targetId] = targetUserIds;
-          const busyCallId = callState.getUserCallId(targetId);
+          const busyCallId = await callState.getUserCallId(targetId);
           if (busyCallId) {
-            const busyCall = callState.getCall(busyCallId);
+            const busyCall = await callState.getCall(busyCallId);
             if (busyCall && busyCall.answeredAt) {
               logger.info({ userId, targetId, busyCallId }, 'Rejecting call: target is in another answered call');
               socket.emit('call:busy', {
@@ -343,7 +287,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const callId = randomUUID();
       const participantIds = new Set<string>([userId, ...targetUserIds]);
 
-      callState.addCall({
+      await callState.addCall({
         callId,
         conversationId,
         initiatorId: userId,
@@ -352,7 +296,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         callType: resolvedCallType,
       });
 
-      callState.mapUserToCall(userId, callId);
+      await callState.mapUserToCall(userId, callId);
 
       // Create CallLog with initial MISSED status
       try {
@@ -439,9 +383,12 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         }
       }
 
-      // Server-side timeout: clean up if nobody answers
+      // Server-side timeout: clean up if nobody answers. Re-reads call state
+      // from the store inside the callback so an answer on a different
+      // backend instance (which flipped answeredAt in Redis) suppresses the
+      // missed-call path here.
       const timeout = setTimeout(async () => {
-        const call = callState.getCall(callId);
+        const call = await callState.getCall(callId);
         if (call && !call.answeredAt) {
           try {
             io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: 'timeout' });
@@ -480,15 +427,15 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
 
             logger.info({ callId }, 'Call timed out server-side (no answer)');
           } finally {
-            // Always clean up call state, even if notifications fail
-            callState.cleanup(callId);
-            callState.timeouts.delete(callId);
+            // Always clean up call state, even if notifications fail.
+            // clearUnansweredTimer is implicit in cleanup().
+            await callState.cleanup(callId);
           }
         } else {
-          callState.timeouts.delete(callId);
+          callState.clearUnansweredTimer(callId);
         }
       }, CALL_TIMEOUT_MS);
-      callState.setTimeout(callId, timeout);
+      callState.setUnansweredTimer(callId, timeout);
 
       logger.info({ userId, callId, targetUserIds, callType: resolvedCallType }, 'Call initiated');
     } catch (error) {
@@ -500,10 +447,10 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   /**
    * call:ringing — The target's phone is ringing. Relay to the caller.
    */
-  socket.on('call:ringing', (data: { callId: string }) => {
+  socket.on('call:ringing', async (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = callState.getCall(callId);
+      const call = await callState.getCall(callId);
       if (!call || !call.participantIds.has(userId)) return;
 
       io.to(`user:${call.initiatorId}`).emit('call:ringing', { callId });
@@ -519,17 +466,18 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   socket.on('call:answer', async (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = callState.getCall(callId);
+      const call = await callState.getCall(callId);
 
       if (!call || !call.participantIds.has(userId)) {
         socket.emit('call:error', { message: 'Call not found' });
         return;
       }
 
-      // First-answer-wins lock for 1-on-1 calls: if another device already
-      // answered, reject this duplicate answer so we don't open two P2P
-      // sessions. For group calls multiple participants can answer.
-      if (!call.isGroup && call.answeredAt) {
+      // First-answer-wins lock — atomic across backend instances when the
+      // store is Redis-backed. For group calls, later answerers are allowed
+      // to join; markAnswered returns false for them but that's fine.
+      const firstAnswer = await callState.markAnswered(callId, userId, new Date());
+      if (!call.isGroup && !firstAnswer) {
         socket.emit('call:error', {
           message: 'Call already answered on another device',
           code: 'ALREADY_ANSWERED',
@@ -537,11 +485,12 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         return;
       }
 
-      callState.mapUserToCall(userId, callId);
+      await callState.mapUserToCall(userId, callId);
       socket.join(`call:${callId}`);
-      const firstAnswer = !call.answeredAt;
-      if (firstAnswer) call.answeredAt = new Date();
-      callState.clearTimeout(callId);
+      if (firstAnswer) callState.clearUnansweredTimer(callId);
+
+      // Keep the local `call` snapshot consistent for downstream branches.
+      if (firstAnswer && !call.answeredAt) call.answeredAt = new Date();
 
       // Tell the answerer's other signed-in devices to stop ringing.
       // socket.to('user:${userId}') automatically excludes this socket.
@@ -615,7 +564,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   socket.on('call:reject', async (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = callState.getCall(callId);
+      const call = await callState.getCall(callId);
 
       if (!call || !call.participantIds.has(userId)) return;
 
@@ -645,17 +594,19 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         // Make all sockets leave the call room
         const rejectSockets = await io.in(`call:${callId}`).fetchSockets();
         for (const s of rejectSockets) s.leave(`call:${callId}`);
-        callState.cleanup(callId);
+        await callState.cleanup(callId);
       } else {
-        call.participantIds.delete(userId);
-        callState.unmapUser(userId);
+        await callState.removeParticipant(callId, userId);
+        // Re-read to see the trimmed participant set (group participants
+        // may be updated concurrently on other instances).
+        const trimmed = await callState.getCall(callId);
 
         // If only the initiator is left, clean up the call entirely
-        if (call.participantIds.size <= 1) {
+        if (!trimmed || trimmed.participantIds.size <= 1) {
           io.to(`user:${call.initiatorId}`).emit('call:ended', { callId, endedBy: 'all_rejected' });
           const remainingSockets = await io.in(`call:${callId}`).fetchSockets();
           for (const s of remainingSockets) s.leave(`call:${callId}`);
-          callState.cleanup(callId);
+          await callState.cleanup(callId);
         }
       }
 
@@ -678,7 +629,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   }) => {
     try {
       const { callId, to, type, sdp, candidate } = data;
-      const call = callState.getCall(callId);
+      const call = await callState.getCall(callId);
 
       if (!call) {
         logger.warn({ callId, userId, type }, 'call:signal dropped — call not found in activeCalls');
@@ -718,7 +669,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   socket.on('call:request-token', async (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = callState.getCall(callId);
+      const call = await callState.getCall(callId);
 
       if (!call || !call.participantIds.has(userId) || !call.isGroup) {
         socket.emit('call:error', { message: 'Cannot generate token' });
@@ -744,7 +695,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
   socket.on('call:end', async (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = callState.getCall(callId);
+      const call = await callState.getCall(callId);
       if (!call) return;
 
       // If the caller hangs up before anyone answered, tell every target's
@@ -781,7 +732,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const { callId, emoji } = data;
       if (!callId || !emoji) return;
 
-      const call = callState.getCall(callId);
+      const call = await callState.getCall(callId);
       if (!call || !call.participantIds.has(userId)) return;
 
       // Fetch sender's display name
@@ -807,25 +758,37 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
    * network change). If the user reconnects within DISCONNECT_GRACE_MS,
    * the call stays alive.
    */
-  socket.on('disconnect', () => {
-    const callId = callState.getUserCallId(userId);
+  socket.on('disconnect', async () => {
+    const callId = await callState.getUserCallId(userId);
     if (!callId) return;
 
-    const call = callState.getCall(callId);
+    const call = await callState.getCall(callId);
     if (!call) return;
 
     logger.info({ userId, callId, graceSec: DISCONNECT_GRACE_MS / 1000 }, 'User disconnected during call — starting grace period');
 
     const timeout = setTimeout(async () => {
-      callState.disconnectGrace.delete(userId);
+      callState.takeDisconnectGrace(userId);
 
-      // Re-check: the call might have ended normally during the grace period
-      const currentCall = callState.getCall(callId);
+      // Cross-instance reconnection check: Socket.IO's Redis adapter lets
+      // fetchSockets see sockets on every instance. If the user reconnected
+      // on a different process, skip the end-of-call path.
+      try {
+        const liveSockets = await io.in(`user:${userId}`).fetchSockets();
+        if (liveSockets.length > 0) {
+          logger.info({ userId, callId }, 'Disconnect grace cancelled — user has live socket(s) on another instance');
+          return;
+        }
+      } catch (err) {
+        logger.warn({ err, userId, callId }, 'fetchSockets failed during disconnect grace — continuing with end');
+      }
+
+      // Re-read state: call may have ended normally on another instance.
+      const currentCall = await callState.getCall(callId);
       if (!currentCall) return;
 
       if (currentCall.isGroup && currentCall.participantIds.size > 2) {
-        currentCall.participantIds.delete(userId);
-        callState.unmapUser(userId);
+        await callState.removeParticipant(callId, userId);
         io.to(`call:${callId}`).emit('call:participant-left', { callId, userId });
       } else {
         // Grace period expired — end the call
@@ -835,7 +798,7 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       }
     }, DISCONNECT_GRACE_MS);
 
-    callState.disconnectGrace.set(userId, { timeout, callId });
+    callState.setDisconnectGrace(userId, timeout, callId);
   });
 }
 

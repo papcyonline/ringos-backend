@@ -199,7 +199,11 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
           return;
         }
 
-        if (isUserInCall(userId) || isUserInCall(broadcasterId)) {
+        const [userBusy, broadcasterBusy] = await Promise.all([
+          isUserInCall(userId),
+          isUserInCall(broadcasterId),
+        ]);
+        if (userBusy || broadcasterBusy) {
           socket.emit('spotlight:error', { message: 'User is already in a call' });
           return;
         }
@@ -213,7 +217,7 @@ export function registerSpotlightHandlers(io: Server, socket: Socket): void {
         const conversationId = await findOrCreateConversation(userId, broadcasterId);
         entry.connectCount += 1;
 
-        const callId = createDirectCall({
+        const callId = await createDirectCall({
           conversationId,
           initiatorId: userId,
           participantIds: [userId, broadcasterId],

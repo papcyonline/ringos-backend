@@ -81,8 +81,12 @@ export async function buildBroadcasterList(
   followerCount: number;
   likeCount: number;
 }>> {
-  const broadcasterIds = Array.from(liveBroadcasters.keys())
-    .filter((id) => id !== requesterId && !blockedIds.has(id) && !isUserInCall(id));
+  const candidateIds = Array.from(liveBroadcasters.keys())
+    .filter((id) => id !== requesterId && !blockedIds.has(id));
+  // Resolve in-call status in parallel — isUserInCall is async since the
+  // call state store may be Redis-backed.
+  const inCallFlags = await Promise.all(candidateIds.map((id) => isUserInCall(id)));
+  const broadcasterIds = candidateIds.filter((_, i) => !inCallFlags[i]);
 
   // Batch-fetch requester relationships + broadcaster counts in parallel
   const [likes, follows, followerCounts, likeCounts] = await Promise.all([
