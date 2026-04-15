@@ -1,4 +1,6 @@
 import OpenAI, { toFile } from 'openai';
+import path from 'path';
+import { promises as fs } from 'fs';
 import { prisma } from '../../config/database';
 import { getIO } from '../../config/socket';
 import { env } from '../../config/env';
@@ -7,6 +9,72 @@ import { downloadFromDrive } from '../../shared/gdrive.service';
 import { checkTranscription, incrementTranscription } from '../../shared/usage.service';
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+
+interface AudioBlob {
+  buffer: Buffer;
+  mimeType: string;
+  filename: string;
+}
+
+/**
+ * Resolve a stored audio URL to its raw bytes regardless of which storage
+ * tier it lives on. Mirrors the upload fallback chain in upload.ts:
+ *   1. Google Drive    → /media/gdrive/<fileId>
+ *   2. Cloudinary      → https://res.cloudinary.com/.../voice_notes/...
+ *   3. Local disk      → /uploads/audio/<file>
+ *
+ * Returns null on failure so the caller can decide how to surface the
+ * error to the user (we do not throw here so each branch's failure mode
+ * is logged in one place).
+ */
+async function fetchAudioBytes(audioUrl: string): Promise<AudioBlob | null> {
+  // 1. Google Drive
+  const driveMatch = audioUrl.match(/\/media\/gdrive\/(.+)/);
+  if (driveMatch) {
+    const downloaded = await downloadFromDrive(driveMatch[1]);
+    if (!downloaded) return null;
+    return { buffer: downloaded.buffer, mimeType: downloaded.mimeType, filename: 'audio.m4a' };
+  }
+
+  // 2. Cloudinary (or any other absolute http(s) URL we host)
+  if (/^https?:\/\//i.test(audioUrl)) {
+    try {
+      const res = await fetch(audioUrl);
+      if (!res.ok) {
+        logger.warn({ status: res.status, audioUrl }, 'Audio fetch failed');
+        return null;
+      }
+      const ab = await res.arrayBuffer();
+      const buffer = Buffer.from(ab);
+      const mimeType = res.headers.get('content-type') ?? 'audio/mp4';
+      const ext = path.extname(new URL(audioUrl).pathname) || '.m4a';
+      return { buffer, mimeType, filename: `audio${ext}` };
+    } catch (err) {
+      logger.warn({ err, audioUrl }, 'Audio fetch threw');
+      return null;
+    }
+  }
+
+  // 3. Local disk fallback (/uploads/audio/<file>) — read directly from
+  // the on-disk path. Only safe because the URL is server-issued; we
+  // sanity-check it stays under uploads/.
+  if (audioUrl.startsWith('/uploads/audio/')) {
+    try {
+      const safePath = path.posix.normalize(audioUrl);
+      if (!safePath.startsWith('/uploads/audio/')) return null;
+      const onDiskPath = path.join(process.cwd(), safePath.replace(/^\//, ''));
+      const buffer = await fs.readFile(onDiskPath);
+      const ext = path.extname(audioUrl) || '.m4a';
+      return { buffer, mimeType: 'audio/mp4', filename: `audio${ext}` };
+    } catch (err) {
+      logger.warn({ err, audioUrl }, 'Local audio read failed');
+      return null;
+    }
+  }
+
+  logger.warn({ audioUrl }, 'Unknown audio URL scheme — cannot transcribe');
+  return null;
+}
 
 /**
  * Transcribe a voice note message using OpenAI Whisper.
@@ -44,16 +112,13 @@ export async function transcribeMessage(
     throw Object.assign(new Error('Daily transcription limit reached'), { code: 'TRANSCRIPTION_LIMIT' });
   }
 
-  // Extract Drive file ID from /media/gdrive/<fileId>
-  const match = message.audioUrl.match(/\/media\/gdrive\/(.+)/);
-  if (!match) throw new Error('Audio not stored on Drive');
-
-  const fileId = match[1];
-  const downloaded = await downloadFromDrive(fileId);
-  if (!downloaded) throw new Error('Failed to download audio');
+  // Resolve audio bytes regardless of which storage tier hosts the file
+  // (Google Drive / Cloudinary / local disk) — see fetchAudioBytes.
+  const audio = await fetchAudioBytes(message.audioUrl);
+  if (!audio) throw new Error('Failed to download audio');
 
   // Send to Whisper
-  const file = await toFile(downloaded.buffer, 'audio.m4a', { type: downloaded.mimeType });
+  const file = await toFile(audio.buffer, audio.filename, { type: audio.mimeType });
   const result = await openai.audio.transcriptions.create({
     model: 'whisper-1',
     file,
