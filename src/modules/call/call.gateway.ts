@@ -7,6 +7,7 @@ import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
 import { generateCallToken, LIVEKIT_URL } from './call.livekit';
 import { isBlocked } from '../safety/safety.service';
 import { ActiveCall, CallStateStore, getCallStateStore } from './call.state.store';
+import { callLogWriter } from './call.log.writer';
 
 /**
  * Maximum time (ms) to wait for an answer before cleaning up server-side.
@@ -43,14 +44,14 @@ async function finalizeCallEnd(io: Server, callId: string, call: ActiveCall): Pr
     ? Math.round((now.getTime() - call.answeredAt.getTime()) / 1000)
     : undefined;
 
-  try {
-    await prisma.callLog.update({
+  // Write-behind: queued behind the create + answer-update for this callId.
+  // The chain guarantees end-update lands AFTER answer-update.
+  callLogWriter.enqueue(callId, () =>
+    prisma.callLog.update({
       where: { callId },
       data: { endedAt: now, ...(durationSecs !== undefined ? { durationSecs } : {}) },
-    });
-  } catch (dbErr) {
-    logger.error({ dbErr, callId }, 'Failed to update CallLog on end');
-  }
+    }),
+  );
 
   if (durationSecs !== undefined && durationSecs > 0) {
     for (const pid of call.participantIds) {
@@ -305,9 +306,13 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
 
       await callState.mapUserToCall(userId, callId);
 
-      // Create CallLog with initial MISSED status
-      try {
-        await prisma.callLog.create({
+      // Create CallLog with initial MISSED status. Write-behind so the
+      // signalling path doesn't block on Prisma's pool under burst load —
+      // history persistence is not on the critical path of the call.
+      // First op in this callId's chain; subsequent updates (answer/reject/
+      // end) queue behind it so they always observe the row.
+      callLogWriter.enqueue(callId, () =>
+        prisma.callLog.create({
           data: {
             callId,
             conversationId,
@@ -315,10 +320,8 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
             callType: resolvedCallType,
             status: 'MISSED',
           },
-        });
-      } catch (dbErr) {
-        logger.error({ dbErr, callId }, 'Failed to create CallLog');
-      }
+        }),
+      );
 
       socket.join(`call:${callId}`);
 
@@ -506,15 +509,14 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         reason: 'answered_elsewhere',
       });
 
-      // Update CallLog to COMPLETED
-      try {
-        await prisma.callLog.update({
+      // Update CallLog to COMPLETED — write-behind, ordered after the
+      // initial create.
+      callLogWriter.enqueue(callId, () =>
+        prisma.callLog.update({
           where: { callId },
           data: { status: 'COMPLETED' },
-        });
-      } catch (dbErr) {
-        logger.error({ dbErr, callId }, 'Failed to update CallLog on answer');
-      }
+        }),
+      );
 
       // Fetch answerer's display info for event payloads
       const answerer = await prisma.user.findUnique({
@@ -586,15 +588,13 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         reason: 'rejected_elsewhere',
       });
 
-      // Update CallLog to REJECTED
-      try {
-        await prisma.callLog.update({
+      // Update CallLog to REJECTED — write-behind, ordered after create.
+      callLogWriter.enqueue(callId, () =>
+        prisma.callLog.update({
           where: { callId },
           data: { status: 'REJECTED', endedAt: new Date() },
-        });
-      } catch (dbErr) {
-        logger.error({ dbErr, callId }, 'Failed to update CallLog on reject');
-      }
+        }),
+      );
 
       // For 1-on-1 calls, clean up immediately
       if (!call.isGroup) {

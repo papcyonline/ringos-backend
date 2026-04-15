@@ -3,12 +3,23 @@ import { logger } from '../shared/logger';
 import { env } from './env';
 
 // Append connection pool params if not already in the URL.
-// connection_limit: max connections per instance (Render free tier has 97 max).
+//
+// connection_limit: max DB connections per backend instance.
+//   - Total across N instances must stay below Postgres max_connections
+//     (Render free PG = 97). With Redis-backed call state we run multiple
+//     instances; size accordingly: pick `floor(max_connections / instances)`.
+//   - Default 30 is safe up to ~3 instances on a 97-cap DB. Override via
+//     DATABASE_URL ?connection_limit=N for larger fleets or pgbouncer setups.
+//   - Scale > 5 instances: deploy pgbouncer in transaction-pool mode and
+//     set this to 100+ per instance (each app conn becomes a virtual conn).
+//
 // pool_timeout: seconds to wait for a free connection before erroring.
+//   Burst tolerance — when CallLog write-behind queues spike, requests
+//   queue against this. 10s is generous; lower it to fail-fast in dev.
 const dbUrl = env.DATABASE_URL;
 const pooledUrl = dbUrl.includes('connection_limit')
   ? dbUrl
-  : `${dbUrl}${dbUrl.includes('?') ? '&' : '?'}connection_limit=20&pool_timeout=10`;
+  : `${dbUrl}${dbUrl.includes('?') ? '&' : '?'}connection_limit=30&pool_timeout=10`;
 
 export const prisma = new PrismaClient({
   datasourceUrl: pooledUrl,
