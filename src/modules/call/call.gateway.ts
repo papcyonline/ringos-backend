@@ -106,13 +106,20 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
   // original instance's grace timer still runs but its callback re-checks
   // socket presence via Socket.IO's Redis adapter (see disconnect handler),
   // so the call isn't ended on a false positive.
-  const pending = callState.takeDisconnectGrace(userId);
-  if (pending) {
-    const call = await callState.getCall(pending.callId);
-    if (call) {
-      socket.join(`call:${pending.callId}`);
-      logger.info({ userId, callId: pending.callId }, 'User reconnected during call — grace period cancelled');
+  // Wrapped in try/catch because registerCallHandlers' returned promise is
+  // not awaited by the caller — any rejection would otherwise be unhandled
+  // and kill the process under Node's strict policy.
+  try {
+    const pending = callState.takeDisconnectGrace(userId);
+    if (pending) {
+      const call = await callState.getCall(pending.callId);
+      if (call) {
+        socket.join(`call:${pending.callId}`);
+        logger.info({ userId, callId: pending.callId }, 'User reconnected during call — grace period cancelled');
+      }
     }
+  } catch (err) {
+    logger.error({ err, userId }, 'Reconnect-grace check failed — continuing with handler registration');
   }
 
   /**
