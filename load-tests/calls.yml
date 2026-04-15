@@ -63,10 +63,9 @@ scenarios:
   - name: "call:initiate"
     weight: 100
     engine: socketio-v3
-    # Token sent in handshake auth — backend's io.use middleware reads
+    # Per-VU socket.io options. The backend's io.use middleware reads
     # socket.handshake.auth.token (see src/config/socket.ts).
     socketio:
-      query: ""
       auth:
         token: "{{ token }}"
     flow:
@@ -82,10 +81,11 @@ scenarios:
           response:
             channel: "call:initiated"
             timeout: 3000
+            capture:
+              - json: "$.callId"
+                as: "callId"
       - think: 0.3
       - emit:
           channel: "call:end"
           data:
-            # Best-effort cleanup; if call:initiated didn't fire we don't
-            # have a callId, so this no-ops server-side.
-            callId: ""
+            callId: "{{ callId }}"

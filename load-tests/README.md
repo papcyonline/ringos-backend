@@ -69,6 +69,11 @@ artillery run \
 Default profile: 5 → 100 arrivals/sec ramping over ~9 minutes, peak
 sustained for 5 min. Edit `config.phases` to push harder.
 
+> Per-VU `auth.token` interpolation requires `@artilleryio/engine-socketio-v3`
+> (matches socket.io v4 server protocol). If the connect handshake fails
+> with "Authentication required", confirm the engine plugin version and
+> double-check `socketio.auth.token` syntax for your installed Artillery.
+
 ## Reading the results
 
 | Signal | Healthy | Unhealthy → action |

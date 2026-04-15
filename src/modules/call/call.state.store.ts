@@ -338,6 +338,3 @@ export function getCallStateStore(): CallStateStore {
   }
   return storeInstance;
 }
-
-// Exported for tests only.
-export const __test__ = { InMemoryCallStateStore, RedisCallStateStore };

@@ -55,20 +55,6 @@ class CallLogWriter {
       });
     this.chains.set(callId, next);
   }
-
-  /**
-   * Resolve when all currently-pending writes for a given callId have
-   * drained. Used by tests; production code should never need this.
-   */
-  async drain(callId: string): Promise<void> {
-    const pending = this.chains.get(callId);
-    if (pending) await pending;
-  }
-
-  /** Number of callIds with pending writes. Useful for metrics. */
-  get backlogSize(): number {
-    return this.chains.size;
-  }
 }
 
 export const callLogWriter = new CallLogWriter();
