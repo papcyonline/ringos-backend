@@ -5,6 +5,7 @@ import { logger } from '../../shared/logger';
 import { sendCallPush, sendMissedCallNotification } from '../notification/notification.service';
 import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
 import { generateCallToken, LIVEKIT_URL } from './call.livekit';
+import { isBlocked } from '../safety/safety.service';
 
 interface ActiveCall {
   callId: string;
@@ -16,8 +17,12 @@ interface ActiveCall {
   answeredAt?: Date;
 }
 
-/** Maximum time (ms) to wait for an answer before cleaning up server-side. */
-const CALL_TIMEOUT_MS = 60_000;
+/**
+ * Maximum time (ms) to wait for an answer before cleaning up server-side.
+ * Kept marginally higher than the client outgoing timeout so the client
+ * (which knows to give up first) drives the "no answer" UX.
+ */
+const CALL_TIMEOUT_MS = 45_000;
 
 /** Grace period (ms) before ending a call on disconnect. Allows brief reconnections. */
 const DISCONNECT_GRACE_MS = 10_000;
@@ -224,6 +229,68 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         return;
       }
 
+      // Verify each target is also an active participant. A user removed from
+      // the conversation shouldn't be callable even if the caller still has
+      // their id from a cached participant list.
+      const targetParticipations = await prisma.conversationParticipant.findMany({
+        where: { conversationId, userId: { in: targetUserIds } },
+        select: { userId: true, leftAt: true },
+      });
+      const activeTargets = new Set(
+        targetParticipations.filter((p) => p.leftAt == null).map((p) => p.userId),
+      );
+      const droppedTargets = targetUserIds.filter((id) => !activeTargets.has(id));
+      if (droppedTargets.length > 0) {
+        socket.emit('call:error', {
+          message: 'One or more recipients are no longer in this conversation',
+          code: 'TARGET_NOT_PARTICIPANT',
+          droppedTargets,
+        });
+        return;
+      }
+
+      // Block check — only applies to 1-on-1 calls. Group/channel calls are
+      // gated by group membership (removing a blocked user from a group is
+      // handled elsewhere).
+      if (!(isGroup ?? false) && targetUserIds.length === 1) {
+        const [targetId] = targetUserIds;
+        const blocked = await isBlocked(userId, targetId);
+        if (blocked) {
+          socket.emit('call:error', {
+            message: 'Cannot call this user',
+            code: 'BLOCKED',
+          });
+          return;
+        }
+      }
+
+      // Busy check — if any target is already in another call, tell the
+      // caller immediately rather than ringing for the full timeout window.
+      const busyTargets = targetUserIds.filter((id) => callState.isUserInCall(id));
+      if (busyTargets.length > 0 && targetUserIds.length === 1) {
+        socket.emit('call:busy', {
+          busyUserIds: busyTargets,
+          code: 'BUSY',
+        });
+        return;
+      }
+
+      // Unavailable check — for 1-on-1, make sure the target has at least one
+      // path to ring on (live socket, VoIP token, or FCM token). Otherwise
+      // the call would ring for 45s and report "missed" to a phantom user.
+      if (targetUserIds.length === 1) {
+        const [targetId] = targetUserIds;
+        const [targetSockets, voipCount, fcmCount] = await Promise.all([
+          io.in(`user:${targetId}`).fetchSockets(),
+          prisma.voipToken.count({ where: { userId: targetId } }),
+          prisma.fcmToken.count({ where: { userId: targetId } }),
+        ]);
+        if (targetSockets.length === 0 && voipCount === 0 && fcmCount === 0) {
+          socket.emit('call:unavailable', { targetUserId: targetId });
+          return;
+        }
+      }
+
       const caller = await prisma.user.findUnique({
         where: { id: userId },
         select: { displayName: true, avatarUrl: true },
@@ -415,10 +482,29 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         return;
       }
 
+      // First-answer-wins lock for 1-on-1 calls: if another device already
+      // answered, reject this duplicate answer so we don't open two P2P
+      // sessions. For group calls multiple participants can answer.
+      if (!call.isGroup && call.answeredAt) {
+        socket.emit('call:error', {
+          message: 'Call already answered on another device',
+          code: 'ALREADY_ANSWERED',
+        });
+        return;
+      }
+
       callState.mapUserToCall(userId, callId);
       socket.join(`call:${callId}`);
-      call.answeredAt = new Date();
+      const firstAnswer = !call.answeredAt;
+      if (firstAnswer) call.answeredAt = new Date();
       callState.clearTimeout(callId);
+
+      // Tell the answerer's other signed-in devices to stop ringing.
+      // socket.to('user:${userId}') automatically excludes this socket.
+      socket.to(`user:${userId}`).emit('call:cancel', {
+        callId,
+        reason: 'answered_elsewhere',
+      });
 
       // Update CallLog to COMPLETED
       try {
@@ -492,6 +578,12 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       io.to(`user:${call.initiatorId}`).emit('call:rejected', {
         callId,
         userId,
+      });
+
+      // Dismiss incoming UI on the rejecter's other devices.
+      socket.to(`user:${userId}`).emit('call:cancel', {
+        callId,
+        reason: 'rejected_elsewhere',
       });
 
       // Update CallLog to REJECTED
@@ -610,6 +702,23 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
       const { callId } = data;
       const call = callState.getCall(callId);
       if (!call) return;
+
+      // If the caller hangs up before anyone answered, tell every target's
+      // devices to dismiss the incoming-call UI + every sibling device of
+      // the caller to stop its "calling..." screen.
+      if (!call.answeredAt) {
+        for (const targetId of call.participantIds) {
+          if (targetId === call.initiatorId) continue;
+          io.to(`user:${targetId}`).emit('call:cancel', {
+            callId,
+            reason: 'caller_cancelled',
+          });
+        }
+        socket.to(`user:${userId}`).emit('call:cancel', {
+          callId,
+          reason: 'cancelled_elsewhere',
+        });
+      }
 
       socket.to(`call:${callId}`).emit('call:ended', { callId, endedBy: userId });
       await finalizeCallEnd(io, callId, call);
