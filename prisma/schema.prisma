@@ -681,6 +681,8 @@ model CallLog {
   startedAt      DateTime      @default(now())
   endedAt        DateTime?
   durationSecs   Int?
+  qualityRating  Int?          // 1-5 star rating submitted after the call
+  qualityIssues  String[]      @default([])  // tags: "audio", "video", "connection", "other"
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   initiator    User         @relation(fields: [initiatorId], references: [id], onDelete: Cascade)

@@ -182,4 +182,55 @@ router.get(
   }
 );
 
+// ─── Post-call quality rating ────────────────────────────────────────────────
+// Users rate their own call (answered calls only). Only participants of the
+// call's conversation may submit a rating; one row per call stores the
+// caller's perceived quality + optional issue tags.
+
+router.post(
+  '/:callId/rating',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.userId;
+      const callId = req.params.callId as string;
+      const rating = Number(req.body?.rating);
+      const issuesInput = req.body?.issues;
+      const issues = Array.isArray(issuesInput)
+        ? issuesInput.filter((x: unknown): x is string => typeof x === 'string' && x.length <= 40).slice(0, 10)
+        : [];
+
+      if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+        return res.status(400).json({ message: 'rating must be an integer 1-5' });
+      }
+
+      const call = await prisma.callLog.findUnique({
+        where: { callId },
+        select: { id: true, conversationId: true, status: true },
+      });
+      if (!call) return res.status(404).json({ message: 'Call not found' });
+      if (call.status !== 'COMPLETED') {
+        return res.status(400).json({ message: 'Only completed calls can be rated' });
+      }
+
+      // Caller must be a participant in the conversation.
+      const participant = await prisma.conversationParticipant.findUnique({
+        where: { conversationId_userId: { conversationId: call.conversationId, userId } },
+        select: { leftAt: true },
+      });
+      if (!participant) return res.status(403).json({ message: 'Not a participant' });
+
+      const updated = await prisma.callLog.update({
+        where: { callId },
+        data: { qualityRating: rating, qualityIssues: issues },
+        select: { callId: true, qualityRating: true, qualityIssues: true },
+      });
+      res.json(updated);
+    } catch (err) {
+      logger.error({ err }, 'Failed to save call quality rating');
+      res.status(500).json({ message: 'Failed to save rating' });
+    }
+  }
+);
+
 export { router as callRouter };

@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "CallLog" ADD COLUMN IF NOT EXISTS "qualityRating" INTEGER;
+ALTER TABLE "CallLog" ADD COLUMN IF NOT EXISTS "qualityIssues" TEXT[] DEFAULT ARRAY[]::TEXT[];
