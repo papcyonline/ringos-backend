@@ -229,65 +229,109 @@ export function registerCallHandlers(io: Server, socket: Socket): void {
         return;
       }
 
-      // Verify each target is also an active participant. A user removed from
-      // the conversation shouldn't be callable even if the caller still has
-      // their id from a cached participant list.
-      const targetParticipations = await prisma.conversationParticipant.findMany({
-        where: { conversationId, userId: { in: targetUserIds } },
-        select: { userId: true, leftAt: true },
-      });
-      const activeTargets = new Set(
-        targetParticipations.filter((p) => p.leftAt == null).map((p) => p.userId),
-      );
-      const droppedTargets = targetUserIds.filter((id) => !activeTargets.has(id));
-      if (droppedTargets.length > 0) {
-        socket.emit('call:error', {
-          message: 'One or more recipients are no longer in this conversation',
-          code: 'TARGET_NOT_PARTICIPANT',
-          droppedTargets,
-        });
-        return;
-      }
+      // ── Pre-ring checks ───────────────────────────────────────────────
+      // Every check below is defensive: on any query error we LOG and
+      // continue, never block a legitimate call. Each check runs
+      // independently so a failure in one doesn't skip the others.
 
-      // Block check — only applies to 1-on-1 calls. Group/channel calls are
-      // gated by group membership (removing a blocked user from a group is
-      // handled elsewhere).
-      if (!(isGroup ?? false) && targetUserIds.length === 1) {
-        const [targetId] = targetUserIds;
-        const blocked = await isBlocked(userId, targetId);
-        if (blocked) {
-          socket.emit('call:error', {
-            message: 'Cannot call this user',
-            code: 'BLOCKED',
+      // Verify each target is also an active participant. Skip for group
+      // calls (group membership is the caller's responsibility).
+      if (!(isGroup ?? false)) {
+        try {
+          const targetParticipations = await prisma.conversationParticipant.findMany({
+            where: { conversationId, userId: { in: targetUserIds } },
+            select: { userId: true, leftAt: true },
           });
-          return;
+          const activeTargets = new Set(
+            targetParticipations.filter((p) => p.leftAt == null).map((p) => p.userId),
+          );
+          const droppedTargets = targetUserIds.filter((id) => !activeTargets.has(id));
+          // Only reject if we definitively found a row saying the user left.
+          // Missing rows → let it ring (could be a channel DM race / cache).
+          const knownLeft = targetParticipations.filter((p) => p.leftAt != null).map((p) => p.userId);
+          if (knownLeft.length > 0 && knownLeft.length === targetUserIds.length) {
+            logger.warn({ userId, conversationId, knownLeft }, 'Rejecting call: all targets have left conversation');
+            socket.emit('call:error', {
+              message: 'One or more recipients are no longer in this conversation',
+              code: 'TARGET_NOT_PARTICIPANT',
+              droppedTargets: knownLeft,
+            });
+            return;
+          }
+          if (droppedTargets.length > 0) {
+            logger.warn({ userId, conversationId, droppedTargets }, 'call:initiate targets missing participant rows — ringing anyway');
+          }
+        } catch (err) {
+          logger.error({ err, userId, conversationId }, 'Target-participation check failed — ringing anyway');
         }
       }
 
-      // Busy check — if any target is already in another call, tell the
-      // caller immediately rather than ringing for the full timeout window.
-      const busyTargets = targetUserIds.filter((id) => callState.isUserInCall(id));
-      if (busyTargets.length > 0 && targetUserIds.length === 1) {
-        socket.emit('call:busy', {
-          busyUserIds: busyTargets,
-          code: 'BUSY',
-        });
-        return;
+      // Block check — 1-on-1 only. On query failure, let the call proceed.
+      if (!(isGroup ?? false) && targetUserIds.length === 1) {
+        try {
+          const [targetId] = targetUserIds;
+          const blocked = await isBlocked(userId, targetId);
+          if (blocked) {
+            logger.info({ userId, targetId: targetUserIds[0] }, 'Rejecting call: users are blocked');
+            socket.emit('call:error', {
+              message: 'Cannot call this user',
+              code: 'BLOCKED',
+            });
+            return;
+          }
+        } catch (err) {
+          logger.error({ err, userId }, 'Block check failed — ringing anyway');
+        }
       }
 
-      // Unavailable check — for 1-on-1, make sure the target has at least one
-      // path to ring on (live socket, VoIP token, or FCM token). Otherwise
-      // the call would ring for 45s and report "missed" to a phantom user.
+      // Busy check — only block if the target is in an ANSWERED call. Stale
+      // unanswered entries (e.g. from a crashed session) shouldn't prevent
+      // new calls from coming through.
       if (targetUserIds.length === 1) {
-        const [targetId] = targetUserIds;
-        const [targetSockets, voipCount, fcmCount] = await Promise.all([
-          io.in(`user:${targetId}`).fetchSockets(),
-          prisma.voipToken.count({ where: { userId: targetId } }),
-          prisma.fcmToken.count({ where: { userId: targetId } }),
-        ]);
-        if (targetSockets.length === 0 && voipCount === 0 && fcmCount === 0) {
-          socket.emit('call:unavailable', { targetUserId: targetId });
-          return;
+        try {
+          const [targetId] = targetUserIds;
+          const busyCallId = callState.getUserCallId(targetId);
+          if (busyCallId) {
+            const busyCall = callState.getCall(busyCallId);
+            if (busyCall && busyCall.answeredAt) {
+              logger.info({ userId, targetId, busyCallId }, 'Rejecting call: target is in another answered call');
+              socket.emit('call:busy', {
+                busyUserIds: [targetId],
+                code: 'BUSY',
+              });
+              return;
+            }
+          }
+        } catch (err) {
+          logger.error({ err, userId }, 'Busy check failed — ringing anyway');
+        }
+      }
+
+      // Unavailable check — only short-circuit if BOTH token queries
+      // succeeded AND both returned zero AND there's no live socket.
+      // A failed query should never cause a spurious "unavailable".
+      if (targetUserIds.length === 1) {
+        try {
+          const [targetId] = targetUserIds;
+          const results = await Promise.allSettled([
+            io.in(`user:${targetId}`).fetchSockets(),
+            prisma.voipToken.count({ where: { userId: targetId } }),
+            prisma.fcmToken.count({ where: { userId: targetId } }),
+          ]);
+          const socketsOk = results[0].status === 'fulfilled';
+          const voipOk = results[1].status === 'fulfilled';
+          const fcmOk = results[2].status === 'fulfilled';
+          const sockets = socketsOk ? (results[0] as PromiseFulfilledResult<any[]>).value : [];
+          const voip = voipOk ? (results[1] as PromiseFulfilledResult<number>).value : 1;
+          const fcm = fcmOk ? (results[2] as PromiseFulfilledResult<number>).value : 1;
+
+          if (socketsOk && voipOk && fcmOk && sockets.length === 0 && voip === 0 && fcm === 0) {
+            logger.info({ userId, targetId }, 'Rejecting call: target has no devices registered');
+            socket.emit('call:unavailable', { targetUserId: targetId });
+            return;
+          }
+        } catch (err) {
+          logger.error({ err, userId }, 'Unavailable check failed — ringing anyway');
         }
       }
 
