@@ -957,7 +957,7 @@ export async function editMessage(messageId: string, userId: string, content: st
  * mode = 'everyone' → soft-delete for all (sender only). Clears content/media.
  * mode = 'me'       → hide from this user only. Adds userId to deletedFor[].
  */
-export async function deleteMessage(messageId: string, userId: string, mode: 'me' | 'everyone' = 'everyone') {
+export async function deleteMessage(messageId: string, userId: string, mode: 'me' | 'everyone' | 'unsend' = 'everyone') {
   const message = await prisma.message.findUnique({ where: { id: messageId } });
 
   if (!message) {
@@ -983,9 +983,14 @@ export async function deleteMessage(messageId: string, userId: string, mode: 'me
     return updated;
   }
 
-  // mode === 'everyone' — sender or group/channel admin can delete for everyone
-  if (message.senderId !== userId) {
-    // Check if the user is an admin of this conversation
+  // 'unsend' and 'everyone' both require sender ownership (or admin for 'everyone')
+  if (mode === 'unsend') {
+    // Only the sender can unsend — admins cannot unsend others' messages
+    if (message.senderId !== userId) {
+      throw new ForbiddenError('You can only unsend your own messages');
+    }
+  } else if (message.senderId !== userId) {
+    // mode === 'everyone' — admin can delete others' messages with a placeholder
     const participant = await prisma.conversationParticipant.findUnique({
       where: { conversationId_userId: { conversationId: message.conversationId, userId } },
     });
@@ -995,6 +1000,16 @@ export async function deleteMessage(messageId: string, userId: string, mode: 'me
   }
 
   await cleanupMediaUrls([message.imageUrl, message.audioUrl]);
+
+  if (mode === 'unsend') {
+    // Hard delete — message vanishes from DB entirely, no trace for recipient
+    await prisma.$transaction([
+      prisma.messageReaction.deleteMany({ where: { messageId } }),
+      prisma.message.delete({ where: { id: messageId } }),
+    ]);
+    logger.debug({ messageId, userId, mode }, 'Message unsent (hard delete)');
+    return { id: messageId, conversationId: message.conversationId, unsent: true };
+  }
 
   const [updated] = await prisma.$transaction([
     prisma.message.update({

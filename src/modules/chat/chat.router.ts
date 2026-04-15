@@ -364,31 +364,32 @@ router.delete(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const mode = (req.query.mode as string) === 'me' ? 'me' : 'everyone';
+      const rawMode = req.query.mode as string;
+      const mode: 'me' | 'everyone' | 'unsend' =
+        rawMode === 'me' ? 'me' : rawMode === 'unsend' ? 'unsend' : 'everyone';
       const message = await chatService.deleteMessage(
         (req.params.messageId as string),
         req.user!.userId,
         mode,
       );
 
-      if (mode === 'everyone') {
-        // Broadcast deletion to conversation room
+      if (mode === 'everyone' || mode === 'unsend') {
+        const event = mode === 'unsend' ? 'chat:unsent' : 'chat:deleted';
         const io = getIO();
         const convId = req.params.conversationId as string;
-        const deletePayload = {
+        const payload = {
           messageId: message.id,
           conversationId: convId,
-          deletedAt: message.deletedAt,
+          deletedAt: (message as any).deletedAt ?? null,
         };
-        io.to(`conversation:${convId}`).emit('chat:deleted', deletePayload);
+        io.to(`conversation:${convId}`).emit(event, payload);
 
-        // Also emit to personal rooms so conversation list clears the deleted last message
         prisma.conversationParticipant.findMany({
           where: { conversationId: convId, leftAt: null },
           select: { userId: true },
         }).then((participants) => {
           for (const p of participants) {
-            io.to(`user:${p.userId}`).emit('chat:deleted', deletePayload);
+            io.to(`user:${p.userId}`).emit(event, payload);
           }
         }).catch(() => {});
       }

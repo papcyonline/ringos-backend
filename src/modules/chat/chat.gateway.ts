@@ -116,32 +116,34 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
 
   /**
    * chat:delete - Delete a message and broadcast to room.
+   * Accepts optional `mode` — 'everyone' (default, soft delete with placeholder)
+   * or 'unsend' (hard delete, no trace).
    */
-  socket.on('chat:delete', async (data: { messageId: string }) => {
+  socket.on('chat:delete', async (data: { messageId: string; mode?: 'everyone' | 'unsend' }) => {
     try {
-      const { messageId } = data;
+      const { messageId, mode = 'everyone' } = data;
 
-      const message = await chatService.deleteMessage(messageId, userId);
+      const message = await chatService.deleteMessage(messageId, userId, mode);
+      const event = mode === 'unsend' ? 'chat:unsent' : 'chat:deleted';
 
-      const deletePayload = {
+      const payload = {
         messageId: message.id,
         conversationId: message.conversationId,
-        deletedAt: message.deletedAt,
+        deletedAt: (message as any).deletedAt ?? null,
       };
-      io.to(`conversation:${message.conversationId}`).emit('chat:deleted', deletePayload);
+      io.to(`conversation:${message.conversationId}`).emit(event, payload);
 
-      // Also emit chat:deleted to personal rooms so conversation list
-      // clears the deleted last message even when user is not in the room.
+      // Also emit to personal rooms so conversation list updates lastMessage.
       prisma.conversationParticipant.findMany({
         where: { conversationId: message.conversationId, leftAt: null },
         select: { userId: true },
       }).then((participants) => {
         for (const p of participants) {
-          io.to(`user:${p.userId}`).emit('chat:deleted', deletePayload);
+          io.to(`user:${p.userId}`).emit(event, payload);
         }
       }).catch(() => {});
 
-      logger.debug({ messageId, userId }, 'Delete broadcast to room');
+      logger.debug({ messageId, userId, mode }, `${event} broadcast`);
     } catch (error: any) {
       logger.error({ error, userId }, 'Error deleting message');
       socket.emit('chat:error', { message: extractErrorMessage(error, 'Failed to delete message') });
