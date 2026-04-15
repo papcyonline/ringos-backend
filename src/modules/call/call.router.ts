@@ -65,16 +65,29 @@ router.get(
 //   1. TURN_SERVER_URLS env vars (any TURN provider — recommended)
 //   2. Twilio NTS ephemeral credentials (if configured)
 //   3. STUN-only fallback (won't work across NATs / mobile carriers)
+//
+// Query params:
+//   forceRelay=1|true — response includes iceTransportPolicy:'relay' so the
+//     client forces all traffic through TURN. Use for users on restrictive
+//     networks (some Gulf states, enterprise VPNs, carrier DPI) where direct
+//     P2P is blocked. Costs more TURN bandwidth but guarantees reachability.
+//
+// For TRULY global reach, env TURN should include a turns:host:443?transport=tcp
+// variant (TLS on 443) alongside the regular UDP/TCP entries — that variant
+// survives almost any DPI / firewall / VPN.
 
 router.get(
   '/ice-servers',
   authenticate,
-  async (_req: AuthRequest, res: Response) => {
+  async (req: AuthRequest, res: Response) => {
+    const forceRelay = req.query.forceRelay === '1' || req.query.forceRelay === 'true';
+    const transportPolicy = forceRelay ? 'relay' : 'all';
+
     // 1. Custom TURN servers from env vars (highest priority)
     if (isTurnConfigured) {
       const servers = [...STUN_SERVERS, ...buildEnvTurnServers()];
-      logger.info({ count: servers.length }, 'Returning env-configured TURN + STUN servers');
-      res.json({ iceServers: servers });
+      logger.info({ count: servers.length, forceRelay }, 'Returning env-configured TURN + STUN servers');
+      res.json({ iceServers: servers, iceTransportPolicy: transportPolicy });
       return;
     }
 
@@ -83,17 +96,18 @@ router.get(
       try {
         const client = twilio(env.TWILIO_ACCOUNT_SID!, env.TWILIO_AUTH_TOKEN!);
         const token = await client.tokens.create();
-        logger.info('Returning Twilio NTS ICE servers');
-        res.json({ iceServers: token.iceServers });
+        logger.info({ forceRelay }, 'Returning Twilio NTS ICE servers');
+        res.json({ iceServers: token.iceServers, iceTransportPolicy: transportPolicy });
         return;
       } catch (err) {
         logger.error({ err }, 'Twilio NTS failed — falling back to STUN-only');
       }
     }
 
-    // 3. STUN-only fallback (will NOT work across different networks)
+    // 3. STUN-only fallback (will NOT work across different networks).
+    // forceRelay is meaningless here — no TURN to relay through.
     logger.warn('No TURN servers configured — calls will only work on the same network');
-    res.json({ iceServers: STUN_SERVERS });
+    res.json({ iceServers: STUN_SERVERS, iceTransportPolicy: 'all' });
   }
 );
 
