@@ -487,7 +487,7 @@ export async function notifyChatMessage(
   // Get all participants except the sender
   const participants = await prisma.conversationParticipant.findMany({
     where: { conversationId, userId: { not: senderId }, leftAt: null },
-    select: { userId: true, isMuted: true },
+    select: { userId: true, isMuted: true, mutedUntil: true },
   });
 
   if (participants.length === 0) return;
@@ -555,8 +555,12 @@ export async function notifyChatMessage(
 
     // Only send FCM push if:
     // 1. User is NOT currently viewing this conversation
-    // 2. User has NOT muted this conversation
-    if (!isInRoom && !participant.isMuted) {
+    // 2. User has NOT muted this conversation (permanent mute OR time-bounded
+    //    mute whose expiry is still in the future)
+    const now = Date.now();
+    const mutedUntilMs = participant.mutedUntil ? participant.mutedUntil.getTime() : 0;
+    const isMuted = participant.isMuted || mutedUntilMs > now;
+    if (!isInRoom && !isMuted) {
       if (isVoiceNote && options?.audioUrl) {
         // Voice note: send data-only for in-notification playback
         const voiceNotePayload = buildVoiceNotePayload({

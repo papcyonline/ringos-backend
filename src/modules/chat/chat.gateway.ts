@@ -23,8 +23,85 @@ function validateMessageContent(content: unknown): { valid: true } | { valid: fa
 /**
  * Register all chat-related Socket.io event handlers on a connected socket.
  */
+/**
+ * On authenticated connect, mark all messages that arrived while this user was
+ * offline as "delivered" across *every* conversation they participate in.
+ * Without this, grey-double-ticks would only appear when the user opens each
+ * specific chat, which doesn't match WhatsApp's device-level delivery model.
+ */
+async function sweepDeliveredOnConnect(io: Server, userId: string): Promise<void> {
+  try {
+    // Find all active participations + their current lastDeliveredAt.
+    const participations = await prisma.conversationParticipant.findMany({
+      where: { userId, leftAt: null },
+      select: { conversationId: true, lastDeliveredAt: true },
+    });
+    if (participations.length === 0) return;
+
+    const convIds = participations.map((p) => p.conversationId);
+
+    // Latest message per conversation from someone else — the high-water mark.
+    const latest = await prisma.message.groupBy({
+      by: ['conversationId'],
+      where: {
+        conversationId: { in: convIds },
+        senderId: { not: userId },
+        deletedAt: null,
+      },
+      _max: { createdAt: true },
+    });
+
+    const now = new Date();
+    const bumped: { conversationId: string; previousAt: Date | null }[] = [];
+    for (const row of latest) {
+      const latestAt = row._max.createdAt;
+      if (!latestAt) continue;
+      const existing = participations.find((p) => p.conversationId === row.conversationId);
+      if (existing && (existing.lastDeliveredAt == null || existing.lastDeliveredAt < latestAt)) {
+        bumped.push({ conversationId: row.conversationId, previousAt: existing.lastDeliveredAt ?? null });
+      }
+    }
+    if (bumped.length === 0) return;
+
+    // One bulk update — cap at `now` so we never record a future timestamp.
+    await prisma.conversationParticipant.updateMany({
+      where: { userId, conversationId: { in: bumped.map((b) => b.conversationId) } },
+      data: { lastDeliveredAt: now },
+    });
+
+    // For each bumped conversation, emit `chat:delivered` to every sender's
+    // personal room — that's the only way a sender whose chat screen is
+    // closed will see their sent→delivered tick update, since they aren't in
+    // the conversation room anymore.
+    for (const b of bumped) {
+      const senders = await prisma.message.findMany({
+        where: {
+          conversationId: b.conversationId,
+          senderId: { not: userId },
+          deletedAt: null,
+          ...(b.previousAt ? { createdAt: { gt: b.previousAt } } : {}),
+        },
+        distinct: ['senderId'],
+        select: { senderId: true },
+      });
+      for (const s of senders) {
+        io.to(`user:${s.senderId}`).emit('chat:delivered', {
+          conversationId: b.conversationId,
+        });
+      }
+    }
+
+    logger.debug({ userId, count: bumped.length }, 'Delivered sweep on connect');
+  } catch (err) {
+    logger.error({ err, userId }, 'Delivered sweep failed');
+  }
+}
+
 export function registerChatHandlers(io: Server, socket: Socket): void {
   const userId: string = (socket as any).userId;
+
+  // Fire the delivered sweep once per socket connection (best-effort).
+  sweepDeliveredOnConnect(io, userId).catch(() => {});
 
   /**
    * chat:join - Join a conversation room after verifying participation.
@@ -56,6 +133,39 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     } catch (error) {
       logger.error({ error, userId }, 'Error joining conversation');
       socket.emit('chat:error', { message: 'Failed to join conversation' });
+    }
+  });
+
+  /**
+   * chat:sync - Return messages newer than sinceMessageId so the client can
+   * backfill anything missed while the socket was disconnected or the screen
+   * was off. Replies with `chat:synced` carrying { conversationId, messages }.
+   */
+  socket.on('chat:sync', async (data: { conversationId: string; sinceMessageId?: string }) => {
+    try {
+      const { conversationId, sinceMessageId } = data || ({} as any);
+      if (!conversationId) {
+        socket.emit('chat:error', { message: 'conversationId is required' });
+        return;
+      }
+
+      const result = await chatService.getMessagesSince(conversationId, userId, sinceMessageId, 200);
+
+      socket.emit('chat:synced', {
+        conversationId,
+        sinceMessageId: sinceMessageId ?? null,
+        messages: result.messages,
+        hasMore: result.hasMore,
+        nextSinceId: result.nextSinceId,
+        sinceNotFound: result.sinceNotFound,
+      });
+      logger.debug(
+        { userId, conversationId, count: result.messages.length, sinceMessageId, hasMore: result.hasMore, sinceNotFound: result.sinceNotFound },
+        'chat:sync replied',
+      );
+    } catch (error: any) {
+      logger.error({ error, userId }, 'Error syncing messages');
+      socket.emit('chat:error', { message: extractErrorMessage(error, 'Failed to sync messages') });
     }
   });
 
@@ -265,7 +375,13 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     try {
       const { conversationId, activity } = data;
 
-      socket.to(`conversation:${conversationId}`).emit('chat:typing', {
+      // Only broadcast typing if the socket has joined the conversation room.
+      // Without this, any logged-in user can spam typing events to any known
+      // conversation id.
+      const room = `conversation:${conversationId}`;
+      if (!socket.rooms.has(room)) return;
+
+      socket.to(room).emit('chat:typing', {
         conversationId,
         userId,
         activity: activity ?? 'typing',
@@ -314,12 +430,22 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     try {
       const { conversationId } = data;
 
-      await chatService.endConversation(conversationId, userId);
+      const conversation = await chatService.endConversation(conversationId, userId);
 
-      io.to(`conversation:${conversationId}`).emit('chat:ended', {
-        conversationId,
-        endedBy: userId,
-      });
+      // For groups/channels, only this participant left — don't tell everyone
+      // the conversation is over. Emit a distinct event so clients can refresh
+      // their participants list but keep the chat open.
+      if ((conversation as any)?.status === 'ENDED') {
+        io.to(`conversation:${conversationId}`).emit('chat:ended', {
+          conversationId,
+          endedBy: userId,
+        });
+      } else {
+        io.to(`conversation:${conversationId}`).emit('chat:member-left', {
+          conversationId,
+          userId,
+        });
+      }
 
       socket.leave(`conversation:${conversationId}`);
       logger.info({ userId, conversationId, socketId: socket.id }, 'User left conversation room');

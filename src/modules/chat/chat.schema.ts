@@ -22,8 +22,12 @@ export const reactMessageSchema = z.object({
 });
 
 export const forwardMessageSchema = z.object({
-  targetConversationId: z.string().uuid(),
-});
+  targetConversationId: z.string().uuid().optional(),
+  targetConversationIds: z.array(z.string().uuid()).min(1).max(5).optional(),
+}).refine(
+  (d) => !!d.targetConversationId || !!d.targetConversationIds,
+  { message: 'targetConversationId or targetConversationIds is required' },
+);
 
 export const searchMessagesSchema = z.object({
   q: z.string().min(1).max(200),

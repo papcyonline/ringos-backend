@@ -5,6 +5,8 @@ import { isBlocked, blockUser } from '../safety/safety.service';
 import { getLimits } from '../../shared/usage.service';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import ogs from 'open-graph-scraper';
+import { promises as dns } from 'dns';
+import net from 'net';
 
 /**
  * Clean up media files from storage (Google Drive or Cloudinary).
@@ -33,15 +35,79 @@ async function cleanupMediaUrls(urls: (string | null)[]): Promise<void> {
 
 const urlRegex = /(?:https?:\/\/)?(?:[\w-]+\.)+[a-z]{2,}(?:\/[^\s]*)?/i;
 
+/**
+ * Return true if `ip` is in a range we must never fetch from (loopback,
+ * link-local, RFC1918/ULA). Without this guard, any user message can make the
+ * server hit internal URLs like http://127.0.0.1:5432 or cloud metadata
+ * endpoints (169.254.169.254).
+ */
+function isPrivateIp(ip: string): boolean {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map((n) => parseInt(n, 10));
+    if (a === 10) return true;
+    if (a === 127) return true;
+    if (a === 0) return true;
+    if (a === 169 && b === 254) return true; // link-local / cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    return false;
+  }
+  if (net.isIPv6(ip)) {
+    const normalized = ip.toLowerCase();
+    if (normalized === '::1') return true;
+    if (normalized.startsWith('fe80:')) return true; // link-local
+    if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true; // ULA
+    // IPv4-mapped (::ffff:x.x.x.x) — re-check the embedded v4.
+    const mapped = normalized.match(/^::ffff:([0-9.]+)$/);
+    if (mapped && net.isIPv4(mapped[1])) return isPrivateIp(mapped[1]);
+    return false;
+  }
+  return false;
+}
+
 async function fetchLinkPreview(messageId: string, content: string) {
   try {
     const match = content.match(urlRegex);
     if (!match) return;
 
     const rawUrl = match[0];
-    const url = rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`;
+    const urlStr = rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`;
 
-    const { result } = await ogs({ url, timeout: 5000 });
+    // Validate scheme + hostname before touching the network. open-graph-scraper
+    // follows redirects, but we at least prevent the initial fetch from hitting
+    // an internal endpoint.
+    let parsed: URL;
+    try {
+      parsed = new URL(urlStr);
+    } catch {
+      return;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+
+    const host = parsed.hostname;
+    if (!host) return;
+    // Block bare literal private addresses even without DNS lookup.
+    if (net.isIP(host) && isPrivateIp(host)) {
+      logger.debug({ messageId, host }, 'Link preview blocked: private literal IP');
+      return;
+    }
+
+    // Resolve the hostname and reject if any resolved address is private.
+    try {
+      const addrs = await dns.lookup(host, { all: true });
+      for (const { address } of addrs) {
+        if (isPrivateIp(address)) {
+          logger.debug({ messageId, host, address }, 'Link preview blocked: resolved to private IP');
+          return;
+        }
+      }
+    } catch {
+      // DNS failure — don't fetch.
+      return;
+    }
+
+    const { result } = await ogs({ url: urlStr, timeout: 5000, downloadLimit: 1024 * 1024 });
     if (!result.success) return;
 
     const ogData: Record<string, string> = {};
@@ -99,6 +165,12 @@ const messageInclude = {
       id: true,
       content: true,
       senderId: true,
+      imageUrl: true,
+      audioUrl: true,
+      audioDuration: true,
+      viewOnce: true,
+      deletedAt: true,
+      metadata: true,
       sender: { select: { displayName: true } },
     },
   },
@@ -1119,6 +1191,10 @@ export async function toggleReaction(messageId: string, userId: string, emoji: s
     throw new NotFoundError('Message not found');
   }
 
+  if (message.deletedAt) {
+    throw new ForbiddenError('Cannot react to a deleted message');
+  }
+
   // Verify user is a participant in the conversation
   await verifyParticipant(message.conversationId, userId);
 
@@ -1161,20 +1237,31 @@ export async function endConversation(conversationId: string, userId: string) {
 
   await verifyParticipant(conversationId, userId);
 
+  // Groups and channels: only this participant leaves — the conversation stays
+  // alive for everyone else. Direct 1-on-1 conversations end entirely.
+  const isGroupLike = conversation.type === 'GROUP';
+
+  if (isGroupLike) {
+    await prisma.conversationParticipant.update({
+      where: { conversationId_userId: { conversationId, userId } },
+      data: { leftAt: new Date() },
+    });
+    logger.info({ conversationId, userId }, 'Participant left group/channel');
+    return conversation;
+  }
+
   const [updatedConversation] = await prisma.$transaction([
     prisma.conversation.update({
       where: { id: conversationId },
       data: { status: 'ENDED' },
     }),
     prisma.conversationParticipant.update({
-      where: {
-        conversationId_userId: { conversationId, userId },
-      },
+      where: { conversationId_userId: { conversationId, userId } },
       data: { leftAt: new Date() },
     }),
   ]);
 
-  logger.info({ conversationId, userId }, 'Conversation ended');
+  logger.info({ conversationId, userId }, 'Direct conversation ended');
   return updatedConversation;
 }
 
@@ -1371,13 +1458,18 @@ export async function getMessages(
   let skip: number | undefined;
 
   if (cursor) {
-    // Cursor is a message ID — fetch messages older than it
+    // Cursor is a message ID — fetch messages older than it.
     const cursorMsg = await prisma.message.findUnique({
       where: { id: cursor },
       select: { createdAt: true },
     });
     if (cursorMsg) {
       whereClause.createdAt = { lt: cursorMsg.createdAt };
+    } else {
+      // Cursor was hard-deleted (unsent). Without this, the query would
+      // silently return the newest page, causing duplicates on the client.
+      // Return an empty page so pagination stops cleanly.
+      return { data: [], page, limit, hasMore: false, nextCursor: null };
     }
   } else {
     skip = (page - 1) * limit;
@@ -1420,6 +1512,89 @@ export async function getMessages(
 }
 
 /**
+ * Fetch messages newer than `sinceMessageId` (or most recent N if not given).
+ * Used by clients to catch up on missed messages after reconnect/app-resume.
+ * Returned in ascending chronological order; capped at `limit`.
+ */
+export async function getMessagesSince(
+  conversationId: string,
+  userId: string,
+  sinceMessageId?: string,
+  limit = 100,
+): Promise<{ messages: any[]; hasMore: boolean; nextSinceId: string | null; sinceNotFound: boolean }> {
+  const callerParticipant = await verifyParticipant(conversationId, userId);
+
+  const whereClause: any = {
+    conversationId,
+    NOT: { deletedFor: { has: userId } },
+    ...(callerParticipant.clearedAt ? { createdAt: { gt: callerParticipant.clearedAt } } : {}),
+  };
+
+  let sinceNotFound = false;
+  if (sinceMessageId) {
+    const cursorMsg = await prisma.message.findUnique({
+      where: { id: sinceMessageId },
+      select: { createdAt: true },
+    });
+    if (cursorMsg) {
+      whereClause.createdAt = {
+        ...(whereClause.createdAt ?? {}),
+        gt: cursorMsg.createdAt,
+      };
+    } else {
+      // Cursor message was hard-deleted (unsent). Without this guard the
+      // query would return the full history. Fall back to a sane window:
+      // the caller's lastReadAt (or clearedAt) — whichever is more recent.
+      // If neither is set, return nothing and signal sinceNotFound so the
+      // client can re-bootstrap with a fresh page load.
+      sinceNotFound = true;
+      const floor =
+        callerParticipant.lastReadAt && callerParticipant.clearedAt
+          ? (callerParticipant.lastReadAt > callerParticipant.clearedAt
+              ? callerParticipant.lastReadAt
+              : callerParticipant.clearedAt)
+          : (callerParticipant.lastReadAt ?? callerParticipant.clearedAt ?? null);
+      if (floor) {
+        whereClause.createdAt = {
+          ...(whereClause.createdAt ?? {}),
+          gt: floor,
+        };
+      } else {
+        // No safe floor — return empty. Client should re-fetch via /messages.
+        return { messages: [], hasMore: false, nextSinceId: null, sinceNotFound: true };
+      }
+    }
+  }
+
+  const [messages, participants] = await Promise.all([
+    prisma.message.findMany({
+      where: whereClause,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: limit + 1,
+      include: messageInclude,
+    }),
+    prisma.conversationParticipant.findMany({
+      where: { conversationId, userId: { not: userId }, leftAt: null },
+      select: { lastReadAt: true, lastDeliveredAt: true },
+    }),
+  ]);
+
+  const hasMore = messages.length > limit;
+  const trimmed = hasMore ? messages.slice(0, limit) : messages;
+  const nextSinceId = hasMore && trimmed.length > 0 ? trimmed[trimmed.length - 1].id : null;
+
+  return {
+    messages: trimmed.map((msg) => ({
+      ...msg,
+      status: computeMessageStatus(msg, userId, participants),
+    })),
+    hasMore,
+    nextSinceId,
+    sinceNotFound,
+  };
+}
+
+/**
  * Toggle pin status for a conversation participant.
  */
 export async function togglePin(userId: string, conversationId: string) {
@@ -1452,13 +1627,45 @@ export async function togglePin(userId: string, conversationId: string) {
 export async function toggleMute(userId: string, conversationId: string) {
   const participant = await verifyParticipant(conversationId, userId);
 
+  // Legacy toggle — flips isMuted and clears mutedUntil for a permanent mute.
+  const nowMuted = !participant.isMuted;
   const updated = await prisma.conversationParticipant.update({
     where: { conversationId_userId: { conversationId, userId } },
-    data: { isMuted: !participant.isMuted },
-    select: { isMuted: true },
+    data: { isMuted: nowMuted, mutedUntil: null },
+    select: { isMuted: true, mutedUntil: true },
   });
 
   logger.debug({ conversationId, userId, isMuted: updated.isMuted }, 'Mute toggled');
+  return updated;
+}
+
+/**
+ * Set a time-bounded mute. Pass:
+ *   - a future Date to mute until that timestamp
+ *   - `null` to unmute immediately
+ *
+ * `isMuted` is kept in sync as a derived boolean so legacy callers that only
+ * read that field continue to work.
+ */
+export async function setMute(
+  userId: string,
+  conversationId: string,
+  mutedUntil: Date | null,
+) {
+  await verifyParticipant(conversationId, userId);
+
+  const now = new Date();
+  const effectiveUntil = mutedUntil && mutedUntil > now ? mutedUntil : null;
+  const updated = await prisma.conversationParticipant.update({
+    where: { conversationId_userId: { conversationId, userId } },
+    data: {
+      mutedUntil: effectiveUntil,
+      isMuted: effectiveUntil !== null,
+    },
+    select: { isMuted: true, mutedUntil: true },
+  });
+
+  logger.debug({ conversationId, userId, mutedUntil: effectiveUntil }, 'Mute set');
   return updated;
 }
 
@@ -1514,26 +1721,105 @@ export async function forwardMessage(
   targetConversationId: string,
   senderId: string,
 ) {
+  const [result] = await forwardMessageToMany(messageId, [targetConversationId], senderId);
+  return result;
+}
+
+/**
+ * Forward a message to multiple conversations in one request. Capped at
+ * MAX_FORWARD_TARGETS to match WhatsApp's anti-spam constraint.
+ */
+export const MAX_FORWARD_TARGETS = 5;
+
+export async function forwardMessageToMany(
+  messageId: string,
+  targetConversationIds: string[],
+  senderId: string,
+) {
+  if (!Array.isArray(targetConversationIds) || targetConversationIds.length === 0) {
+    throw new NotFoundError('At least one target conversation is required');
+  }
+  // Dedupe and cap.
+  const targets = Array.from(new Set(targetConversationIds));
+  if (targets.length > MAX_FORWARD_TARGETS) {
+    throw new ForbiddenError(`Cannot forward to more than ${MAX_FORWARD_TARGETS} conversations at once`);
+  }
+
   // Verify source message exists
   const original = await prisma.message.findUnique({
     where: { id: messageId },
-    select: { content: true, imageUrl: true, audioUrl: true, audioDuration: true },
+    select: { content: true, imageUrl: true, audioUrl: true, audioDuration: true, conversationId: true, deletedAt: true },
   });
   if (!original) throw new NotFoundError('Message not found');
+  if (original.deletedAt) throw new ForbiddenError('Cannot forward a deleted message');
 
-  // Verify sender is participant in target conversation
-  await verifyParticipant(targetConversationId, senderId);
+  // Verify sender belongs to the source conversation — stops exfiltration
+  // of content/media from chats they don't participate in.
+  await verifyParticipant(original.conversationId, senderId);
 
-  // Create forwarded message with metadata marking it as forwarded
-  const forwarded = await sendMessage(targetConversationId, senderId, original.content ?? '', {
-    imageUrl: original.imageUrl ?? undefined,
-    audioUrl: original.audioUrl ?? undefined,
-    audioDuration: original.audioDuration ?? undefined,
-    metadata: { isForwarded: true },
+  const forwarded = [];
+  for (const target of targets) {
+    await verifyParticipant(target, senderId);
+    const msg = await sendMessage(target, senderId, original.content ?? '', {
+      imageUrl: original.imageUrl ?? undefined,
+      audioUrl: original.audioUrl ?? undefined,
+      audioDuration: original.audioDuration ?? undefined,
+      metadata: { isForwarded: true },
+    });
+    forwarded.push(msg);
+  }
+
+  logger.info({ messageId, targetCount: targets.length, senderId }, 'Message forwarded');
+  return forwarded;
+}
+
+/**
+ * Per-recipient read/delivered timestamps for a single message.
+ * Powers the "message info" long-press sheet (who read it, when).
+ */
+export async function getMessageInfo(messageId: string, userId: string) {
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { id: true, conversationId: true, senderId: true, createdAt: true },
+  });
+  if (!message) throw new NotFoundError('Message not found');
+
+  await verifyParticipant(message.conversationId, userId);
+
+  // Only the sender should see per-recipient delivery info.
+  if (message.senderId !== userId) {
+    throw new ForbiddenError('Only the sender can view message info');
+  }
+
+  const participants = await prisma.conversationParticipant.findMany({
+    where: {
+      conversationId: message.conversationId,
+      userId: { not: userId },
+      leftAt: null,
+    },
+    select: {
+      userId: true,
+      lastReadAt: true,
+      lastDeliveredAt: true,
+      user: { select: { displayName: true, avatarUrl: true } },
+    },
   });
 
-  logger.info({ messageId, targetConversationId, senderId }, 'Message forwarded');
-  return forwarded;
+  return participants.map((p) => {
+    const deliveredAt = p.lastDeliveredAt && p.lastDeliveredAt >= message.createdAt
+      ? p.lastDeliveredAt
+      : null;
+    const readAt = p.lastReadAt && p.lastReadAt >= message.createdAt
+      ? p.lastReadAt
+      : null;
+    return {
+      userId: p.userId,
+      displayName: p.user.displayName,
+      avatarUrl: p.user.avatarUrl,
+      deliveredAt,
+      readAt,
+    };
+  });
 }
 
 // ─── Search Messages ──────────────────────────────────────────
@@ -1545,20 +1831,35 @@ export async function searchMessagesGlobal(
   userId: string,
   query: string,
 ) {
-  // Get all conversation IDs the user is part of
+  // Get all conversation IDs the user is part of, along with their per-user
+  // clearedAt floor so we can honor "Clear chat history".
   const participations = await prisma.conversationParticipant.findMany({
     where: { userId, leftAt: null },
-    select: { conversationId: true },
+    select: { conversationId: true, clearedAt: true },
   });
+  if (participations.length === 0) return [];
   const conversationIds = participations.map((p) => p.conversationId);
 
-  if (conversationIds.length === 0) return [];
+  // Build per-conversation clearedAt filter as an OR of (conversationId, createdAt > clearedAt)
+  // plus the set of conversations with no clearedAt at all.
+  const clearedConvs = participations.filter((p) => p.clearedAt != null);
+  const unclearedIds = participations.filter((p) => p.clearedAt == null).map((p) => p.conversationId);
+
+  const convOr: any[] = [];
+  if (unclearedIds.length > 0) convOr.push({ conversationId: { in: unclearedIds } });
+  for (const p of clearedConvs) {
+    convOr.push({ conversationId: p.conversationId, createdAt: { gt: p.clearedAt! } });
+  }
 
   const messages = await prisma.message.findMany({
     where: {
-      conversationId: { in: conversationIds },
-      deletedAt: null,
-      content: { contains: query, mode: 'insensitive' },
+      AND: [
+        { conversationId: { in: conversationIds } },
+        { deletedAt: null },
+        { NOT: { deletedFor: { has: userId } } },
+        { content: { contains: query, mode: 'insensitive' } },
+        { OR: convOr },
+      ],
     },
     include: {
       ...messageInclude,
@@ -1590,13 +1891,15 @@ export async function searchMessages(
   userId: string,
   query: string,
 ) {
-  await verifyParticipant(conversationId, userId);
+  const participant = await verifyParticipant(conversationId, userId);
 
   const messages = await prisma.message.findMany({
     where: {
       conversationId,
       deletedAt: null,
+      NOT: { deletedFor: { has: userId } },
       content: { contains: query, mode: 'insensitive' },
+      ...(participant.clearedAt ? { createdAt: { gt: participant.clearedAt } } : {}),
     },
     include: messageInclude,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],

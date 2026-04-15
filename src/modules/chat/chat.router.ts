@@ -1038,16 +1038,34 @@ router.patch(
   },
 );
 
-// PATCH /conversations/:conversationId/mute - Toggle mute
+// PATCH /conversations/:conversationId/mute - Toggle or set mute.
+// Body may be empty (toggle) or { mutedUntil: ISO-8601 | null } for a
+// duration-based mute (null = unmute, future timestamp = mute until then).
 router.patch(
   '/conversations/:conversationId/mute',
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const result = await chatService.toggleMute(
-        req.user!.userId,
-        req.params.conversationId as string,
-      );
+      const userId = req.user!.userId;
+      const conversationId = req.params.conversationId as string;
+
+      if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'mutedUntil')) {
+        const raw = req.body.mutedUntil;
+        let until: Date | null = null;
+        if (raw !== null && raw !== undefined) {
+          const parsed = new Date(raw);
+          if (Number.isNaN(parsed.getTime())) {
+            res.status(400).json({ error: 'Invalid mutedUntil' });
+            return;
+          }
+          until = parsed;
+        }
+        const result = await chatService.setMute(userId, conversationId, until);
+        res.json(result);
+        return;
+      }
+
+      const result = await chatService.toggleMute(userId, conversationId);
       res.json(result);
     } catch (err) {
       next(err);
@@ -1168,21 +1186,55 @@ router.post(
   },
 );
 
-// POST /conversations/:conversationId/messages/:messageId/forward - Forward a message
+// POST /conversations/:conversationId/messages/:messageId/forward - Forward a message.
+// Body accepts either { targetConversationId } (single-target, legacy) or
+// { targetConversationIds: string[] } (multi-target, capped at 5).
 router.post(
   '/conversations/:conversationId/messages/:messageId/forward',
   authenticate,
-  validate(forwardMessageSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const message = await chatService.forwardMessage(
+      const userId = req.user!.userId;
+      const messageId = req.params.messageId as string;
+
+      const targets: string[] = Array.isArray(req.body?.targetConversationIds)
+        ? req.body.targetConversationIds
+        : req.body?.targetConversationId
+          ? [req.body.targetConversationId]
+          : [];
+
+      if (targets.length === 0) {
+        return res.status(400).json({ error: 'targetConversationId(s) is required' });
+      }
+
+      const messages = await chatService.forwardMessageToMany(messageId, targets, userId);
+
+      for (const msg of messages) {
+        broadcastAndNotifyMessage(msg, (msg as any).conversationId, userId);
+      }
+
+      if (targets.length === 1) {
+        res.status(201).json(messages[0]);
+      } else {
+        res.status(201).json({ messages });
+      }
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /messages/:messageId/info - Per-recipient delivery/read info (sender only)
+router.get(
+  '/messages/:messageId/info',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const info = await chatService.getMessageInfo(
         req.params.messageId as string,
-        req.body.targetConversationId,
         req.user!.userId,
       );
-
-      broadcastAndNotifyMessage(message, req.body.targetConversationId, req.user!.userId);
-      res.status(201).json(message);
+      res.json(info);
     } catch (err) {
       next(err);
     }

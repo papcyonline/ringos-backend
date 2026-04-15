@@ -551,6 +551,7 @@ model ConversationParticipant {
   leftAt         DateTime?
   isPinned       Boolean         @default(false)
   isMuted        Boolean         @default(false)
+  mutedUntil     DateTime?
   isArchived     Boolean         @default(false)
   clearedAt      DateTime?
   bannedAt       DateTime?
@@ -595,6 +596,7 @@ model Message {
   @@index([conversationId, senderId, deletedAt, createdAt])
   @@index([senderId])
   @@index([replyToId])
+  @@index([expiresAt])
 }
 
 model MessageReaction {
