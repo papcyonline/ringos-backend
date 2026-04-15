@@ -1,0 +1,91 @@
+# Artillery socket.io load test for call signalling.
+#
+# Scope (intentionally narrow): each virtual user authenticates via
+# socket.io and emits `call:initiate`, then waits for either `call:initiated`
+# (success) or `call:error` (rejection). This measures the most expensive
+# operation in the signalling layer — pre-ring validations, CallLog write,
+# Redis state writes, push fan-out — under sustained concurrency.
+#
+# A paired caller/callee end-to-end test is a separate scenario and needs
+# coordinated VU pairs; not included here. For now this gives a clean
+# upper bound on initiation throughput.
+#
+# Usage:
+#   npm install -g artillery@latest @artilleryio/engine-socketio-v3
+#   artillery run \
+#     --target https://yomeet-backend.onrender.com \
+#     --variables '{"usersFile":"./users.json"}' \
+#     load-tests/calls.yml
+#
+# Reading the report:
+#   - "scenarios.completed" / "scenarios.created" should be ~1.0 (no drops)
+#   - "errors.call:error" counts pre-ring rejections (BUSY, BLOCKED, etc.)
+#     — these are EXPECTED when targets are random; not a server fault
+#   - "vusers.session_length.p95" — total time per scenario (handshake +
+#     emit + ack)
+#
+# Tip: run k6-smoke.js first to validate the HTTP path. If that fails,
+# socket.io will fail too.
+
+config:
+  target: "https://yomeet-backend.onrender.com"
+  socketio:
+    transports: ["websocket"]
+    path: "/socket.io"
+  phases:
+    - name: "warmup"
+      duration: 60
+      arrivalRate: 5
+    - name: "ramp"
+      duration: 120
+      arrivalRate: 5
+      rampTo: 100
+    - name: "sustained"
+      duration: 300
+      arrivalRate: 100
+  variables:
+    usersFile: "./users.json"
+  payload:
+    path: "{{ usersFile }}"
+    fields:
+      - "id"
+      - "token"
+      - "calleeId"
+      - "conversationId"
+    skipHeader: true
+    order: sequence
+  ensure:
+    # Signalling round-trip should stay under a second even at peak.
+    "vusers.session_length.p95": 1500
+    maxErrorRate: 5
+
+scenarios:
+  - name: "call:initiate"
+    weight: 100
+    engine: socketio-v3
+    # Token sent in handshake auth — backend's io.use middleware reads
+    # socket.handshake.auth.token (see src/config/socket.ts).
+    socketio:
+      query: ""
+      auth:
+        token: "{{ token }}"
+    flow:
+      - emit:
+          channel: "call:initiate"
+          data:
+            conversationId: "{{ conversationId }}"
+            targetUserIds: ["{{ calleeId }}"]
+            isGroup: false
+            callType: "AUDIO"
+          # Wait for the server's confirmation; either is acceptable for
+          # signalling-throughput measurement.
+          response:
+            channel: "call:initiated"
+            timeout: 3000
+      - think: 0.3
+      - emit:
+          channel: "call:end"
+          data:
+            # Best-effort cleanup; if call:initiated didn't fire we don't
+            # have a callId, so this no-ops server-side.
+            callId: ""
