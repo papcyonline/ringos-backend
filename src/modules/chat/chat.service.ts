@@ -107,7 +107,7 @@ async function fetchLinkPreview(messageId: string, content: string) {
       return;
     }
 
-    const { result } = await ogs({ url: urlStr, timeout: 5000, downloadLimit: 1024 * 1024 });
+    const { result } = await ogs({ url: urlStr, timeout: 5000 });
     if (!result.success) return;
 
     const ogData: Record<string, string> = {};
