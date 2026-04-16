@@ -82,6 +82,7 @@ describe('chat.gateway', () => {
       join: vi.fn(),
       leave: vi.fn(),
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
+      rooms: new Set(['conversation:conv-1']),
     };
 
     mockIO = {
