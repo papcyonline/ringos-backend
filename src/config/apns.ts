@@ -99,6 +99,18 @@ export interface VoipPushResult {
  * Graceful no-op if APNs env vars are not configured.
  */
 /**
+ * Force-close a session so the next call gets a fresh connection.
+ * Used after connection errors (ECONNRESET) or Apple auth rejections.
+ */
+function resetSession(production: boolean) {
+  const sess = production ? sessionProduction : sessionSandbox;
+  if (sess && !sess.closed && !sess.destroyed) {
+    try { sess.close(); } catch { /* no-op */ }
+  }
+  if (production) sessionProduction = null; else sessionSandbox = null;
+}
+
+/**
  * Send a single VoIP push to a specific APNs environment.
  */
 function sendToEnvironment(
@@ -128,10 +140,15 @@ function sendToEnvironment(
       req.on('response', (headers) => { statusCode = headers[':status'] as number; });
       req.on('data', (chunk) => { responseData += chunk; });
       req.on('end', () => resolve({ statusCode, responseData }));
-      req.on('error', () => resolve({ statusCode: 0, responseData: 'request error' }));
+      req.on('error', (err) => {
+        // Connection-level error — kill the session so the next call reconnects.
+        resetSession(production);
+        resolve({ statusCode: 0, responseData: `request error: ${(err as Error).message}` });
+      });
       req.end(body);
-    } catch {
-      resolve({ statusCode: 0, responseData: 'connection error' });
+    } catch (e) {
+      resetSession(production);
+      resolve({ statusCode: 0, responseData: `connection error: ${(e as Error).message}` });
     }
   });
 }
@@ -154,6 +171,12 @@ export async function sendVoipPush(
   const preferred = env.APNS_PRODUCTION;
   let result = await sendToEnvironment(deviceToken, body, jwt, preferred);
 
+  // Retry transient connection errors once (ECONNRESET, session drops).
+  if (result.statusCode === 0 && result.responseData.includes('request error')) {
+    logger.warn({ deviceToken, preferred, error: result.responseData }, 'APNs connection error — retrying once');
+    result = await sendToEnvironment(deviceToken, body, jwt, preferred);
+  }
+
   if (result.statusCode !== 200) {
     const reason = result.responseData;
     if (reason.includes('BadDeviceToken') || reason.includes('BadEnvironment')) {
@@ -167,6 +190,20 @@ export async function sendVoipPush(
   } else if (result.statusCode === 410) {
     logger.info({ deviceToken }, 'APNs VoIP token unregistered (410)');
     return { success: false, unregistered: true };
+  } else if (result.statusCode === 403) {
+    // 403 with InvalidProviderToken / BadEnvironmentKeyInToken means
+    // the .p8 key itself is invalid (wrong team, revoked, or APNs
+    // capability not enabled on the key). No point retrying.
+    logger.error(
+      {
+        statusCode: result.statusCode,
+        responseData: result.responseData,
+        keyId: env.APNS_KEY_ID,
+        teamId: env.APNS_TEAM_ID,
+      },
+      'APNs rejected auth token — .p8 key is invalid for this team. Verify key in Apple Developer portal.',
+    );
+    return { success: false };
   } else {
     logger.warn(
       { statusCode: result.statusCode, responseData: result.responseData, deviceToken },

@@ -412,6 +412,44 @@ export async function sendCallPush(
 }
 
 /**
+ * Send a VoIP "cancel" push to a user so the iOS CallKit UI dismisses
+ * even when the app is killed/asleep. Called when the caller hangs up
+ * before the callee answered.
+ */
+export async function sendCallCancelPush(
+  userId: string,
+  callId: string,
+) {
+  const voipTokens = await prisma.voipToken.findMany({
+    where: { userId },
+    select: { token: true },
+  });
+
+  if (voipTokens.length === 0) return;
+
+  const cancelPayload = {
+    callId,
+    cancel: true,
+    // Include minimal caller info so iOS won't reject the payload as malformed
+    callerName: 'Call Ended',
+  };
+
+  for (const { token } of voipTokens) {
+    sendVoipPush(token, cancelPayload)
+      .then((result) => {
+        if (result.unregistered) {
+          prisma.voipToken.deleteMany({ where: { token } }).catch((err) => {
+            logger.error({ err, token }, 'Failed to delete unregistered VoIP token');
+          });
+        }
+      })
+      .catch((err) => {
+        logger.error({ err, userId, callId }, 'Failed to send VoIP cancel push');
+      });
+  }
+}
+
+/**
  * Send a missed call notification to a user.
  * Creates an in-app notification and sends a push notification.
  */

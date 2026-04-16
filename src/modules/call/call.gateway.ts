@@ -2,7 +2,7 @@ import { Server, Socket } from 'socket.io';
 import { randomUUID } from 'crypto';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
-import { sendCallPush, sendMissedCallNotification } from '../notification/notification.service';
+import { sendCallPush, sendCallCancelPush, sendMissedCallNotification } from '../notification/notification.service';
 import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
 import { generateCallToken, LIVEKIT_URL } from './call.livekit';
 import { isBlocked } from '../safety/safety.service';
@@ -706,6 +706,12 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           io.to(`user:${targetId}`).emit('call:cancel', {
             callId,
             reason: 'caller_cancelled',
+          });
+          // Also send a VoIP cancel push — the socket event only reaches
+          // the callee if their app is running. VoIP push wakes a killed
+          // iOS app so CallKit can dismiss the ringing UI.
+          sendCallCancelPush(targetId, callId).catch((err) => {
+            logger.error({ err, targetId, callId }, 'Failed to send VoIP cancel push');
           });
         }
         socket.to(`user:${userId}`).emit('call:cancel', {
