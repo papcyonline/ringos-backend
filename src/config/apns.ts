@@ -11,7 +11,8 @@ const APNS_HOST_SANDBOX = 'api.sandbox.push.apple.com';
 const JWT_VALIDITY_MS = 50 * 60 * 1000; // 50 minutes (Apple allows up to 60)
 
 let cachedJwt: { token: string; issuedAt: number } | null = null;
-let session: http2.ClientHttp2Session | null = null;
+let sessionProduction: http2.ClientHttp2Session | null = null;
+let sessionSandbox: http2.ClientHttp2Session | null = null;
 
 function isConfigured(): boolean {
   return !!(env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_KEY);
@@ -59,29 +60,29 @@ function generateApnsJwt(): string {
 }
 
 /**
- * Get a persistent HTTP/2 session to APNs. Auto-reconnects on close/error.
+ * Get a persistent HTTP/2 session to APNs. Maintains separate sessions for
+ * production and sandbox so we can auto-fallback.
  */
-function getSession(): http2.ClientHttp2Session {
-  if (session && !session.closed && !session.destroyed) {
-    return session;
+function getSession(production: boolean): http2.ClientHttp2Session {
+  const existing = production ? sessionProduction : sessionSandbox;
+  if (existing && !existing.closed && !existing.destroyed) {
+    return existing;
   }
 
-  const host = env.APNS_PRODUCTION
-    ? APNS_HOST_PRODUCTION
-    : APNS_HOST_SANDBOX;
+  const host = production ? APNS_HOST_PRODUCTION : APNS_HOST_SANDBOX;
+  const sess = http2.connect(`https://${host}`);
 
-  session = http2.connect(`https://${host}`);
-
-  session.on('error', (err) => {
-    logger.error({ err }, 'APNs HTTP/2 session error');
-    session = null;
+  sess.on('error', (err) => {
+    logger.error({ err, production }, 'APNs HTTP/2 session error');
+    if (production) sessionProduction = null; else sessionSandbox = null;
   });
 
-  session.on('close', () => {
-    session = null;
+  sess.on('close', () => {
+    if (production) sessionProduction = null; else sessionSandbox = null;
   });
 
-  return session;
+  if (production) sessionProduction = sess; else sessionSandbox = sess;
+  return sess;
 }
 
 export interface VoipPushResult {
@@ -97,21 +98,18 @@ export interface VoipPushResult {
  *
  * Graceful no-op if APNs env vars are not configured.
  */
-export async function sendVoipPush(
+/**
+ * Send a single VoIP push to a specific APNs environment.
+ */
+function sendToEnvironment(
   deviceToken: string,
-  payload: Record<string, unknown>
-): Promise<VoipPushResult> {
-  if (!isConfigured()) {
-    return { success: false };
-  }
-
-  const jwt = generateApnsJwt();
-  const body = JSON.stringify({ aps: { 'content-available': 1 }, ...payload });
-
-  return new Promise<VoipPushResult>((resolve) => {
+  body: string,
+  jwt: string,
+  production: boolean,
+): Promise<{ statusCode: number; responseData: string }> {
+  return new Promise((resolve) => {
     try {
-      const sess = getSession();
-
+      const sess = getSession(production);
       const req = sess.request({
         ':method': 'POST',
         ':path': `/3/device/${deviceToken}`,
@@ -127,40 +125,55 @@ export async function sendVoipPush(
       let responseData = '';
       let statusCode = 0;
 
-      req.on('response', (headers) => {
-        statusCode = headers[':status'] as number;
-      });
-
-      req.on('data', (chunk) => {
-        responseData += chunk;
-      });
-
-      req.on('end', () => {
-        if (statusCode === 200) {
-          resolve({ success: true });
-        } else if (statusCode === 410) {
-          logger.info({ deviceToken }, 'APNs VoIP token unregistered (410)');
-          resolve({ success: false, unregistered: true });
-        } else {
-          logger.warn(
-            { statusCode, responseData, deviceToken },
-            'APNs VoIP push failed'
-          );
-          resolve({ success: false });
-        }
-      });
-
-      req.on('error', (err) => {
-        logger.error({ err, deviceToken }, 'APNs VoIP push request error');
-        resolve({ success: false });
-      });
-
+      req.on('response', (headers) => { statusCode = headers[':status'] as number; });
+      req.on('data', (chunk) => { responseData += chunk; });
+      req.on('end', () => resolve({ statusCode, responseData }));
+      req.on('error', () => resolve({ statusCode: 0, responseData: 'request error' }));
       req.end(body);
-    } catch (err) {
-      logger.error({ err, deviceToken }, 'APNs VoIP push error');
-      resolve({ success: false });
+    } catch {
+      resolve({ statusCode: 0, responseData: 'connection error' });
     }
   });
+}
+
+export async function sendVoipPush(
+  deviceToken: string,
+  payload: Record<string, unknown>
+): Promise<VoipPushResult> {
+  if (!isConfigured()) {
+    return { success: false };
+  }
+
+  const jwt = generateApnsJwt();
+  const body = JSON.stringify({ aps: { 'content-available': 1 }, ...payload });
+
+  // Try preferred environment first. On BadDeviceToken or
+  // BadEnvironmentKeyInToken, auto-retry on the other environment.
+  // This handles both dev-installed (sandbox) and TestFlight/AppStore
+  // (production) apps without manual APNS_PRODUCTION toggling.
+  const preferred = env.APNS_PRODUCTION;
+  let result = await sendToEnvironment(deviceToken, body, jwt, preferred);
+
+  if (result.statusCode !== 200) {
+    const reason = result.responseData;
+    if (reason.includes('BadDeviceToken') || reason.includes('BadEnvironment')) {
+      logger.info({ deviceToken, preferred }, 'APNs environment mismatch — retrying on alternate');
+      result = await sendToEnvironment(deviceToken, body, jwt, !preferred);
+    }
+  }
+
+  if (result.statusCode === 200) {
+    return { success: true };
+  } else if (result.statusCode === 410) {
+    logger.info({ deviceToken }, 'APNs VoIP token unregistered (410)');
+    return { success: false, unregistered: true };
+  } else {
+    logger.warn(
+      { statusCode: result.statusCode, responseData: result.responseData, deviceToken },
+      'APNs VoIP push failed',
+    );
+    return { success: false };
+  }
 }
 
 // Log configuration status at module load
