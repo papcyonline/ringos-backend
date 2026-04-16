@@ -520,12 +520,13 @@ router.post(
       const audioUrl = await fileToChatAudioUrl(req.file, (req.params.conversationId as string));
       const duration = parseInt(req.body.duration as string, 10) || 0;
       const replyToId = req.body.replyToId as string | undefined;
+      const viewOnce = req.body.viewOnce === 'true';
 
       const message = await chatService.sendMessage(
         (req.params.conversationId as string),
         req.user!.userId,
         '',
-        { replyToId, audioUrl, audioDuration: duration },
+        { replyToId, audioUrl, audioDuration: duration, viewOnce },
       );
 
       broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
