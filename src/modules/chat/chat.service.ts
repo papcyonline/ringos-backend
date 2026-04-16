@@ -245,6 +245,7 @@ export async function getConversation(conversationId: string, userId: string) {
 export async function getConversations(userId: string) {
   const conversations = await prisma.conversation.findMany({
     where: {
+      status: 'ACTIVE',
       participants: {
         some: { userId, leftAt: null },
       },
@@ -1231,38 +1232,61 @@ export async function endConversation(conversationId: string, userId: string) {
     throw new NotFoundError('Conversation not found');
   }
 
-  if (conversation.status === 'ENDED') {
-    throw new ForbiddenError('Conversation is already ended');
+  // Idempotent: also accept callers whose participant row already has
+  // leftAt set (they tapped delete twice / race with socket refresh).
+  // In that case we still want to make sure the conversation is ENDED
+  // for DMs and return success.
+  const existingParticipant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+  });
+  if (!existingParticipant) {
+    throw new NotFoundError('Conversation not found');
   }
 
-  await verifyParticipant(conversationId, userId);
-
-  // Groups and channels: only this participant leaves — the conversation stays
-  // alive for everyone else. Direct 1-on-1 conversations end entirely.
   const isGroupLike = conversation.type === 'GROUP';
+  const now = new Date();
 
   if (isGroupLike) {
-    await prisma.conversationParticipant.update({
-      where: { conversationId_userId: { conversationId, userId } },
-      data: { leftAt: new Date() },
-    });
-    logger.info({ conversationId, userId }, 'Participant left group/channel');
+    // Groups / channels: caller leaves, the conversation stays alive for
+    // everyone else. Idempotent if they already left.
+    if (existingParticipant.leftAt == null) {
+      await prisma.conversationParticipant.update({
+        where: { conversationId_userId: { conversationId, userId } },
+        data: { leftAt: now },
+      });
+      logger.info({ conversationId, userId }, 'Participant left group/channel');
+    }
     return conversation;
   }
 
-  const [updatedConversation] = await prisma.$transaction([
-    prisma.conversation.update({
-      where: { id: conversationId },
-      data: { status: 'ENDED' },
-    }),
-    prisma.conversationParticipant.update({
-      where: { conversationId_userId: { conversationId, userId } },
-      data: { leftAt: new Date() },
-    }),
-  ]);
+  // Direct 1-on-1 conversation: end the conversation (once) and mark the
+  // caller as left (once). Either or both may already be true — that's
+  // still success, not an error.
+  const updates: Promise<unknown>[] = [];
+  if (conversation.status !== 'ENDED') {
+    updates.push(
+      prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: 'ENDED' },
+      }),
+    );
+  }
+  if (existingParticipant.leftAt == null) {
+    updates.push(
+      prisma.conversationParticipant.update({
+        where: { conversationId_userId: { conversationId, userId } },
+        data: { leftAt: now },
+      }),
+    );
+  }
+  if (updates.length > 0) {
+    await prisma.$transaction(updates as any);
+    logger.info({ conversationId, userId }, 'Direct conversation ended');
+  } else {
+    logger.debug({ conversationId, userId }, 'Direct conversation already ended — no-op');
+  }
 
-  logger.info({ conversationId, userId }, 'Direct conversation ended');
-  return updatedConversation;
+  return { ...conversation, status: 'ENDED' as const };
 }
 
 /**
