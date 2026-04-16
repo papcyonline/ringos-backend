@@ -30,6 +30,14 @@ function generateApnsJwt(): string {
 
   const keyPem = Buffer.from(env.APNS_KEY!, 'base64').toString('utf8');
 
+  // Use createPrivateKey for robust parsing across Node/OpenSSL versions.
+  // Node 22 + OpenSSL 3 can reject raw PEM strings that older versions accept.
+  const privateKey = crypto.createPrivateKey({
+    key: keyPem,
+    format: 'pem',
+    type: 'pkcs8',
+  });
+
   const header = Buffer.from(
     JSON.stringify({ alg: 'ES256', kid: env.APNS_KEY_ID })
   ).toString('base64url');
@@ -42,7 +50,7 @@ function generateApnsJwt(): string {
   signer.update(`${header}.${claims}`);
 
   const signature = signer
-    .sign({ key: keyPem, dsaEncoding: 'ieee-p1363' })
+    .sign({ key: privateKey, dsaEncoding: 'ieee-p1363' })
     .toString('base64url');
 
   const token = `${header}.${claims}.${signature}`;
