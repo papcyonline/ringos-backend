@@ -68,11 +68,12 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res: Response, next
 // POST /fcm-token - Register FCM token
 router.post('/fcm-token', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { token } = req.body;
+    const { token, platform } = req.body;
     if (!token) {
       return res.status(400).json({ error: 'Token is required' });
     }
-    await notificationService.registerFcmToken(req.user!.userId, token);
+    const plat = platform === 'ios' ? 'ios' : 'android';
+    await notificationService.registerFcmToken(req.user!.userId, token, plat);
     res.json({ success: true });
   } catch (err) {
     next(err);

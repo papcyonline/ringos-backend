@@ -713,6 +713,7 @@ model FcmToken {
   id        String   @id @default(uuid())
   userId    String
   token     String   @unique
+  platform  String   @default("android") // 'android' | 'ios'
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

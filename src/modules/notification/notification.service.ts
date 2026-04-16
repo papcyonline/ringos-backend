@@ -117,11 +117,15 @@ export async function createNotification(data: {
   return notification;
 }
 
-export async function registerFcmToken(userId: string, token: string) {
+export async function registerFcmToken(
+  userId: string,
+  token: string,
+  platform: 'android' | 'ios' = 'android',
+) {
   await prisma.fcmToken.upsert({
     where: { token },
-    create: { userId, token },
-    update: { userId },
+    create: { userId, token, platform },
+    update: { userId, platform },
   });
 }
 
@@ -348,9 +352,11 @@ export async function sendCallPush(
 
   const fcmData = buildCallPayload(payload);
 
-  // Send to Android devices via FCM
+  // Send to Android devices via FCM. iOS devices receive CallKit via the
+  // VoIP push below — sending FCM to them would add a duplicate alert
+  // banner on top of the CallKit ring.
   const fcmTokens = await prisma.fcmToken.findMany({
-    where: { userId },
+    where: { userId, platform: 'android' },
     select: { token: true },
   });
 
@@ -361,17 +367,6 @@ export async function sendCallPush(
       android: {
         priority: 'high',
         ttl: 60000, // 60 seconds
-      },
-      // iOS devices with FCM token — include alert + sound so the notification is visible
-      apns: {
-        headers: { 'apns-priority': '10' },
-        payload: {
-          aps: {
-            alert: { title: payload.callerName, body: payload.isGroup ? `Incoming group ${payload.callType === 'VIDEO' ? 'video' : 'audio'} call` : 'Incoming call' },
-            sound: 'default',
-            'content-available': 1,
-          },
-        },
       },
     };
 
