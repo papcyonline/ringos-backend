@@ -381,16 +381,15 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
       // Confirm to the initiator
       socket.emit('call:initiated', { callId, callType: resolvedCallType });
 
-      // For group calls: generate a LiveKit token for the initiator
-      if (isGroup) {
-        try {
-          const callerDisplayName = caller?.displayName ?? undefined;
-          const token = await generateCallToken(userId, callId, callerDisplayName);
-          socket.emit('call:livekit-token', { callId, token, url: LIVEKIT_URL });
-          logger.info({ userId, callId }, 'LiveKit token sent to initiator');
-        } catch (err) {
-          logger.error({ err, callId }, 'Failed to generate LiveKit token for initiator');
-        }
+      // Generate a LiveKit token for the initiator. ALL calls (1-on-1 and
+      // group) now route through LiveKit SFU — no more P2P WebRTC branch.
+      try {
+        const callerDisplayName = caller?.displayName ?? undefined;
+        const token = await generateCallToken(userId, callId, callerDisplayName);
+        socket.emit('call:livekit-token', { callId, token, url: LIVEKIT_URL });
+        logger.info({ userId, callId }, 'LiveKit token sent to initiator');
+      } catch (err) {
+        logger.error({ err, callId }, 'Failed to generate LiveKit token for initiator');
       }
 
       // Server-side timeout: clean up if nobody answers. Re-reads call state
@@ -524,35 +523,28 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         select: { displayName: true, avatarUrl: true },
       });
 
+      // Generate LiveKit token for the answering user. ALL calls route
+      // through LiveKit SFU now — no P2P WebRTC branch.
+      try {
+        const token = await generateCallToken(userId, callId, answerer?.displayName ?? undefined);
+        socket.emit('call:livekit-token', { callId, token, url: LIVEKIT_URL });
+        logger.info({ userId, callId }, 'LiveKit token sent to answering participant');
+      } catch (err) {
+        logger.error({ err, callId }, 'Failed to generate LiveKit token for answering participant');
+      }
+
+      // Notify the initiator
+      io.to(`user:${call.initiatorId}`).emit('call:answered', {
+        callId,
+        userId,
+        displayName: answerer?.displayName ?? 'Unknown',
+        avatarUrl: answerer?.avatarUrl ?? null,
+        isLiveKit: true,
+      });
+
+      // For group calls: also notify already-joined participants
       if (call.isGroup) {
-        // Group call: generate LiveKit token for the answering user
-        try {
-          const token = await generateCallToken(userId, callId, answerer?.displayName ?? undefined);
-          socket.emit('call:livekit-token', { callId, token, url: LIVEKIT_URL });
-          logger.info({ userId, callId }, 'LiveKit token sent to answering participant');
-        } catch (err) {
-          logger.error({ err, callId }, 'Failed to generate LiveKit token for answering participant');
-        }
-
-        // Notify the initiator with isLiveKit flag
-        io.to(`user:${call.initiatorId}`).emit('call:answered', {
-          callId,
-          userId,
-          displayName: answerer?.displayName ?? 'Unknown',
-          avatarUrl: answerer?.avatarUrl ?? null,
-          isLiveKit: true,
-        });
-
-        // Notify other already-joined participants
         socket.to(`call:${callId}`).emit('call:participant-joined', {
-          callId,
-          userId,
-          displayName: answerer?.displayName ?? 'Unknown',
-          avatarUrl: answerer?.avatarUrl ?? null,
-        });
-      } else {
-        // 1-on-1 call: notify the initiator (P2P handshake follows)
-        io.to(`user:${call.initiatorId}`).emit('call:answered', {
           callId,
           userId,
           displayName: answerer?.displayName ?? 'Unknown',
