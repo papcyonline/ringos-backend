@@ -79,46 +79,62 @@ export async function blockUser(blockerId: string, blockedId: string) {
     throw new NotFoundError('User not found');
   }
 
-  // Check if already blocked
-  const existing = await prisma.block.findUnique({
-    where: { blockerId_blockedId: { blockerId, blockedId } },
-  });
-  if (existing) {
-    throw new ConflictError('User is already blocked');
-  }
-
-  // Create block and end shared conversations atomically
+  // Idempotent: upsert the block AND always end any lingering shared
+  // conversations + set the blocker's leftAt so the conversation
+  // disappears from their chat list. Re-blocking an existing block
+  // should still clean up any stale rows left over from before.
   const block = await prisma.$transaction(async (tx) => {
-    const block = await tx.block.create({
-      data: { blockerId, blockedId },
+    const block = await tx.block.upsert({
+      where: { blockerId_blockedId: { blockerId, blockedId } },
+      create: { blockerId, blockedId },
+      update: {},
     });
 
     const sharedConversations = await tx.conversation.findMany({
       where: {
-        status: 'ACTIVE',
         AND: [
           { participants: { some: { userId: blockerId } } },
           { participants: { some: { userId: blockedId } } },
         ],
       },
+      select: { id: true, status: true },
     });
 
     if (sharedConversations.length > 0) {
-      await tx.conversation.updateMany({
-        where: { id: { in: sharedConversations.map((c) => c.id) } },
-        data: { status: 'ENDED' },
+      const convIds = sharedConversations.map((c) => c.id);
+      const stillActive = sharedConversations
+        .filter((c) => c.status === 'ACTIVE')
+        .map((c) => c.id);
+
+      if (stillActive.length > 0) {
+        await tx.conversation.updateMany({
+          where: { id: { in: stillActive } },
+          data: { status: 'ENDED' },
+        });
+      }
+
+      // Ensure the blocker's participant row is marked as left, so the
+      // conversation no longer surfaces in getConversations (which
+      // filters by leftAt: null).
+      await tx.conversationParticipant.updateMany({
+        where: {
+          conversationId: { in: convIds },
+          userId: blockerId,
+          leftAt: null,
+        },
+        data: { leftAt: new Date() },
       });
 
       logger.info(
-        { blockerId, blockedId, endedConversations: sharedConversations.length },
-        'Ended active conversations due to block',
+        { blockerId, blockedId, endedConversations: stillActive.length, hidden: convIds.length },
+        'Hid shared conversations due to block',
       );
     }
 
     return block;
   });
 
-  logger.info({ blockerId, blockedId }, 'User blocked');
+  logger.info({ blockerId, blockedId }, 'User blocked (idempotent)');
 
   return { id: block.id, blockedId: block.blockedId, createdAt: block.createdAt };
 }
