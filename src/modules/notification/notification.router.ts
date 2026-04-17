@@ -55,6 +55,18 @@ router.post('/read-all', authenticate, async (req: AuthRequest, res: Response, n
   }
 });
 
+// DELETE /all - Clear every notification for the current user.
+// Must be registered before DELETE /:id or Express would match "all"
+// as a notification id.
+router.delete('/all', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await notificationService.deleteAllNotifications(req.user!.userId);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /:id - Delete a single notification
 router.delete('/:id', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

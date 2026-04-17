@@ -88,6 +88,13 @@ export async function deleteNotification(userId: string, notificationId: string)
   });
 }
 
+export async function deleteAllNotifications(userId: string) {
+  const result = await prisma.notification.deleteMany({
+    where: { userId },
+  });
+  return { deleted: result.count };
+}
+
 export async function createNotification(data: {
   userId: string;
   type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'MISSED_CALL' | 'SYSTEM' | 'POST_LIKED' | 'POST_COMMENTED' | 'POST_MENTION' | 'NEW_POST';
