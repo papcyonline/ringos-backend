@@ -717,6 +717,33 @@ export async function refreshTokens(token: string, req?: Request) {
     // Token reuse detection: if a previously rotated token is presented again,
     // assume it was stolen and revoke ALL tokens for the user (RFC 6819 §5.2.2.3).
     if (existing.revokedAt) {
+      // Grace window: legitimate clients can race (e.g. iOS suspends the app
+      // mid-refresh during a CallKit call, the response is lost, and the client
+      // retries with the old token). If the revocation is recent and the
+      // replacement is still active, issue a fresh access token against the
+      // replacement instead of wiping all sessions.
+      const GRACE_WINDOW_MS = 30_000;
+      const revokedAgeMs = Date.now() - existing.revokedAt.getTime();
+      if (revokedAgeMs <= GRACE_WINDOW_MS && existing.replacedBy) {
+        const replacement = await tx.refreshToken.findUnique({
+          where: { id: existing.replacedBy },
+        });
+        if (
+          replacement &&
+          replacement.revokedAt === null &&
+          replacement.expiresAt > new Date()
+        ) {
+          const user = await tx.user.findUnique({ where: { id: existing.userId } });
+          if (user) {
+            const accessToken = generateAccessToken({
+              userId: user.id,
+              isAnonymous: user.isAnonymous,
+            });
+            return { accessToken, refreshToken: replacement.token };
+          }
+        }
+      }
+
       await tx.refreshToken.updateMany({
         where: { userId: existing.userId, revokedAt: null },
         data: { revokedAt: new Date() },

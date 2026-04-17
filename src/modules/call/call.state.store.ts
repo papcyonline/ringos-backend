@@ -50,6 +50,15 @@ export interface CallStateStore {
    * entirely for groups.
    */
   markAnswered(callId: string, userId: string, answeredAt: Date): Promise<boolean>;
+  /**
+   * Atomic termination claim. Returns true iff this caller is the first to
+   * initiate cleanup for `callId`. Subsequent callers (e.g. a double-tap
+   * hang-up, a CallKit-driven end that races the UI's end button, a
+   * disconnect-grace expiry that races an explicit end) return false and
+   * MUST skip all side effects (room broadcasts, missed-call pushes,
+   * CallLog updates) to avoid duplicate cleanup.
+   */
+  claimTermination(callId: string): Promise<boolean>;
   /** Remove all state for a call, including each participant's user→call map. */
   cleanup(callId: string): Promise<void>;
   /** Remove just this participant's user→call mapping (group-call leave). */
@@ -71,6 +80,7 @@ export interface CallStateStore {
 class InMemoryCallStateStore implements CallStateStore {
   private readonly calls = new Map<string, ActiveCall>();
   private readonly userCall = new Map<string, string>();
+  private readonly terminating = new Set<string>();
   private readonly unansweredTimers = new Map<string, NodeJS.Timeout>();
   private readonly disconnectTimers = new Map<string, { timeout: NodeJS.Timeout; callId: string }>();
 
@@ -106,8 +116,16 @@ class InMemoryCallStateStore implements CallStateStore {
     return true;
   }
 
+  async claimTermination(callId: string): Promise<boolean> {
+    if (this.terminating.has(callId)) return false;
+    if (!this.calls.has(callId)) return false;
+    this.terminating.add(callId);
+    return true;
+  }
+
   async cleanup(callId: string): Promise<void> {
     const call = this.calls.get(callId);
+    this.terminating.delete(callId);
     if (!call) return;
     this.clearUnansweredTimer(callId);
     for (const pid of call.participantIds) {
@@ -163,6 +181,11 @@ const CALL_KEY_TTL_SECONDS = 2 * 60 * 60; // 2 hours
 const callKey = (callId: string) => `call:${callId}`;
 const userCallKey = (userId: string) => `user_call:${userId}`;
 const answeredLockKey = (callId: string) => `call:${callId}:answered`;
+const terminatingLockKey = (callId: string) => `call:${callId}:terminating`;
+// Short TTL: just long enough for cleanup to finish + a safety margin.
+// After cleanup() runs we DEL the key anyway, so TTL is purely a failsafe
+// against a crash between claim and cleanup.
+const TERMINATING_LOCK_TTL_SECONDS = 60;
 
 interface SerializedCall {
   callId: string;
@@ -261,18 +284,37 @@ class RedisCallStateStore implements CallStateStore {
     return true;
   }
 
+  async claimTermination(callId: string): Promise<boolean> {
+    // Atomic first-terminator lock: SET NX succeeds only for the first caller.
+    // The short TTL is a failsafe — cleanup() drops this key in its pipeline.
+    const locked = await this.redis.set(
+      terminatingLockKey(callId),
+      '1',
+      'EX',
+      TERMINATING_LOCK_TTL_SECONDS,
+      'NX',
+    );
+    return locked === 'OK';
+  }
+
   async cleanup(callId: string): Promise<void> {
     const call = await this.getCall(callId);
     this.clearUnansweredTimer(callId);
     if (!call) {
-      // Best-effort: call entry already gone, but still nuke lock + any user map rows
+      // Best-effort: call entry already gone, but still nuke any user map rows
       // we might still have (caller might pass callId from a stale in-memory ref).
+      // Leave terminatingLockKey intact — it self-expires and guards against
+      // racing teardown paths claiming termination after the call is gone.
       await this.redis.del(callKey(callId), answeredLockKey(callId));
       return;
     }
     const pipeline = this.redis.pipeline();
     pipeline.del(callKey(callId));
     pipeline.del(answeredLockKey(callId));
+    // Intentionally leave terminatingLockKey intact — it self-expires via
+    // its short TTL. Keeping it lets a delayed "end" arriving after cleanup
+    // (e.g. timeout callback racing an explicit end across instances) fail
+    // the claim instead of re-running side effects against a stale snapshot.
     for (const pid of call.participantIds) {
       pipeline.del(userCallKey(pid));
     }

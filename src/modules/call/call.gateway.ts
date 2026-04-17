@@ -399,6 +399,13 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
       const timeout = setTimeout(async () => {
         const call = await callState.getCall(callId);
         if (call && !call.answeredAt) {
+          // Race guard: another path (explicit end, disconnect grace) may
+          // already be tearing this call down. Skip if we're not first.
+          const claimed = await callState.claimTermination(callId);
+          if (!claimed) {
+            callState.clearUnansweredTimer(callId);
+            return;
+          }
           try {
             io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: 'timeout' });
             const sockets = await io.in(`call:${callId}`).fetchSockets();
@@ -507,6 +514,13 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         callId,
         reason: 'answered_elsewhere',
       });
+      // Also send a VoIP cancel push. Sibling devices may have a suspended
+      // socket (iOS backgrounded, CallKit showing) and would otherwise keep
+      // ringing until the server-side timeout. The VoIP push dismisses
+      // CallKit on iOS even when the Flutter app is killed.
+      sendCallCancelPush(userId, callId).catch((err) => {
+        logger.error({ err, userId, callId }, 'Failed to send VoIP cancel push to answerer siblings');
+      });
 
       // Update CallLog to COMPLETED — write-behind, ordered after the
       // initial create.
@@ -569,6 +583,18 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
 
       if (!call || !call.participantIds.has(userId)) return;
 
+      // For 1-on-1 rejects, claim termination up front. A second reject
+      // (e.g. user taps Decline on two devices simultaneously) or a racing
+      // call:end would otherwise double-emit call:rejected + duplicate the
+      // CallLog status update.
+      if (!call.isGroup) {
+        const claimed = await callState.claimTermination(callId);
+        if (!claimed) {
+          logger.info({ userId, callId }, 'call:reject ignored — already terminating');
+          return;
+        }
+      }
+
       io.to(`user:${call.initiatorId}`).emit('call:rejected', {
         callId,
         userId,
@@ -600,8 +626,14 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         // may be updated concurrently on other instances).
         const trimmed = await callState.getCall(callId);
 
-        // If only the initiator is left, clean up the call entirely
+        // If only the initiator is left, clean up the call entirely.
+        // Race guard on the full teardown path (equivalent to call:end).
         if (!trimmed || trimmed.participantIds.size <= 1) {
+          const claimed = await callState.claimTermination(callId);
+          if (!claimed) {
+            logger.info({ userId, callId }, 'group call:reject cleanup skipped — already terminating');
+            return;
+          }
           io.to(`user:${call.initiatorId}`).emit('call:ended', { callId, endedBy: 'all_rejected' });
           const remainingSockets = await io.in(`call:${callId}`).fetchSockets();
           for (const s of remainingSockets) s.leave(`call:${callId}`);
@@ -694,8 +726,24 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
   socket.on('call:end', async (data: { callId: string }) => {
     try {
       const { callId } = data;
-      const call = await callState.getCall(callId);
-      if (!call) return;
+      const callBefore = await callState.getCall(callId);
+      if (!callBefore) return;
+
+      // First-terminator-wins lock. Prevents duplicate missed-call pushes,
+      // double room broadcasts, and double CallLog updates when a second
+      // call:end arrives (e.g. CallKit end racing the UI end button, or
+      // the server-side timeout racing an explicit end).
+      const claimed = await callState.claimTermination(callId);
+      if (!claimed) {
+        logger.info({ userId, callId }, 'call:end ignored — already terminating');
+        return;
+      }
+
+      // Re-read state AFTER the claim: an answer may have landed between
+      // our initial getCall and the claim (e.g. callee tapped Answer in the
+      // same tick the caller tapped End). Using the fresh snapshot keeps us
+      // from falsely firing the missed-call path against a just-answered call.
+      const call = (await callState.getCall(callId)) ?? callBefore;
 
       // If the caller hangs up before anyone answered, tell every target's
       // devices to dismiss the incoming-call UI + every sibling device of
@@ -820,7 +868,13 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         await callState.removeParticipant(callId, userId);
         io.to(`call:${callId}`).emit('call:participant-left', { callId, userId });
       } else {
-        // Grace period expired — end the call
+        // Grace period expired — end the call. Race guard: another path
+        // (explicit call:end, timeout) may already be tearing down.
+        const claimed = await callState.claimTermination(callId);
+        if (!claimed) {
+          logger.info({ userId, callId }, 'Disconnect grace expiry skipped — already terminating');
+          return;
+        }
         io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: userId });
         await finalizeCallEnd(io, callId, currentCall);
         logger.info({ userId, callId }, 'Call ended after disconnect grace period expired');
