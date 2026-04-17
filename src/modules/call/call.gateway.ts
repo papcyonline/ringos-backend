@@ -699,19 +699,43 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
 
       // If the caller hangs up before anyone answered, tell every target's
       // devices to dismiss the incoming-call UI + every sibling device of
-      // the caller to stop its "calling..." screen.
+      // the caller to stop its "calling..." screen. Also fire a missed-call
+      // notification so the callee still gets a lock-screen banner (the
+      // CallKit ring alone leaves nothing behind once dismissed).
       if (!call.answeredAt) {
+        const caller = await prisma.user.findUnique({
+          where: { id: call.initiatorId },
+          select: { displayName: true, avatarUrl: true },
+        });
         for (const targetId of call.participantIds) {
           if (targetId === call.initiatorId) continue;
           io.to(`user:${targetId}`).emit('call:cancel', {
             callId,
             reason: 'caller_cancelled',
           });
-          // Also send a VoIP cancel push — the socket event only reaches
-          // the callee if their app is running. VoIP push wakes a killed
-          // iOS app so CallKit can dismiss the ringing UI.
+          // VoIP cancel push dismisses CallKit on iOS even when the app
+          // is killed.
           sendCallCancelPush(targetId, callId).catch((err) => {
             logger.error({ err, targetId, callId }, 'Failed to send VoIP cancel push');
+          });
+          // Leave a "missed call" notification on the target's lock
+          // screen so they know someone called.
+          io.to(`user:${targetId}`).emit('call:missed', {
+            callId,
+            conversationId: call.conversationId,
+            callType: call.callType,
+            callerName: caller?.displayName ?? 'Unknown',
+            callerAvatar: caller?.avatarUrl ?? null,
+          });
+          sendMissedCallNotification(targetId, {
+            callId,
+            conversationId: call.conversationId,
+            callType: call.callType,
+            callerId: call.initiatorId,
+            callerName: caller?.displayName ?? 'Unknown',
+            callerAvatar: caller?.avatarUrl,
+          }).catch((err) => {
+            logger.error({ err, targetId, callId }, 'Failed to send missed call notification');
           });
         }
         socket.to(`user:${userId}`).emit('call:cancel', {
