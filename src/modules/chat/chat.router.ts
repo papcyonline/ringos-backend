@@ -1282,6 +1282,88 @@ router.delete(
   },
 );
 
+// ─── Shared Content (Media / Docs / Links) ──────────────────
+
+/**
+ * Lists messages in a conversation filtered by content kind.
+ * type=media → messages with imageUrl (photos / videos)
+ * type=docs  → messages flagged as document in metadata
+ * type=links → messages whose content contains a URL
+ */
+router.get(
+  '/conversations/:conversationId/shared',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const conversationId = req.params.conversationId as string;
+      const userId = req.user!.userId;
+      const type = String(req.query.type ?? 'media');
+      const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+      const limit = Math.min(
+        50,
+        Math.max(1, parseInt(String(req.query.limit ?? '30'), 10) || 30),
+      );
+
+      // Participant check
+      const participant = await prisma.conversationParticipant.findUnique({
+        where: { conversationId_userId: { conversationId, userId } },
+        select: { leftAt: true },
+      });
+      if (!participant) {
+        return res.status(403).json({ message: 'Not a participant' });
+      }
+
+      let where: Record<string, unknown>;
+      if (type === 'media') {
+        where = {
+          conversationId,
+          deletedAt: null,
+          imageUrl: { not: null },
+          // Exclude document uploads that happen to have imageUrl
+          NOT: { metadata: { path: ['isDocument'], equals: true } },
+        };
+      } else if (type === 'docs') {
+        where = {
+          conversationId,
+          deletedAt: null,
+          metadata: { path: ['isDocument'], equals: true },
+        };
+      } else if (type === 'links') {
+        where = {
+          conversationId,
+          deletedAt: null,
+          content: { contains: 'http', mode: 'insensitive' },
+        };
+      } else {
+        return res.status(400).json({ message: 'Invalid type' });
+      }
+
+      const [items, total] = await Promise.all([
+        prisma.message.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip: (page - 1) * limit,
+          take: limit,
+          select: {
+            id: true,
+            senderId: true,
+            content: true,
+            imageUrl: true,
+            metadata: true,
+            createdAt: true,
+            sender: { select: { displayName: true, avatarUrl: true } },
+          },
+        }),
+        prisma.message.count({ where }),
+      ]);
+
+      res.json({ items, total, page, limit });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ─── Polls ──────────────────────────────────────────────────
 
 router.post(
