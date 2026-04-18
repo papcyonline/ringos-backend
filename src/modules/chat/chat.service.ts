@@ -215,7 +215,15 @@ export async function getConversation(conversationId: string, userId: string) {
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
+            select: {
+              id: true,
+              displayName: true,
+              avatarUrl: true,
+              isOnline: true,
+              isVerified: true,
+              lastSeenAt: true,
+              hideOnlineStatus: true,
+            },
           },
         },
       },
@@ -232,6 +240,14 @@ export async function getConversation(conversationId: string, userId: string) {
     const isParticipant = conversation.participants.some((p) => p.userId === userId);
     if (!isParticipant) {
       throw new ForbiddenError('You are not a participant in this conversation');
+    }
+  }
+
+  // Respect hideOnlineStatus — never leak presence of users who opted out.
+  for (const p of conversation.participants) {
+    if (p.user.hideOnlineStatus) {
+      (p.user as { isOnline: boolean }).isOnline = false;
+      (p.user as { lastSeenAt: Date | null }).lastSeenAt = null;
     }
   }
 

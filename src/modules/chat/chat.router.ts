@@ -10,6 +10,7 @@ import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema, forwardMessageSchema, searchMessagesSchema } from './chat.schema';
 import * as chatService from './chat.service';
 import * as groupService from './group.service';
+import * as pollService from './poll.service';
 import { formatMessagePayload, emitToParticipantRooms, broadcastAndNotifyMessage } from './chat.utils';
 import { translateMessage } from './translation.service';
 import { transcribeMessage } from './transcription.service';
@@ -1275,6 +1276,79 @@ router.delete(
         req.user!.userId,
       );
       res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── Polls ──────────────────────────────────────────────────
+
+router.post(
+  '/conversations/:conversationId/polls',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const poll = await pollService.createPoll({
+        conversationId: req.params.conversationId!,
+        creatorId: req.user!.userId,
+        question: String(req.body?.question ?? ''),
+        options: Array.isArray(req.body?.options) ? req.body.options : [],
+        allowMultiple: !!req.body?.allowMultiple,
+      });
+      res.status(201).json(poll);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.get(
+  '/polls/:pollId',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const poll = await pollService.getPollDetails(
+        req.params.pollId!,
+        req.user!.userId,
+      );
+      res.json(poll);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/polls/:pollId/vote',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const optionIds: string[] = Array.isArray(req.body?.optionIds)
+        ? req.body.optionIds.map((x: unknown) => String(x))
+        : [];
+      const poll = await pollService.vote(
+        req.params.pollId!,
+        req.user!.userId,
+        optionIds,
+      );
+      res.json(poll);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/polls/:pollId/close',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const poll = await pollService.closePoll(
+        req.params.pollId!,
+        req.user!.userId,
+      );
+      res.json(poll);
     } catch (err) {
       next(err);
     }

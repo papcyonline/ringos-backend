@@ -226,6 +226,8 @@ model User {
   giftsSent        StoryGift[]    @relation("GiftsSent")
   giftsReceived    StoryGift[]    @relation("GiftsReceived")
   chatFolders      ChatFolder[]
+  polls            Poll[]
+  pollVotes        PollVote[]
 
   @@index([isOnline, lastSeenAt])
 }
@@ -412,6 +414,7 @@ model Conversation {
   callLogs     CallLog[]
   posts        Post[]
   stories      Story[]
+  polls        Poll[]
 }
 
 // ── Channel Posts ──
@@ -591,6 +594,7 @@ model Message {
   replyTo      Message?           @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
   replies      Message[]          @relation("MessageReplies")
   reactions    MessageReaction[]
+  poll         Poll?
 
   @@index([conversationId, createdAt])
   @@index([conversationId, senderId, deletedAt, createdAt])
@@ -886,4 +890,53 @@ model ChatFolderMember {
   @@unique([folderId, conversationId])
   @@unique([conversationId]) // one folder per conversation
   @@index([folderId])
+}
+
+// ── Polls ──
+
+model Poll {
+  id             String       @id @default(uuid())
+  conversationId String
+  messageId      String       @unique
+  creatorId      String
+  question       String
+  allowMultiple  Boolean      @default(false)
+  closedAt       DateTime?
+  createdAt      DateTime     @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  creator      User         @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  options      PollOption[]
+  votes        PollVote[]
+
+  @@index([conversationId, createdAt])
+}
+
+model PollOption {
+  id       String     @id @default(uuid())
+  pollId   String
+  text     String
+  orderIdx Int
+
+  poll  Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes PollVote[]
+
+  @@index([pollId, orderIdx])
+}
+
+model PollVote {
+  id        String     @id @default(uuid())
+  pollId    String
+  optionId  String
+  voterId   String
+  createdAt DateTime   @default(now())
+
+  poll   Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  voter  User       @relation(fields: [voterId], references: [id], onDelete: Cascade)
+
+  @@unique([optionId, voterId])
+  @@index([pollId])
+  @@index([voterId])
 }

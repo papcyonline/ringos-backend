@@ -24,7 +24,15 @@ export const usernameSchema = z.object({
   gender: z.enum(['male', 'female', 'MALE', 'FEMALE']).transform(v => v.toUpperCase() as 'MALE' | 'FEMALE'),
   location: z.string().min(2, 'Location is required').max(100),
   availabilityNote: z.string().max(120).optional(),
-  language: z.string().min(2).max(100).optional(),
+  language: z
+    .string()
+    .min(2)
+    .max(10)
+    .refine(
+      (v) => v.split(',').map((s) => s.trim()).filter(Boolean).length <= 2,
+      'At most 2 languages allowed',
+    )
+    .optional(),
 });
 
 export const phoneAuthSchema = z.object({
