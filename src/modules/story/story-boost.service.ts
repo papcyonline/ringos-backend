@@ -1,13 +1,18 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../shared/errors';
+import { isPro } from '../../shared/usage.service';
 
 // ─── Boost Tiers ─────────────────────────────────────────
 
-const BOOST_TIERS: Record<string, { durationHours: number; productId: string }> = {
-  basic: { durationHours: 24, productId: 'story_boost_basic' },
-  premium: { durationHours: 24, productId: 'story_boost_premium' },
+const BOOST_TIERS: Record<string, { durationHours: number }> = {
+  basic: { durationHours: 24 },
+  premium: { durationHours: 24 },
 };
+
+// Pro-only feature. No payment step — access is gated by active Pro subscription.
+// Weekly cap prevents a single Pro user from monopolising the boosted slot.
+const MAX_BOOSTS_PER_WEEK = 3;
 
 // ─── Create Boost ────────────────────────────────────────
 
@@ -19,6 +24,11 @@ export async function createBoost(
   const tierConfig = BOOST_TIERS[tier];
   if (!tierConfig) {
     throw new BadRequestError(`Invalid boost tier: ${tier}`);
+  }
+
+  // Pro gate
+  if (!(await isPro(userId))) {
+    throw new ForbiddenError('Boosting stories is a Pro feature');
   }
 
   // Verify story exists and belongs to user
@@ -45,6 +55,17 @@ export async function createBoost(
 
   if (existingBoost) {
     throw new BadRequestError('Story already has an active boost');
+  }
+
+  // Weekly cap across all of this user's boosts
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const recentBoosts = await prisma.storyBoost.count({
+    where: { userId, createdAt: { gte: weekAgo } },
+  });
+  if (recentBoosts >= MAX_BOOSTS_PER_WEEK) {
+    throw new BadRequestError(
+      `Weekly boost limit reached (${MAX_BOOSTS_PER_WEEK}). Try again in a few days.`,
+    );
   }
 
   const expiresAt = new Date(Date.now() + tierConfig.durationHours * 60 * 60 * 1000);
