@@ -51,10 +51,22 @@ export async function createBoost(
       storyId,
       expiresAt: { gt: new Date() },
     },
+    select: { expiresAt: true },
   });
 
   if (existingBoost) {
-    throw new BadRequestError('Story already has an active boost');
+    const msRemaining = existingBoost.expiresAt.getTime() - Date.now();
+    const hoursLeft = Math.ceil(msRemaining / (60 * 60 * 1000));
+    const minutesLeft = Math.ceil(msRemaining / (60 * 1000));
+    const timeLeft =
+      hoursLeft > 1
+        ? `${hoursLeft} hours`
+        : minutesLeft > 1
+          ? `${minutesLeft} minutes`
+          : '1 minute';
+    throw new BadRequestError(
+      `This story is already boosted. Boost expires in ${timeLeft}.`,
+    );
   }
 
   // Weekly cap across all of this user's boosts
