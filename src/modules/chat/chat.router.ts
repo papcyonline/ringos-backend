@@ -1290,7 +1290,7 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const poll = await pollService.createPoll({
-        conversationId: req.params.conversationId!,
+        conversationId: req.params.conversationId as string,
         creatorId: req.user!.userId,
         question: String(req.body?.question ?? ''),
         options: Array.isArray(req.body?.options) ? req.body.options : [],
@@ -1309,7 +1309,7 @@ router.get(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const poll = await pollService.getPollDetails(
-        req.params.pollId!,
+        req.params.pollId as string,
         req.user!.userId,
       );
       res.json(poll);
@@ -1328,7 +1328,7 @@ router.post(
         ? req.body.optionIds.map((x: unknown) => String(x))
         : [];
       const poll = await pollService.vote(
-        req.params.pollId!,
+        req.params.pollId as string,
         req.user!.userId,
         optionIds,
       );
@@ -1345,7 +1345,7 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const poll = await pollService.closePoll(
-        req.params.pollId!,
+        req.params.pollId as string,
         req.user!.userId,
       );
       res.json(poll);
