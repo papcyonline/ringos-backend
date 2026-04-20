@@ -1,7 +1,7 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
-import { createNotification } from '../notification/notification.service';
+import { createNotification, sendPostPush } from '../notification/notification.service';
 import { enqueuePostNotification } from '../notification/notification-batcher';
 
 async function verifyChannelAdmin(channelId: string, userId: string) {
@@ -797,6 +797,12 @@ async function notifyChannelFollowers(channelId: string, authorId: string, postI
       body,
       imageUrl: channel.avatarUrl ?? undefined,
       data: { postId, channelId, authorId },
+    }).catch(() => {});
+    sendPostPush(follower.userId, {
+      title,
+      body,
+      imageUrl: channel.avatarUrl ?? undefined,
+      data: { type: 'NEW_POST', postId, channelId, authorId },
     }).catch(() => {});
   }
 }
