@@ -459,6 +459,7 @@ export async function toggleLike(postId: string, userId: string) {
         postId,
         channelId: post.channelId,
         type: 'POST_LIKED',
+        actorId: userId,
         actorName: liker.displayName ?? 'Someone',
         actorAvatar: liker.avatarUrl ?? undefined,
       });
@@ -500,6 +501,7 @@ export async function addComment(postId: string, userId: string, content: string
       postId,
       channelId: post.channelId,
       type: 'POST_COMMENTED',
+      actorId: userId,
       actorName: commenter.displayName ?? 'Someone',
       actorAvatar: commenter.avatarUrl ?? undefined,
     });
@@ -788,6 +790,10 @@ async function notifyChannelFollowers(channelId: string, authorId: string, postI
   const title = channel.name ?? 'Channel';
   const body = content.length > 100 ? content.substring(0, 97) + '...' : (content || 'New post');
 
+  // Treat the CHANNEL as the "sender" for Communication Notifications so
+  // the lock-screen banner shows the channel avatar + Yomeet badge rather
+  // than the Yomeet app icon alone — matching Telegram-style channel
+  // push UX.
   for (const follower of followers) {
     if (follower.isMuted) continue;
     createNotification({
@@ -802,7 +808,15 @@ async function notifyChannelFollowers(channelId: string, authorId: string, postI
       title,
       body,
       imageUrl: channel.avatarUrl ?? undefined,
-      data: { type: 'NEW_POST', postId, channelId, authorId },
+      data: {
+        type: 'NEW_POST',
+        postId,
+        channelId,
+        authorId,
+        senderId: channelId,
+        senderName: title,
+        senderAvatar: channel.avatarUrl ?? '',
+      },
     }).catch(() => {});
   }
 }

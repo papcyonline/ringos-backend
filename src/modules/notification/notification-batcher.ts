@@ -3,6 +3,7 @@ import { createNotification, sendPostPush } from './notification.service';
 
 interface BatchEntry {
   count: number;
+  latestActorId: string;
   latestActorName: string;
   latestActorAvatar: string | undefined;
   postId: string;
@@ -24,7 +25,7 @@ function flush(key: string) {
   if (!entry) return;
   batches.delete(key);
 
-  const { count, latestActorName, latestActorAvatar, postId, channelId, authorId, type } = entry;
+  const { count, latestActorId, latestActorName, latestActorAvatar, postId, channelId, authorId, type } = entry;
 
   const title = count === 1
     ? latestActorName
@@ -43,11 +44,23 @@ function flush(key: string) {
     data: { postId, channelId },
   }).catch((err) => logger.error({ err, postId, type }, 'Failed to create batched notification'));
 
+  // sender* fields let the iOS NSE upgrade this to a Communication
+  // Notification (big avatar circle + Yomeet badge on the lock screen).
+  // For batched events we surface the LATEST actor as the "sender" — the
+  // title already reads "X and N others" when there are more.
   sendPostPush(authorId, {
     title,
     body,
     imageUrl: latestActorAvatar,
-    data: { type, postId, channelId, userId: authorId },
+    data: {
+      type,
+      postId,
+      channelId,
+      userId: authorId,
+      senderId: latestActorId,
+      senderName: latestActorName,
+      senderAvatar: latestActorAvatar ?? '',
+    },
   }).catch((err) => logger.error({ err, postId, type }, 'Failed to send batched push'));
 }
 
@@ -56,15 +69,17 @@ export function enqueuePostNotification(params: {
   postId: string;
   channelId: string;
   type: 'POST_LIKED' | 'POST_COMMENTED';
+  actorId: string;
   actorName: string;
   actorAvatar: string | undefined;
 }) {
-  const { authorId, postId, channelId, type, actorName, actorAvatar } = params;
+  const { authorId, postId, channelId, type, actorId, actorName, actorAvatar } = params;
   const key = makeKey(authorId, postId, type);
 
   const existing = batches.get(key);
   if (existing) {
     existing.count++;
+    existing.latestActorId = actorId;
     existing.latestActorName = actorName;
     existing.latestActorAvatar = actorAvatar;
     clearTimeout(existing.timer);
@@ -72,6 +87,7 @@ export function enqueuePostNotification(params: {
   } else {
     batches.set(key, {
       count: 1,
+      latestActorId: actorId,
       latestActorName: actorName,
       latestActorAvatar: actorAvatar,
       postId,
