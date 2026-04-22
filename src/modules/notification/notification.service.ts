@@ -616,6 +616,7 @@ export async function notifyChatMessage(
           senderId,
           senderName,
           senderAvatar: senderAvatarUrl,
+          isVerified: senderIsVerified,
           audioUrl: options.audioUrl,
           audioDuration: options.audioDuration ?? 0,
         });
@@ -630,6 +631,7 @@ export async function notifyChatMessage(
           senderId,
           senderName,
           senderAvatar: senderAvatarUrl,
+          isVerified: senderIsVerified,
           content: body,
           imageUrl: options?.imageUrl,
         });

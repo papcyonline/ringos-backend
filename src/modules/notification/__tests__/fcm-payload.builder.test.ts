@@ -63,7 +63,7 @@ describe('fcm-payload.builder', () => {
   });
 
   describe('buildVoiceNotePayload', () => {
-    it('stringifies audioDuration and defaults senderAvatar', () => {
+    it('stringifies audioDuration, defaults senderAvatar, defaults isVerified to "false"', () => {
       const payload = buildVoiceNotePayload({
         messageId: 'm-1',
         conversationId: 'c-1',
@@ -80,12 +80,26 @@ describe('fcm-payload.builder', () => {
         senderId: 'u-1',
         senderName: 'Bob',
         senderAvatar: '',
+        isVerified: 'false',
         audioUrl: 'https://cdn.example.com/v.m4a',
         audioDuration: '7',
       });
       for (const v of Object.values(payload)) {
         expect(typeof v).toBe('string');
       }
+    });
+
+    it('serialises isVerified=true as the string "true"', () => {
+      const payload = buildVoiceNotePayload({
+        messageId: 'm',
+        conversationId: 'c',
+        senderId: 'u',
+        senderName: 'n',
+        isVerified: true,
+        audioUrl: 'x',
+        audioDuration: 0,
+      });
+      expect(payload.isVerified).toBe('true');
     });
   });
 
@@ -112,7 +126,7 @@ describe('fcm-payload.builder', () => {
       expect(payload.imageUrl).toBe('https://cdn.example.com/p.jpg');
     });
 
-    it('defaults messageId and senderAvatar to empty strings', () => {
+    it('defaults messageId and senderAvatar to empty strings; isVerified defaults to "false"', () => {
       const payload = buildMessagePayload({
         conversationId: 'c',
         senderId: 'u',
@@ -121,6 +135,18 @@ describe('fcm-payload.builder', () => {
       });
       expect(payload.messageId).toBe('');
       expect(payload.senderAvatar).toBe('');
+      expect(payload.isVerified).toBe('false');
+    });
+
+    it('serialises isVerified=true as "true" (used by iOS NSE for the lock-screen check mark)', () => {
+      const payload = buildMessagePayload({
+        conversationId: 'c',
+        senderId: 'u',
+        senderName: 'n',
+        content: 'hi',
+        isVerified: true,
+      });
+      expect(payload.isVerified).toBe('true');
     });
 
     it('marks every payload with the correct type for client routing', () => {

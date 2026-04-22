@@ -72,6 +72,7 @@ export function buildVoiceNotePayload(data: {
   senderId: string;
   senderName: string;
   senderAvatar?: string | null;
+  isVerified?: boolean;
   audioUrl: string;
   audioDuration: number;
 }): Record<string, string> {
@@ -82,6 +83,7 @@ export function buildVoiceNotePayload(data: {
     senderId: data.senderId,
     senderName: data.senderName,
     senderAvatar: data.senderAvatar ?? '',
+    isVerified: String(data.isVerified ?? false),
     audioUrl: data.audioUrl,
     audioDuration: String(data.audioDuration),
   };
@@ -96,6 +98,7 @@ export function buildMessagePayload(data: {
   senderId: string;
   senderName: string;
   senderAvatar?: string | null;
+  isVerified?: boolean;
   content: string;
   imageUrl?: string | null;
 }): Record<string, string> {
@@ -106,6 +109,7 @@ export function buildMessagePayload(data: {
     senderId: data.senderId,
     senderName: data.senderName,
     senderAvatar: data.senderAvatar ?? '',
+    isVerified: String(data.isVerified ?? false),
     content: data.content,
   };
 
