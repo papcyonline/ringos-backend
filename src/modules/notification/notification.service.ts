@@ -259,7 +259,6 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
         aps: {
           alert: { title: notifTitle, body: notifBody },
           sound: 'default',
-          'content-available': 1,
           'mutable-content': 1,
         },
       },
@@ -315,7 +314,6 @@ async function sendPushToUser(userId: string, payload: {
           },
           sound: 'default',
           badge: 1,
-          'content-available': 1,
           'mutable-content': 1,
         },
       },
