@@ -236,8 +236,15 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
 
   // Build alert title/body for iOS (APNS) display.
   const notifTitle = data.senderName || data.callerName || 'Yomeet';
-  const notifBody =
-    data.audioUrl ? 'Sent a voice message' : data.content || 'New message';
+  let notifBody: string;
+  if (data.audioUrl) {
+    const dur = Number.parseInt(data.audioDuration ?? '', 10);
+    notifBody = Number.isFinite(dur) && dur > 0
+      ? `\u{1F3A4} Voice message (${dur}s)`
+      : '\u{1F3A4} Voice message';
+  } else {
+    notifBody = data.content || 'New message';
+  }
 
   // Android: data-only (no notification payload) so the native
   // YomeetFirebaseMessagingService ALWAYS handles display — this ensures
@@ -313,7 +320,6 @@ async function sendPushToUser(userId: string, payload: {
             body: payload.body,
           },
           sound: 'default',
-          badge: 1,
           'mutable-content': 1,
         },
       },
@@ -547,7 +553,10 @@ export async function notifyChatMessage(
   const isVoiceNote = !!options?.audioUrl;
   let body = content;
   if (isVoiceNote) {
-    body = 'Sent a voice message';
+    const dur = options?.audioDuration ?? 0;
+    body = dur > 0
+      ? `\u{1F3A4} Voice message (${dur}s)`
+      : '\u{1F3A4} Voice message';
   } else if (options?.imageUrl && !content) {
     body = 'Sent an image';
   } else if (options?.imageUrl && content) {

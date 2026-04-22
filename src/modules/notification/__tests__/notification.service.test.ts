@@ -357,7 +357,7 @@ describe('notification.service', () => {
       );
     });
 
-    it('should use "Sent a voice message" for audio messages', async () => {
+    it('should use the mic-emoji voice body and include duration when provided', async () => {
       mockPrisma.conversationParticipant.findMany.mockResolvedValue([
         { userId: 'recipient-1' },
       ]);
@@ -367,12 +367,35 @@ describe('notification.service', () => {
 
       await notifyChatMessage('conv-1', 'sender-1', 'Test', 'content', {
         audioUrl: '/uploads/audio/voice.m4a',
+        audioDuration: 7,
       });
 
       expect(mockPrisma.notification.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            body: 'Sent a voice message',
+            body: '\u{1F3A4} Voice message (7s)',
+          }),
+        }),
+      );
+    });
+
+    it('should drop the duration suffix when audioDuration is 0', async () => {
+      mockPrisma.conversationParticipant.findMany.mockResolvedValue([
+        { userId: 'recipient-1' },
+      ]);
+      mockPrisma.user.findUnique.mockResolvedValue({ avatarUrl: null });
+      mockPrisma.notification.create.mockResolvedValue({ id: 'notif-audio' });
+      mockSocketRoom.fetchSockets.mockResolvedValue([]);
+
+      await notifyChatMessage('conv-1', 'sender-1', 'Test', 'content', {
+        audioUrl: '/uploads/audio/voice.m4a',
+        audioDuration: 0,
+      });
+
+      expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            body: '\u{1F3A4} Voice message',
           }),
         }),
       );
