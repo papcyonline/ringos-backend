@@ -267,6 +267,10 @@ async function sendDataPushToUser(userId: string, data: Record<string, string>) 
           alert: { title: notifTitle, body: notifBody },
           sound: 'default',
           'mutable-content': 1,
+          // Bypass Focus modes / Do Not Disturb / Scheduled Summary so
+          // chats behave like WhatsApp / iMessage — the user still hears
+          // and sees the notification even when a Focus is active.
+          'interruption-level': 'time-sensitive',
         },
       },
     },

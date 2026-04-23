@@ -149,6 +149,9 @@ describe('notification.service — APNs payload regression (iOS lock screen bug)
     });
     expect(msg.apns.payload.aps.sound).toBe('default');
     expect(msg.apns.payload.aps['mutable-content']).toBe(1);
+    // time-sensitive bypasses iOS Focus modes / Do Not Disturb /
+    // Scheduled Summary — matching WhatsApp / iMessage behaviour.
+    expect(msg.apns.payload.aps['interruption-level']).toBe('time-sensitive');
   });
 
   it('sendDataPushToUser sends Android as data-only (no android.notification)', async () => {
