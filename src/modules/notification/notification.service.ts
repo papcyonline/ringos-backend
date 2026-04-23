@@ -202,6 +202,18 @@ async function sendFcmWithRetry(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await admin.messaging().sendEachForMulticast(message);
+      logger.info(
+        {
+          userId,
+          label,
+          successCount: response.successCount,
+          failureCount: response.failureCount,
+          errors: response.responses
+            .filter((r) => !r.success)
+            .map((r) => r.error?.code),
+        },
+        'FCM multicast response',
+      );
       await cleanupInvalidFcmTokens(tokens, response, userId);
       return;
     } catch (err: any) {
@@ -225,14 +237,30 @@ async function sendFcmWithRetry(
  */
 async function sendDataPushToUser(userId: string, data: Record<string, string>) {
   const app = getFirebaseApp();
-  if (!app) return;
+  if (!app) {
+    logger.warn({ userId }, 'sendDataPushToUser skipped — Firebase not configured');
+    return;
+  }
 
   const tokens = await prisma.fcmToken.findMany({
     where: { userId },
-    select: { token: true },
+    select: { token: true, platform: true },
   });
 
-  if (tokens.length === 0) return;
+  if (tokens.length === 0) {
+    logger.warn({ userId }, 'sendDataPushToUser skipped — no FCM tokens registered for user');
+    return;
+  }
+
+  logger.info(
+    {
+      userId,
+      tokenCount: tokens.length,
+      platforms: tokens.map((t) => t.platform),
+      type: data.type,
+    },
+    'sendDataPushToUser dispatching',
+  );
 
   // Build alert title/body for iOS (APNS) display.
   const notifTitle = data.senderName || data.callerName || 'Yomeet';
