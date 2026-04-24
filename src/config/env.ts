@@ -88,6 +88,9 @@ const envSchema = z.object({
   // App Store Links
   APP_STORE_URL: z.string().optional(),
   PLAY_STORE_URL: z.string().optional(),
+
+  // Giphy (GIF picker — backend proxies all requests so the key stays server-side)
+  GIPHY_API_KEY: z.string().optional(),
 });
 
 function loadEnv() {

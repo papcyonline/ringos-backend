@@ -19,6 +19,7 @@ import { storyRouter } from './modules/story/story.router';
 import { coinsRouter } from './modules/coins/coins.router';
 import { mediaRouter } from './modules/media/media.router';
 import { adminRouter } from './modules/admin/admin.router';
+import { giphyRouter } from './modules/giphy/giphy.router';
 import { sentryRequestHandler, sentryErrorHandler } from './shared/sentry.service';
 
 const app = express();
@@ -84,6 +85,7 @@ app.use('/api/stories', storyRouter);
 app.use('/api/coins', coinsRouter);
 app.use('/media', mediaRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/giphy', giphyRouter);
 
 // Sentry error handler (must be before custom error handler)
 app.use(sentryErrorHandler);

@@ -508,6 +508,47 @@ router.post(
   },
 );
 
+// POST /conversations/:conversationId/gif - Send a GIF message.
+// The Giphy URL was already fetched client-side from our /api/giphy proxy;
+// here we just persist it as an imageUrl with metadata.isGif so bubbles can
+// render it with a "GIF" badge without confusing it with user-uploaded photos.
+router.post(
+  '/conversations/:conversationId/gif',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { gifUrl, width, height, replyToId } = req.body as {
+        gifUrl?: string;
+        width?: number;
+        height?: number;
+        replyToId?: string;
+      };
+      if (!gifUrl || typeof gifUrl !== 'string') {
+        return res.status(400).json({ error: 'gifUrl is required' });
+      }
+      if (!gifUrl.startsWith('https://media') || !gifUrl.includes('giphy.com')) {
+        return res.status(400).json({ error: 'gifUrl must be a Giphy URL' });
+      }
+
+      const metadata: Record<string, any> = { isGif: true };
+      if (typeof width === 'number' && width > 0) metadata.gifWidth = width;
+      if (typeof height === 'number' && height > 0) metadata.gifHeight = height;
+
+      const message = await chatService.sendMessage(
+        (req.params.conversationId as string),
+        req.user!.userId,
+        '',
+        { replyToId, imageUrl: gifUrl, metadata },
+      );
+
+      broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // POST /conversations/:conversationId/audio - Send an audio message
 router.post(
   '/conversations/:conversationId/audio',
