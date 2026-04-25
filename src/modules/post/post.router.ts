@@ -143,10 +143,31 @@ router.post(
         {
           locationName: req.body.locationName || undefined,
           taggedUserIds: req.body.taggedUserIds ? JSON.parse(req.body.taggedUserIds) : undefined,
-          musicTitle: req.body.musicTitle || undefined,
-          musicArtist: req.body.musicArtist || undefined,
-          musicPreviewUrl: req.body.musicPreviewUrl || undefined,
-          musicArtwork: req.body.musicArtwork || undefined,
+          // Music can come as either an individual set of text fields
+          // (legacy / JSON body) or as a JSON-encoded `music` field
+          // (multipart). Parse both shapes into the same options.
+          ...(() => {
+            let musicObj: any | null = null;
+            if (typeof req.body.music === 'string' && req.body.music.length > 0) {
+              try { musicObj = JSON.parse(req.body.music); } catch { /* ignore */ }
+            } else if (req.body.music && typeof req.body.music === 'object') {
+              musicObj = req.body.music;
+            }
+            if (musicObj?.previewUrl) {
+              return {
+                musicTitle: musicObj.title || undefined,
+                musicArtist: musicObj.artist || undefined,
+                musicPreviewUrl: musicObj.previewUrl,
+                musicArtwork: musicObj.artwork || undefined,
+              };
+            }
+            return {
+              musicTitle: req.body.musicTitle || undefined,
+              musicArtist: req.body.musicArtist || undefined,
+              musicPreviewUrl: req.body.musicPreviewUrl || undefined,
+              musicArtwork: req.body.musicArtwork || undefined,
+            };
+          })(),
           commentsDisabled: req.body.commentsDisabled === 'true',
           hideLikeCount: req.body.hideLikeCount === 'true',
           scheduledAt: req.body.scheduledAt || undefined,
