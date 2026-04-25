@@ -107,6 +107,8 @@ export async function createPost(
     taggedUserIds?: string[];
     musicTitle?: string;
     musicArtist?: string;
+    musicPreviewUrl?: string;
+    musicArtwork?: string;
     commentsDisabled?: boolean;
     hideLikeCount?: boolean;
     scheduledAt?: string;
@@ -149,6 +151,8 @@ export async function createPost(
         taggedUserIds: options?.taggedUserIds ?? [],
         musicTitle: options?.musicTitle ?? null,
         musicArtist: options?.musicArtist ?? null,
+        musicPreviewUrl: options?.musicPreviewUrl ?? null,
+        musicArtwork: options?.musicArtwork ?? null,
         commentsDisabled: options?.commentsDisabled ?? false,
         hideLikeCount: options?.hideLikeCount ?? false,
         ...(isScheduled ? { scheduledAt, isPublished: false } : {}),
@@ -845,6 +849,8 @@ function formatPost(post: any, currentUserId: string) {
     taggedUserIds: post.taggedUserIds,
     musicTitle: post.musicTitle,
     musicArtist: post.musicArtist,
+    musicPreviewUrl: post.musicPreviewUrl,
+    musicArtwork: post.musicArtwork,
     commentsDisabled: post.commentsDisabled,
     hideLikeCount: post.hideLikeCount,
     likeCount: post._count?.likes ?? post.likeCount ?? 0,

@@ -431,6 +431,8 @@ model Post {
   taggedUserIds String[]  @default([])
   musicTitle    String?
   musicArtist   String?
+  musicPreviewUrl String?
+  musicArtwork  String?
   commentsDisabled Boolean @default(false)
   hideLikeCount    Boolean @default(false)
   likeCount     Int       @default(0)

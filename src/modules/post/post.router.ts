@@ -145,6 +145,8 @@ router.post(
           taggedUserIds: req.body.taggedUserIds ? JSON.parse(req.body.taggedUserIds) : undefined,
           musicTitle: req.body.musicTitle || undefined,
           musicArtist: req.body.musicArtist || undefined,
+          musicPreviewUrl: req.body.musicPreviewUrl || undefined,
+          musicArtwork: req.body.musicArtwork || undefined,
           commentsDisabled: req.body.commentsDisabled === 'true',
           hideLikeCount: req.body.hideLikeCount === 'true',
           scheduledAt: req.body.scheduledAt || undefined,
