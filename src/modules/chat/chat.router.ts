@@ -493,11 +493,27 @@ router.post(
       const replyToId = req.body.replyToId as string | undefined;
       const viewOnce = req.body.viewOnce === 'true';
 
+      // Optional music attachment (iTunes 30-sec preview).
+      const musicPreviewUrl = req.body.musicPreviewUrl as string | undefined;
+      const musicTitle = req.body.musicTitle as string | undefined;
+      const musicArtist = req.body.musicArtist as string | undefined;
+      const musicArtwork = req.body.musicArtwork as string | undefined;
+      const metadata: Record<string, any> | undefined = musicPreviewUrl
+        ? {
+            music: {
+              previewUrl: musicPreviewUrl,
+              title: musicTitle ?? '',
+              artist: musicArtist ?? '',
+              artwork: musicArtwork ?? '',
+            },
+          }
+        : undefined;
+
       const message = await chatService.sendMessage(
         (req.params.conversationId as string),
         req.user!.userId,
         caption,
-        { replyToId, imageUrl, viewOnce },
+        { replyToId, imageUrl, viewOnce, metadata },
       );
 
       broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
