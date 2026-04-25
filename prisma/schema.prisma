@@ -840,6 +840,7 @@ model StorySlide {
   caption      String?
   duration     Int?
   position     Int            @default(0)
+  metadata     Json?
   createdAt    DateTime       @default(now())
 
   story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)

@@ -34,6 +34,12 @@ interface SlideMetadata {
   position: number;
   duration?: number;
   caption?: string;
+  music?: {
+    previewUrl: string;
+    title?: string;
+    artist?: string;
+    artwork?: string;
+  };
 }
 
 // ─── Create Story ───────────────────────────────────────────
@@ -67,6 +73,10 @@ export async function createStory(
       const slideType = meta?.type ?? 'IMAGE';
       const position = meta?.position ?? index;
 
+      // Prisma JSON fields require `undefined` for "no value" (not null).
+      const slideMetadata: Record<string, any> | undefined = meta?.music
+        ? { music: meta.music }
+        : undefined;
       if (slideType === 'VIDEO') {
         const result = await fileToStoryVideoUrl(file, userId);
         return {
@@ -77,6 +87,7 @@ export async function createStory(
           caption: meta?.caption ?? null,
           duration: meta?.duration ?? null,
           position,
+          metadata: slideMetadata ?? undefined,
         };
       } else {
         // IMAGE or TEXT — both use image upload
@@ -89,6 +100,7 @@ export async function createStory(
           caption: meta?.caption ?? null,
           duration: meta?.duration ?? null,
           position,
+          metadata: slideMetadata ?? undefined,
         };
       }
     })
