@@ -275,6 +275,9 @@ export async function getConversations(userId: string) {
         },
       },
       messages: {
+        // Exclude messages the requesting user has deleted-for-me so the
+        // last-message preview reflects what THEY can still see.
+        where: { NOT: { deletedFor: { has: userId } } },
         orderBy: { createdAt: 'desc' },
         take: 1,
         select: {
@@ -660,6 +663,8 @@ export async function getChannelInbox(channelId: string, userId: string, cursor?
         },
       },
       messages: {
+        // Hide messages this user has deleted-for-me from the preview.
+        where: { NOT: { deletedFor: { has: userId } } },
         orderBy: { createdAt: 'desc' },
         take: 1,
         select: { id: true, content: true, senderId: true, createdAt: true },
