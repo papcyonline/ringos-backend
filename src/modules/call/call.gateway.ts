@@ -369,7 +369,7 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         // and the in-app IncomingCallOverlay handles the UX. Sending the
         // push too would stack a CallKit / FCM banner on top of the
         // overlay (the "double notification" issue).
-        if (!isUserForeground(targetId)) {
+        if (!(await isUserForeground(targetId))) {
           // Fire-and-forget so it doesn't slow down the socket path.
           sendCallPush(targetId, {
             callId,

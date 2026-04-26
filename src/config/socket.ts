@@ -19,31 +19,23 @@ const SOCKET_RATE_LIMIT_MAX = 50;           // 50 events per window
 const userEventCounts = new Map<string, { count: number; resetAt: number }>();
 
 // ── Foreground presence (per-socket) ────────────────────────────────────
-// Tracks which sockets the user has explicitly marked as "foreground" via
-// the `presence:foreground` event. Used by the call gateway to suppress
-// the redundant FCM/VoIP push when the app's already showing — the in-app
-// IncomingCallOverlay handles the ringing UX from the socket event alone.
-const foregroundSockets = new Map<string, Set<string>>();
-
-function markForeground(userId: string, socketId: string) {
-  let set = foregroundSockets.get(userId);
-  if (!set) {
-    set = new Set();
-    foregroundSockets.set(userId, set);
-  }
-  set.add(socketId);
-}
-
-function unmarkForeground(userId: string, socketId: string) {
-  const set = foregroundSockets.get(userId);
-  if (!set) return;
-  set.delete(socketId);
-  if (set.size === 0) foregroundSockets.delete(userId);
+// Implemented as Socket.IO rooms so the state is shared across all server
+// instances via the Redis adapter — an in-memory Map only knows about the
+// foreground sockets connected to *this* instance, which silently breaks
+// the call-push gate as soon as Render scales beyond a single worker.
+//
+// Sockets join `fg:<userId>` on `presence:foreground` and leave on
+// `presence:background`. Disconnects auto-leave all rooms, so no explicit
+// cleanup is needed.
+function foregroundRoom(userId: string): string {
+  return `fg:${userId}`;
 }
 
 /** True if the user has at least one foregrounded device right now. */
-export function isUserForeground(userId: string): boolean {
-  return (foregroundSockets.get(userId)?.size ?? 0) > 0;
+export async function isUserForeground(userId: string): Promise<boolean> {
+  if (!io) return false;
+  const sockets = await io.in(foregroundRoom(userId)).fetchSockets();
+  return sockets.length > 0;
 }
 
 /** Returns true if the event should be allowed, false if rate-limited. */
@@ -153,15 +145,11 @@ export async function initializeSocket(httpServer: HttpServer): Promise<Server> 
     // Foreground presence — Flutter sends these on AppLifecycleState.resumed
     // and AppLifecycleState.paused. Used by the call gateway to skip push
     // notifications when the in-app overlay can handle the ring directly.
-    socket.on('presence:foreground', () => markForeground(userId, socket.id));
-    socket.on('presence:background', () => unmarkForeground(userId, socket.id));
+    socket.on('presence:foreground', () => socket.join(foregroundRoom(userId)));
+    socket.on('presence:background', () => socket.leave(foregroundRoom(userId)));
 
     socket.on('disconnect', async (reason) => {
       logger.info({ userId, socketId: socket.id, reason }, 'Socket disconnected');
-
-      // Drop this socket from the foreground set unconditionally — even if
-      // the client never sent presence:background before disconnect.
-      unmarkForeground(userId, socket.id);
 
       // Check if user has other active sockets before marking offline
       const sockets = await io.in(`user:${userId}`).fetchSockets();
