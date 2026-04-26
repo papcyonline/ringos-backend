@@ -427,14 +427,20 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
                 callerAvatar: caller?.avatarUrl ?? null,
               });
 
-              sendMissedCallNotification(targetId, {
-                callId,
-                conversationId,
-                callType: resolvedCallType,
-                callerId: userId,
-                callerName: caller?.displayName ?? 'Unknown',
-                callerAvatar: caller?.avatarUrl,
-              }).catch((err) => {
+              const targetForeground = await isUserForeground(targetId);
+
+              sendMissedCallNotification(
+                targetId,
+                {
+                  callId,
+                  conversationId,
+                  callType: resolvedCallType,
+                  callerId: userId,
+                  callerName: caller?.displayName ?? 'Unknown',
+                  callerAvatar: caller?.avatarUrl,
+                },
+                { skipPush: targetForeground },
+              ).catch((err) => {
                 logger.error({ err, targetId, callId }, 'Failed to send missed call notification');
               });
             }
