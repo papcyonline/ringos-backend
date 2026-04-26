@@ -489,7 +489,12 @@ export async function sendCallCancelPush(
 
 /**
  * Send a missed call notification to a user.
- * Creates an in-app notification and sends a push notification.
+ * Creates an in-app notification and (optionally) sends a push notification.
+ *
+ * Pass `skipPush: true` when the receiver is foreground — the in-app
+ * notification entry still needs to land (it's the user's missed-call
+ * history), but the FCM banner on top of the foreground app would just
+ * stack a duplicate alert on the call:cancel UX the overlay already ran.
  */
 export async function sendMissedCallNotification(
   userId: string,
@@ -500,7 +505,8 @@ export async function sendMissedCallNotification(
     callerId: string;
     callerName: string;
     callerAvatar?: string | null;
-  }
+  },
+  options?: { skipPush?: boolean },
 ) {
   const isVideo = payload.callType === 'VIDEO';
   const body = isVideo
@@ -524,6 +530,8 @@ export async function sendMissedCallNotification(
   }).catch((err) => {
     logger.error({ err, userId }, 'Failed to create missed call notification');
   });
+
+  if (options?.skipPush) return;
 
   // Send FCM push notification
   sendPushToUser(userId, {

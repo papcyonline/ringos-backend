@@ -768,13 +768,26 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
             callId,
             reason: 'caller_cancelled',
           });
-          // VoIP cancel push dismisses CallKit on iOS even when the app
-          // is killed.
-          sendCallCancelPush(targetId, callId).catch((err) => {
-            logger.error({ err, targetId, callId }, 'Failed to send VoIP cancel push');
-          });
-          // Leave a "missed call" notification on the target's lock
-          // screen so they know someone called.
+
+          // When the receiver is foreground the in-app overlay already
+          // dismissed via call:cancel above and the in-app notifications
+          // list will refresh from the in-app missed-call entry. Sending
+          // the VoIP cancel push and the FCM missed-call banner on top of
+          // that stacks a CallKit toast + system banner — the "double on
+          // drop" half of the doubled-notification report.
+          //
+          // For backgrounded receivers we still need both: the VoIP push
+          // dismisses CallKit on iOS even when the socket is dead, and
+          // the FCM banner is the user's only signal that they were
+          // called.
+          const targetForeground = await isUserForeground(targetId);
+
+          if (!targetForeground) {
+            sendCallCancelPush(targetId, callId).catch((err) => {
+              logger.error({ err, targetId, callId }, 'Failed to send VoIP cancel push');
+            });
+          }
+
           io.to(`user:${targetId}`).emit('call:missed', {
             callId,
             conversationId: call.conversationId,
@@ -782,14 +795,18 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
             callerName: caller?.displayName ?? 'Unknown',
             callerAvatar: caller?.avatarUrl ?? null,
           });
-          sendMissedCallNotification(targetId, {
-            callId,
-            conversationId: call.conversationId,
-            callType: call.callType,
-            callerId: call.initiatorId,
-            callerName: caller?.displayName ?? 'Unknown',
-            callerAvatar: caller?.avatarUrl,
-          }).catch((err) => {
+          sendMissedCallNotification(
+            targetId,
+            {
+              callId,
+              conversationId: call.conversationId,
+              callType: call.callType,
+              callerId: call.initiatorId,
+              callerName: caller?.displayName ?? 'Unknown',
+              callerAvatar: caller?.avatarUrl,
+            },
+            { skipPush: targetForeground },
+          ).catch((err) => {
             logger.error({ err, targetId, callId }, 'Failed to send missed call notification');
           });
         }
