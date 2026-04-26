@@ -18,6 +18,34 @@ const SOCKET_RATE_LIMIT_MAX = 50;           // 50 events per window
 
 const userEventCounts = new Map<string, { count: number; resetAt: number }>();
 
+// ── Foreground presence (per-socket) ────────────────────────────────────
+// Tracks which sockets the user has explicitly marked as "foreground" via
+// the `presence:foreground` event. Used by the call gateway to suppress
+// the redundant FCM/VoIP push when the app's already showing — the in-app
+// IncomingCallOverlay handles the ringing UX from the socket event alone.
+const foregroundSockets = new Map<string, Set<string>>();
+
+function markForeground(userId: string, socketId: string) {
+  let set = foregroundSockets.get(userId);
+  if (!set) {
+    set = new Set();
+    foregroundSockets.set(userId, set);
+  }
+  set.add(socketId);
+}
+
+function unmarkForeground(userId: string, socketId: string) {
+  const set = foregroundSockets.get(userId);
+  if (!set) return;
+  set.delete(socketId);
+  if (set.size === 0) foregroundSockets.delete(userId);
+}
+
+/** True if the user has at least one foregrounded device right now. */
+export function isUserForeground(userId: string): boolean {
+  return (foregroundSockets.get(userId)?.size ?? 0) > 0;
+}
+
 /** Returns true if the event should be allowed, false if rate-limited. */
 function checkSocketRateLimit(userId: string): boolean {
   const now = Date.now();
@@ -122,8 +150,18 @@ export async function initializeSocket(httpServer: HttpServer): Promise<Server> 
       logger.error({ err, userId }, 'Failed to set user online');
     }
 
+    // Foreground presence — Flutter sends these on AppLifecycleState.resumed
+    // and AppLifecycleState.paused. Used by the call gateway to skip push
+    // notifications when the in-app overlay can handle the ring directly.
+    socket.on('presence:foreground', () => markForeground(userId, socket.id));
+    socket.on('presence:background', () => unmarkForeground(userId, socket.id));
+
     socket.on('disconnect', async (reason) => {
       logger.info({ userId, socketId: socket.id, reason }, 'Socket disconnected');
+
+      // Drop this socket from the foreground set unconditionally — even if
+      // the client never sent presence:background before disconnect.
+      unmarkForeground(userId, socket.id);
 
       // Check if user has other active sockets before marking offline
       const sockets = await io.in(`user:${userId}`).fetchSockets();

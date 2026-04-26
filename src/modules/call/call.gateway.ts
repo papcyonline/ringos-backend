@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { sendCallPush, sendCallCancelPush, sendMissedCallNotification } from '../notification/notification.service';
+import { isUserForeground } from '../../config/socket';
 import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
 import { generateCallToken, LIVEKIT_URL } from './call.livekit';
 import { isBlocked } from '../safety/safety.service';
@@ -363,19 +364,25 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           });
         }
 
-        // Always send push (even if online — socket may not reach suspended/background apps).
-        // Fire-and-forget so it doesn't slow down the socket path.
-        sendCallPush(targetId, {
-          callId,
-          conversationId,
-          callType: resolvedCallType,
-          callerId: userId,
-          callerName: caller?.displayName ?? 'Unknown',
-          callerAvatar: caller?.avatarUrl,
-          isGroup: isGroup ?? false,
-        }).catch((err) => {
-          logger.error({ err, targetId, callId }, 'Failed to send call push notification');
-        });
+        // Send push only when the receiver isn't actively in the app.
+        // If they ARE foreground, the socket call:incoming above is enough
+        // and the in-app IncomingCallOverlay handles the UX. Sending the
+        // push too would stack a CallKit / FCM banner on top of the
+        // overlay (the "double notification" issue).
+        if (!isUserForeground(targetId)) {
+          // Fire-and-forget so it doesn't slow down the socket path.
+          sendCallPush(targetId, {
+            callId,
+            conversationId,
+            callType: resolvedCallType,
+            callerId: userId,
+            callerName: caller?.displayName ?? 'Unknown',
+            callerAvatar: caller?.avatarUrl,
+            isGroup: isGroup ?? false,
+          }).catch((err) => {
+            logger.error({ err, targetId, callId }, 'Failed to send call push notification');
+          });
+        }
       }
 
       // Confirm to the initiator
