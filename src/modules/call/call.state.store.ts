@@ -74,6 +74,8 @@ export interface CallStateStore {
   markPushEnqueued(callId: string, userId: string, at: number): Promise<void>;
   /** Mark that the recipient confirmed CallKit/incoming UI fired (via call:ringing). */
   markRinging(callId: string, userId: string): Promise<void>;
+  /** Has `userId` acked ringing for `callId`? Used by the receipt-driven retry. */
+  hasRingingAcked(callId: string, userId: string): Promise<boolean>;
   /**
    * True iff a VoIP push was enqueued for `userId` within `windowMs` AND
    * the recipient has NOT acked ringing. The gateway's call:end cancel
@@ -164,6 +166,10 @@ class InMemoryCallStateStore implements CallStateStore {
 
   async markRinging(callId: string, userId: string): Promise<void> {
     this.ringingAcked.add(`${callId}:${userId}`);
+  }
+
+  async hasRingingAcked(callId: string, userId: string): Promise<boolean> {
+    return this.ringingAcked.has(`${callId}:${userId}`);
   }
 
   async shouldSuppressCancelPush(
@@ -378,6 +384,11 @@ class RedisCallStateStore implements CallStateStore {
 
   async markRinging(callId: string, userId: string): Promise<void> {
     await this.redis.set(ringingAckedKey(callId, userId), '1', 'EX', PUSH_TRACKING_TTL_SECONDS);
+  }
+
+  async hasRingingAcked(callId: string, userId: string): Promise<boolean> {
+    const v = await this.redis.get(ringingAckedKey(callId, userId));
+    return v === '1';
   }
 
   async shouldSuppressCancelPush(

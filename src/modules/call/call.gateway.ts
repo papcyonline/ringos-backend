@@ -21,6 +21,95 @@ const CALL_TIMEOUT_MS = 45_000;
 const DISCONNECT_GRACE_MS = 10_000;
 
 /**
+ * Receipt-driven push retry window. If we haven't received call:ringing from
+ * a target within this window, we resend the VoIP push once. After a second
+ * window with still no ack, we emit call:unavailable to the caller. Two
+ * 5-second windows fits comfortably inside the 45s call timeout.
+ */
+const PUSH_ACK_WINDOW_MS = 5_000;
+
+/**
+ * Per-instance retry-timer registry. Timers can't cross Node processes, but
+ * the timer's callback re-checks authoritative Redis state before acting,
+ * so a timer firing after a teardown on another instance is harmless.
+ * Keyed by `${callId}:${targetUserId}`.
+ */
+const pushRetryTimers = new Map<string, NodeJS.Timeout>();
+
+function clearPushRetryTimers(callId: string): void {
+  const prefix = `${callId}:`;
+  for (const [key, timer] of pushRetryTimers) {
+    if (key.startsWith(prefix)) {
+      clearTimeout(timer);
+      pushRetryTimers.delete(key);
+    }
+  }
+}
+
+function clearPushRetryTimer(callId: string, userId: string): void {
+  const key = `${callId}:${userId}`;
+  const timer = pushRetryTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    pushRetryTimers.delete(key);
+  }
+}
+
+/**
+ * After firing the initial sendCallPush, schedule one retry if the recipient
+ * hasn't acked ringing within PUSH_ACK_WINDOW_MS. After a second window with
+ * still no ack, emit call:unavailable to the caller so they're not stuck on
+ * a "ringing forever" screen waiting for the 45s timeout.
+ *
+ * iOS CallKit dedups by callId so resending is a safe idempotent retry —
+ * the recipient won't see two CallKit UIs.
+ */
+function schedulePushRetry(
+  io: Server,
+  callId: string,
+  targetId: string,
+  initiatorId: string,
+  pushPayload: Parameters<typeof sendCallPush>[1],
+): void {
+  const key = `${callId}:${targetId}`;
+  const firstTimer = setTimeout(async () => {
+    pushRetryTimers.delete(key);
+    try {
+      if (await callState.hasRingingAcked(callId, targetId)) return;
+      const stillActive = await callState.getCall(callId);
+      if (!stillActive || stillActive.answeredAt) return;
+
+      logger.info({ callId, targetId }, 'Push not acked within window — resending');
+      await callState.markPushEnqueued(callId, targetId, Date.now());
+      sendCallPush(targetId, pushPayload).catch((err) => {
+        logger.error({ err, targetId, callId }, 'Push retry failed');
+      });
+
+      // Second window — declare the recipient unreachable if still no ack.
+      const secondTimer = setTimeout(async () => {
+        pushRetryTimers.delete(key);
+        try {
+          if (await callState.hasRingingAcked(callId, targetId)) return;
+          const call = await callState.getCall(callId);
+          if (!call || call.answeredAt) return;
+          logger.warn(
+            { callId, targetId },
+            'Push undelivered after 2 attempts — emitting call:unavailable to caller',
+          );
+          io.to(`user:${initiatorId}`).emit('call:unavailable', { targetUserId: targetId });
+        } catch (err) {
+          logger.error({ err, callId, targetId }, 'Push retry second-window callback failed');
+        }
+      }, PUSH_ACK_WINDOW_MS);
+      pushRetryTimers.set(key, secondTimer);
+    } catch (err) {
+      logger.error({ err, callId, targetId }, 'Push retry first-window callback failed');
+    }
+  }, PUSH_ACK_WINDOW_MS);
+  pushRetryTimers.set(key, firstTimer);
+}
+
+/**
  * Shared state across every backend instance (Redis-backed when configured,
  * in-memory otherwise). Wrapped in a proxy so the store is resolved lazily
  * on first access — Redis isn't connected yet at module-eval time, so eager
@@ -65,6 +154,7 @@ async function finalizeCallEnd(io: Server, callId: string, call: ActiveCall): Pr
   const sockets = await io.in(`call:${callId}`).fetchSockets();
   for (const s of sockets) s.leave(`call:${callId}`);
 
+  clearPushRetryTimers(callId);
   await callState.cleanup(callId);
 }
 
@@ -374,7 +464,7 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           // that a push is in flight (used by call:end to suppress a
           // cancel-only VoIP that would race ahead of the original).
           await callState.markPushEnqueued(callId, targetId, Date.now());
-          sendCallPush(targetId, {
+          const pushPayload = {
             callId,
             conversationId,
             callType: resolvedCallType,
@@ -382,9 +472,14 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
             callerName: caller?.displayName ?? 'Unknown',
             callerAvatar: caller?.avatarUrl,
             isGroup: isGroup ?? false,
-          }).catch((err) => {
+          };
+          sendCallPush(targetId, pushPayload).catch((err) => {
             logger.error({ err, targetId, callId }, 'Failed to send call push notification');
           });
+          // Receipt-driven retry: if the recipient doesn't ack ringing
+          // within the window, resend once. After a second silent window,
+          // emit call:unavailable to the caller.
+          schedulePushRetry(io, callId, targetId, userId, pushPayload);
         }
       }
 
@@ -461,6 +556,7 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           } finally {
             // Always clean up call state, even if notifications fail.
             // clearUnansweredTimer is implicit in cleanup().
+            clearPushRetryTimers(callId);
             await callState.cleanup(callId);
           }
         } else {
@@ -490,6 +586,8 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
       // user is safe — Apple's PushKit policy engine already saw a real
       // CallKit UI for the original.
       await callState.markRinging(callId, userId);
+      // Recipient is awake — kill any pending retry timer for them.
+      clearPushRetryTimer(callId, userId);
 
       io.to(`user:${call.initiatorId}`).emit('call:ringing', { callId });
     } catch (error) {
@@ -641,6 +739,7 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         // Make all sockets leave the call room
         const rejectSockets = await io.in(`call:${callId}`).fetchSockets();
         for (const s of rejectSockets) s.leave(`call:${callId}`);
+        clearPushRetryTimers(callId);
         await callState.cleanup(callId);
       } else {
         await callState.removeParticipant(callId, userId);
@@ -659,6 +758,7 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           io.to(`user:${call.initiatorId}`).emit('call:ended', { callId, endedBy: 'all_rejected' });
           const remainingSockets = await io.in(`call:${callId}`).fetchSockets();
           for (const s of remainingSockets) s.leave(`call:${callId}`);
+          clearPushRetryTimers(callId);
           await callState.cleanup(callId);
         }
       }
