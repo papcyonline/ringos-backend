@@ -1751,8 +1751,51 @@ export async function setDisappearingMessages(
     select: { id: true, disappearAfterSecs: true },
   });
 
+  // Drop a system message into the conversation so both sides see a
+  // persistent record of who turned it on/off and at what duration —
+  // matches WhatsApp. The frontend already renders isSystem messages
+  // as centred grey text. Metadata.type lets the client localise the
+  // string later if we want ("You" vs the actor's name).
+  const actor = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { displayName: true },
+  });
+  const actorName = actor?.displayName ?? 'Someone';
+  const durationLabel = _disappearLabel(disappearAfterSecs);
+  const content = disappearAfterSecs == null
+    ? `${actorName} turned off disappearing messages`
+    : `${actorName} turned on disappearing messages. New messages disappear after ${durationLabel}.`;
+
+  const sysMsg = await prisma.message.create({
+    data: {
+      conversationId,
+      senderId: userId,
+      content,
+      isSystem: true,
+      metadata: {
+        type: 'disappearing_changed',
+        actorId: userId,
+        ttl: disappearAfterSecs,
+      },
+    },
+    include: messageInclude,
+  });
+
   logger.info({ conversationId, userId, disappearAfterSecs }, 'Disappearing messages updated');
-  return updated;
+  return { ...updated, systemMessage: sysMsg };
+}
+
+function _disappearLabel(seconds: number | null): string {
+  switch (seconds) {
+    case 86400:
+      return '24 hours';
+    case 604800:
+      return '7 days';
+    case 2592000:
+      return '30 days';
+    default:
+      return '';
+  }
 }
 
 // ─── Forward Message ──────────────────────────────────────────

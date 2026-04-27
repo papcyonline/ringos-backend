@@ -1165,13 +1165,19 @@ router.put(
       res.json(result);
 
       // Notify every participant so the chat header banner / picker
-      // stays in sync without needing a refresh.
+      // stays in sync without needing a refresh, and fan out the
+      // newly-created system message via the regular chat:message
+      // event so it lands in everyone's open chat history.
       try {
         const io = getIO();
         const payload = {
           conversationId,
           disappearAfterSecs: result.disappearAfterSecs,
           changedBy: req.user!.userId,
+        };
+        const sysMsgPayload = {
+          ...result.systemMessage,
+          conversationId,
         };
         prisma.conversationParticipant
           .findMany({
@@ -1184,6 +1190,7 @@ router.put(
                 'conversation:disappearing-changed',
                 payload,
               );
+              io.to(`user:${p.userId}`).emit('chat:message', sysMsgPayload);
             }
           })
           .catch(() => {});
