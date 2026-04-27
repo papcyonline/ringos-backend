@@ -370,7 +370,10 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         // push too would stack a CallKit / FCM banner on top of the
         // overlay (the "double notification" issue).
         if (!(await isUserForeground(targetId))) {
-          // Fire-and-forget so it doesn't slow down the socket path.
+          // Stamp BEFORE the fire-and-forget so a fast cancel path can see
+          // that a push is in flight (used by call:end to suppress a
+          // cancel-only VoIP that would race ahead of the original).
+          await callState.markPushEnqueued(callId, targetId, Date.now());
           sendCallPush(targetId, {
             callId,
             conversationId,
@@ -481,6 +484,12 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
       const { callId } = data;
       const call = await callState.getCall(callId);
       if (!call || !call.participantIds.has(userId)) return;
+
+      // Mark that this target's device confirmed the CallKit/incoming UI
+      // fired. From this point onwards, sending a cancel VoIP push to this
+      // user is safe — Apple's PushKit policy engine already saw a real
+      // CallKit UI for the original.
+      await callState.markRinging(callId, userId);
 
       io.to(`user:${call.initiatorId}`).emit('call:ringing', { callId });
     } catch (error) {
@@ -789,9 +798,30 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           const targetForeground = await isUserForeground(targetId);
 
           if (!targetForeground) {
-            sendCallCancelPush(targetId, callId).catch((err) => {
-              logger.error({ err, targetId, callId }, 'Failed to send VoIP cancel push');
-            });
+            // Cancel-before-original guard: if we sent the call VoIP push
+            // less than 3 seconds ago AND the recipient hasn't confirmed
+            // ringing, sending a cancel VoIP now would arrive at APNs
+            // alongside (or before) the original. iOS would report a
+            // throwaway CallKit and end it in <100ms — Apple's PushKit
+            // policy engine treats that as a fake call and silently
+            // throttles future VoIP delivery to that device. Better to
+            // let the original ring out (recipient sees ~30s of CallKit
+            // with no answer) than train Apple to drop our pushes.
+            const suppressCancel = await callState.shouldSuppressCancelPush(
+              callId,
+              targetId,
+              3000,
+            );
+            if (suppressCancel) {
+              logger.info(
+                { callId, targetId },
+                'Suppressing cancel VoIP push — original push still propagating',
+              );
+            } else {
+              sendCallCancelPush(targetId, callId).catch((err) => {
+                logger.error({ err, targetId, callId }, 'Failed to send VoIP cancel push');
+              });
+            }
           }
 
           io.to(`user:${targetId}`).emit('call:missed', {

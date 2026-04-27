@@ -122,6 +122,11 @@ function sendToEnvironment(
   return new Promise((resolve) => {
     try {
       const sess = getSession(production);
+      // 30-second expiration: gives APNs a redelivery window for transient
+      // recipient-side network blips. apns-expiration: 0 (immediate-or-discard)
+      // was killing pushes the moment the device blinked offline. 30s is well
+      // within our 45s call timeout so a stale push can't outlive the call.
+      const expiration = Math.floor(Date.now() / 1000) + 30;
       const req = sess.request({
         ':method': 'POST',
         ':path': `/3/device/${deviceToken}`,
@@ -129,7 +134,7 @@ function sendToEnvironment(
         'apns-topic': 'com.yomeet.live.voip',
         'apns-push-type': 'voip',
         'apns-priority': '10',
-        'apns-expiration': '0',
+        'apns-expiration': String(expiration),
         'content-type': 'application/json',
       });
 

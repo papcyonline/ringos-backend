@@ -118,10 +118,16 @@ export async function initializeSocket(httpServer: HttpServer): Promise<Server> 
     socket.join(`user:${userId}`);
     logger.info({ userId, socketId: socket.id }, 'Socket connected');
 
-    // Per-event rate limiting — drops events that exceed the threshold
+    // Per-event rate limiting — drops events that exceed the threshold.
+    // call:* and presence:* are whitelisted: they are low-frequency control
+    // events whose loss has user-visible consequences (a dropped call:initiate
+    // from a rate-limited user shows up as "the call doesn't go through").
+    // The 50/10s budget is reserved for chat:*, typing, reactions, etc.
     socket.use((packet, next) => {
-      if (!checkSocketRateLimit(userId)) {
-        const eventName = packet[0];
+      const eventName = String(packet[0] ?? '');
+      const isWhitelisted =
+        eventName.startsWith('call:') || eventName.startsWith('presence:');
+      if (!isWhitelisted && !checkSocketRateLimit(userId)) {
         logger.warn({ userId, event: eventName }, 'Socket event rate-limited');
         return next(new Error('Rate limit exceeded'));
       }

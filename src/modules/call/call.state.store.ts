@@ -64,6 +64,24 @@ export interface CallStateStore {
   /** Remove just this participant's user→call mapping (group-call leave). */
   removeParticipant(callId: string, userId: string): Promise<void>;
 
+  // ── Push delivery tracking (per call × target) ──
+  // Used to suppress cancel-only VoIP pushes that would arrive in the silent
+  // propagation window BEFORE the original push lands. The cancel-before-
+  // original sequence makes iOS report a throwaway CallKit and end it in
+  // <100ms, which Apple's PushKit policy engine treats as a fake call and
+  // silently throttles future VoIP delivery to the recipient's device.
+  /** Stamp the moment sendCallPush was enqueued for `userId`. */
+  markPushEnqueued(callId: string, userId: string, at: number): Promise<void>;
+  /** Mark that the recipient confirmed CallKit/incoming UI fired (via call:ringing). */
+  markRinging(callId: string, userId: string): Promise<void>;
+  /**
+   * True iff a VoIP push was enqueued for `userId` within `windowMs` AND
+   * the recipient has NOT acked ringing. The gateway's call:end cancel
+   * branch must skip sendCallCancelPush in that window — let the original
+   * ring out instead of training Apple to throttle us.
+   */
+  shouldSuppressCancelPush(callId: string, userId: string, windowMs: number): Promise<boolean>;
+
   // ── Per-instance timer handles (not shared; see module comment) ──
   setUnansweredTimer(callId: string, handle: NodeJS.Timeout): void;
   clearUnansweredTimer(callId: string): void;
@@ -83,6 +101,9 @@ class InMemoryCallStateStore implements CallStateStore {
   private readonly terminating = new Set<string>();
   private readonly unansweredTimers = new Map<string, NodeJS.Timeout>();
   private readonly disconnectTimers = new Map<string, { timeout: NodeJS.Timeout; callId: string }>();
+  // Push delivery tracking — `${callId}:${userId}` keys
+  private readonly pushEnqueuedAt = new Map<string, number>();
+  private readonly ringingAcked = new Set<string>();
 
   async isUserInCall(userId: string): Promise<boolean> {
     return this.userCall.has(userId);
@@ -130,8 +151,31 @@ class InMemoryCallStateStore implements CallStateStore {
     this.clearUnansweredTimer(callId);
     for (const pid of call.participantIds) {
       this.userCall.delete(pid);
+      const k = `${callId}:${pid}`;
+      this.pushEnqueuedAt.delete(k);
+      this.ringingAcked.delete(k);
     }
     this.calls.delete(callId);
+  }
+
+  async markPushEnqueued(callId: string, userId: string, at: number): Promise<void> {
+    this.pushEnqueuedAt.set(`${callId}:${userId}`, at);
+  }
+
+  async markRinging(callId: string, userId: string): Promise<void> {
+    this.ringingAcked.add(`${callId}:${userId}`);
+  }
+
+  async shouldSuppressCancelPush(
+    callId: string,
+    userId: string,
+    windowMs: number,
+  ): Promise<boolean> {
+    const key = `${callId}:${userId}`;
+    if (this.ringingAcked.has(key)) return false;
+    const at = this.pushEnqueuedAt.get(key);
+    if (at == null) return false;
+    return Date.now() - at < windowMs;
   }
 
   async removeParticipant(callId: string, userId: string): Promise<void> {
@@ -182,6 +226,11 @@ const callKey = (callId: string) => `call:${callId}`;
 const userCallKey = (userId: string) => `user_call:${userId}`;
 const answeredLockKey = (callId: string) => `call:${callId}:answered`;
 const terminatingLockKey = (callId: string) => `call:${callId}:terminating`;
+const pushEnqueuedKey = (callId: string, userId: string) => `call:${callId}:push:${userId}`;
+const ringingAckedKey = (callId: string, userId: string) => `call:${callId}:rang:${userId}`;
+// 60s covers any realistic ringing window; we only ever check within the
+// first 3s but a longer TTL is safer than tight coupling to the check window.
+const PUSH_TRACKING_TTL_SECONDS = 60;
 // Short TTL: just long enough for cleanup to finish + a safety margin.
 // After cleanup() runs we DEL the key anyway, so TTL is purely a failsafe
 // against a crash between claim and cleanup.
@@ -317,8 +366,39 @@ class RedisCallStateStore implements CallStateStore {
     // the claim instead of re-running side effects against a stale snapshot.
     for (const pid of call.participantIds) {
       pipeline.del(userCallKey(pid));
+      pipeline.del(pushEnqueuedKey(callId, pid));
+      pipeline.del(ringingAckedKey(callId, pid));
     }
     await pipeline.exec();
+  }
+
+  async markPushEnqueued(callId: string, userId: string, at: number): Promise<void> {
+    await this.redis.set(pushEnqueuedKey(callId, userId), String(at), 'EX', PUSH_TRACKING_TTL_SECONDS);
+  }
+
+  async markRinging(callId: string, userId: string): Promise<void> {
+    await this.redis.set(ringingAckedKey(callId, userId), '1', 'EX', PUSH_TRACKING_TTL_SECONDS);
+  }
+
+  async shouldSuppressCancelPush(
+    callId: string,
+    userId: string,
+    windowMs: number,
+  ): Promise<boolean> {
+    // One round-trip via pipeline so we don't pay 2× latency in the hot
+    // call:end path.
+    const [ackedRes, atRes] = await this.redis
+      .pipeline()
+      .get(ringingAckedKey(callId, userId))
+      .get(pushEnqueuedKey(callId, userId))
+      .exec() ?? [];
+    const acked = ackedRes?.[1];
+    const atRaw = atRes?.[1];
+    if (acked) return false;
+    if (typeof atRaw !== 'string') return false;
+    const at = Number(atRaw);
+    if (!Number.isFinite(at)) return false;
+    return Date.now() - at < windowMs;
   }
 
   async removeParticipant(callId: string, userId: string): Promise<void> {
