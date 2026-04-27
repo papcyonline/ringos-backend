@@ -1155,13 +1155,41 @@ router.put(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      const conversationId = req.params.conversationId as string;
       const { disappearAfterSecs } = req.body;
       const result = await chatService.setDisappearingMessages(
-        (req.params.conversationId as string),
+        conversationId,
         req.user!.userId,
         disappearAfterSecs ?? null,
       );
       res.json(result);
+
+      // Notify every participant so the chat header banner / picker
+      // stays in sync without needing a refresh.
+      try {
+        const io = getIO();
+        const payload = {
+          conversationId,
+          disappearAfterSecs: result.disappearAfterSecs,
+          changedBy: req.user!.userId,
+        };
+        prisma.conversationParticipant
+          .findMany({
+            where: { conversationId, leftAt: null },
+            select: { userId: true },
+          })
+          .then((participants) => {
+            for (const p of participants) {
+              io.to(`user:${p.userId}`).emit(
+                'conversation:disappearing-changed',
+                payload,
+              );
+            }
+          })
+          .catch(() => {});
+      } catch (_) {
+        // Socket might not be ready; clients pick the change up on next refresh.
+      }
     } catch (err) { next(err); }
   },
 );
