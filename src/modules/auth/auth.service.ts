@@ -722,7 +722,11 @@ export async function refreshTokens(token: string, req?: Request) {
       // retries with the old token). If the revocation is recent and the
       // replacement is still active, issue a fresh access token against the
       // replacement instead of wiping all sessions.
-      const GRACE_WINDOW_MS = 30_000;
+      // 5 minutes covers iOS suspension during long calls; the threat model
+      // is unchanged because an attacker still needs the legitimate user's
+      // exact pre-rotation refresh token AND must replay before the legitimate
+      // client's next rotation.
+      const GRACE_WINDOW_MS = 5 * 60_000;
       const revokedAgeMs = Date.now() - existing.revokedAt.getTime();
       if (revokedAgeMs <= GRACE_WINDOW_MS && existing.replacedBy) {
         const replacement = await tx.refreshToken.findUnique({
