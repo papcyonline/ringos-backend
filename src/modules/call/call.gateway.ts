@@ -30,17 +30,21 @@ const PUSH_ACK_WINDOW_MS = 5_000;
 /**
  * Pre-push gate. We always emit `call:incoming` over the socket first; if the
  * receiver's WebSocket is alive (foreground or recently-active app), the
- * frontend acks with `call:ringing` within ~25-100ms and we skip sending the
- * VoIP push entirely — the in-app IncomingCallOverlay handles the UX, and we
- * avoid the brief CallKit flash that iOS forces every VoIP push to display
- * (Apple won't let us suppress it once the push lands; the only fix is to
- * not send it). 500ms covers cross-region socket round-trips with comfortable
- * margin (cellular networks, weak Wi-Fi, app-foregrounding-mid-call edges)
- * while keeping the wake-from-sleep latency for genuinely-offline receivers
- * imperceptible. Mirrors the WebSocket-first / push-fallback pattern used by
- * Telegram, Signal, and Wazo-style platforms.
+ * frontend acks with `call:ringing` and we skip sending the VoIP push entirely
+ * — the in-app IncomingCallOverlay handles the UX, and we avoid the brief
+ * CallKit flash that iOS forces every VoIP push to display (Apple won't let
+ * us suppress it once the push lands; the only fix is to not send it).
+ *
+ * 1500ms is generous: the typical RTT + state-machine + Redis poll round-trip
+ * sits at ~100-300ms on healthy networks, but cross-region calls on weak
+ * cellular or Wi-Fi can reach 500-800ms, and we have to beat that comfortably
+ * to make the gate user-visible-zero-flash. Background receivers (genuinely
+ * offline) wait at most 1.5s before the VoIP push wakes their device, which
+ * is below the threshold of perception against the existing call-ring delay.
+ * Mirrors the WebSocket-first / push-fallback pattern used by Telegram,
+ * Signal, and Wazo-style platforms.
  */
-const PUSH_GATE_MS = 500;
+const PUSH_GATE_MS = 1500;
 
 /**
  * Per-instance retry-timer registry. Timers can't cross Node processes, but

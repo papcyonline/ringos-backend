@@ -189,7 +189,7 @@ class InMemoryCallStateStore implements CallStateStore {
     if (this.ringingAcked.has(key)) return true;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 25));
+      await new Promise((r) => setTimeout(r, 10));
       if (this.ringingAcked.has(key)) return true;
     }
     return false;
@@ -418,7 +418,7 @@ class RedisCallStateStore implements CallStateStore {
     if (await this.hasRingingAcked(callId, userId)) return true;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 25));
+      await new Promise((r) => setTimeout(r, 10));
       if (await this.hasRingingAcked(callId, userId)) return true;
     }
     return false;
