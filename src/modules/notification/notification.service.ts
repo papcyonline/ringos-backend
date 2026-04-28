@@ -102,6 +102,10 @@ export async function createNotification(data: {
   body: string;
   imageUrl?: string;
   data?: Record<string, unknown>;
+  // Pre-mark as read on creation. Used when the recipient is already actively
+  // viewing the source (e.g. inside the chat room) — the notification still
+  // appears in inbox history but never inflates the unread badge.
+  isRead?: boolean;
 }) {
   const notification = await prisma.notification.create({
     data: {
@@ -111,6 +115,7 @@ export async function createNotification(data: {
       body: data.body,
       imageUrl: data.imageUrl ?? null,
       data: (data.data ?? {}) as Prisma.InputJsonValue,
+      isRead: data.isRead ?? false,
     },
   });
 
@@ -619,15 +624,18 @@ export async function notifyChatMessage(
   for (const participant of participants) {
     const isInRoom = usersInRoom.has(participant.userId);
 
-    // Always create in-app notification (emits notification:new socket event)
-    // so the notification bell badge updates even if the user just left the
-    // chat room and the leave event hasn't been processed yet.
+    // Always create the in-app notification (so inbox history is complete and
+    // the bell badge reconciles even across the small race window where a
+    // leave event is still in flight). When the recipient is currently in
+    // the chat room, pre-mark it as read — they're already looking at the
+    // message; it should never count as unread.
     createNotification({
       userId: participant.userId,
       type: isVoiceNote ? 'VOICE_NOTE' : 'CHAT_MESSAGE',
       title: senderName,
       body,
       imageUrl: senderAvatarUrl,
+      isRead: isInRoom,
       data: {
         conversationId,
         senderId,

@@ -14,7 +14,7 @@ import * as pollService from './poll.service';
 import { formatMessagePayload, emitToParticipantRooms, broadcastAndNotifyMessage } from './chat.utils';
 import { translateMessage } from './translation.service';
 import { transcribeMessage } from './transcription.service';
-import { notifyChatMessage } from '../notification/notification.service';
+import { notifyChatMessage, markConversationNotificationsAsRead } from '../notification/notification.service';
 import { prisma } from '../../config/database';
 import * as folderService from './folder.service';
 
@@ -1207,37 +1207,40 @@ router.post(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      // If user has read receipts hidden, skip DB update and broadcast
+      const userId = req.user!.userId;
+      const convId = req.params.conversationId as string;
+      const io = getIO();
+
       const reader = await prisma.user.findUnique({
-        where: { id: req.user!.userId },
+        where: { id: userId },
         select: { hideReadReceipts: true },
       });
+
       if (reader?.hideReadReceipts) {
-        res.json({ success: true });
-        return;
+        // Privacy mode: clear the reader's own notifications (private state),
+        // but don't update lastReadAt or broadcast — the sender stays in the dark.
+        await markConversationNotificationsAsRead(userId, convId);
+      } else {
+        await chatService.markConversationAsRead(convId, userId);
+
+        const readPayload = { conversationId: convId, userId };
+        io.to(`conversation:${convId}`).emit('chat:read', readPayload);
+
+        // Also emit to all other participants' personal rooms so the
+        // sender sees blue ticks even if they left the chat screen.
+        prisma.conversationParticipant.findMany({
+          where: { conversationId: convId, userId: { not: userId }, leftAt: null },
+          select: { userId: true },
+        }).then((participants) => {
+          for (const p of participants) {
+            io.to(`user:${p.userId}`).emit('chat:read', readPayload);
+          }
+        }).catch(() => {});
       }
 
-      await chatService.markConversationAsRead(
-        (req.params.conversationId as string),
-        req.user!.userId,
-      );
-
-      // Broadcast read receipt so the sender sees blue ticks
-      const io = getIO();
-      const convId = req.params.conversationId as string;
-      const readPayload = { conversationId: convId, userId: req.user!.userId };
-      io.to(`conversation:${convId}`).emit('chat:read', readPayload);
-
-      // Also emit to all other participants' personal rooms so the
-      // sender sees blue ticks even if they left the chat screen.
-      prisma.conversationParticipant.findMany({
-        where: { conversationId: convId, userId: { not: req.user!.userId }, leftAt: null },
-        select: { userId: true },
-      }).then((participants) => {
-        for (const p of participants) {
-          io.to(`user:${p.userId}`).emit('chat:read', readPayload);
-        }
-      }).catch(() => {});
+      // Always sync the reader's own devices/screens so the notification inbox
+      // reflects the new read state without requiring a manual refresh.
+      io.to(`user:${userId}`).emit('notification:read-conversation', { conversationId: convId });
 
       res.json({ success: true });
     } catch (err) {

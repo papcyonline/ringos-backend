@@ -50,6 +50,7 @@ vi.mock('../chat.utils', () => ({
 
 vi.mock('../../notification/notification.service', () => ({
   notifyChatMessage: vi.fn().mockResolvedValue(undefined),
+  markConversationNotificationsAsRead: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../../shared/logger', () => ({

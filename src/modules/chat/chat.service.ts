@@ -450,24 +450,41 @@ export async function getConversations(userId: string) {
 
 /**
  * Mark all messages in a conversation as read for a user.
+ *
+ * Atomic transition: lastReadAt and the user's per-message notifications
+ * (CHAT_MESSAGE / VOICE_NOTE for this conversation) are cleared together
+ * inside a single DB transaction — either both succeed or both roll back,
+ * so the notification inbox can never drift out of sync with the chat's
+ * unread state. Mirrors WhatsApp/Telegram: opening a chat collapses both
+ * the unread counter and the notification entries in one consistent step.
  */
 export async function markConversationAsRead(conversationId: string, userId: string) {
   await verifyParticipant(conversationId, userId);
 
   const now = new Date();
-  // Only update if new timestamp is newer — prevents race condition
-  // where out-of-order requests could regress lastReadAt.
-  await prisma.conversationParticipant.updateMany({
-    where: {
-      conversationId,
-      userId,
-      OR: [
-        { lastReadAt: null },
-        { lastReadAt: { lt: now } },
-      ],
-    },
-    data: { lastReadAt: now },
-  });
+  // The lastReadAt guard prevents out-of-order requests from regressing it.
+  await prisma.$transaction([
+    prisma.conversationParticipant.updateMany({
+      where: {
+        conversationId,
+        userId,
+        OR: [
+          { lastReadAt: null },
+          { lastReadAt: { lt: now } },
+        ],
+      },
+      data: { lastReadAt: now },
+    }),
+    prisma.notification.updateMany({
+      where: {
+        userId,
+        isRead: false,
+        type: { in: ['CHAT_MESSAGE', 'VOICE_NOTE'] },
+        data: { path: ['conversationId'], equals: conversationId },
+      },
+      data: { isRead: true },
+    }),
+  ]);
 
   logger.debug({ conversationId, userId }, 'Conversation marked as read');
 }

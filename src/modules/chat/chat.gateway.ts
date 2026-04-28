@@ -3,7 +3,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import * as chatService from './chat.service';
 import { broadcastAndNotifyMessage } from './chat.utils';
-import { notifyChatMessage } from '../notification/notification.service';
+import { notifyChatMessage, markConversationNotificationsAsRead } from '../notification/notification.service';
 
 /** Extract a user-facing error message from a caught error. */
 function extractErrorMessage(error: any, fallback: string): string {
@@ -130,6 +130,19 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       logger.info({ userId, conversationId, socketId: socket.id }, 'User joined conversation room');
 
       socket.emit('chat:joined', { conversationId });
+
+      // Opening the chat means the user has seen these messages — clear their
+      // private notifications for this conversation now, regardless of whether
+      // they ever interact (which is what would trigger chat:read and the
+      // sender-visible read receipt). lastReadAt is intentionally NOT touched
+      // here so read-receipt timing stays controlled by chat:read.
+      markConversationNotificationsAsRead(userId, conversationId)
+        .then(() => {
+          io.to(`user:${userId}`).emit('notification:read-conversation', { conversationId });
+        })
+        .catch((err) => {
+          logger.error({ err, userId, conversationId }, 'Failed to clear notifications on chat:join');
+        });
     } catch (error) {
       logger.error({ error, userId }, 'Error joining conversation');
       socket.emit('chat:error', { message: 'Failed to join conversation' });
@@ -334,33 +347,41 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     try {
       const { conversationId } = data;
 
-      // If user has read receipts hidden, silently skip — don't update DB or broadcast
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: { hideReadReceipts: true },
       });
-      if (user?.hideReadReceipts) return;
 
-      await chatService.markConversationAsRead(conversationId, userId);
+      if (user?.hideReadReceipts) {
+        // Privacy mode: clear the reader's own notifications (private state),
+        // but don't update lastReadAt or broadcast — the sender stays in the dark.
+        await markConversationNotificationsAsRead(userId, conversationId);
+      } else {
+        await chatService.markConversationAsRead(conversationId, userId);
 
-      const readPayload = { conversationId, userId };
+        const readPayload = { conversationId, userId };
 
-      // Broadcast to conversation room
-      socket.to(`conversation:${conversationId}`).emit('chat:read', readPayload);
+        // Broadcast to conversation room
+        socket.to(`conversation:${conversationId}`).emit('chat:read', readPayload);
 
-      // Also emit to all other participants' personal rooms so the
-      // sender sees blue ticks even if they left the chat screen.
-      try {
-        const participants = await prisma.conversationParticipant.findMany({
-          where: { conversationId, userId: { not: userId }, leftAt: null },
-          select: { userId: true },
-        });
-        for (const p of participants) {
-          io.to(`user:${p.userId}`).emit('chat:read', readPayload);
-        }
-      } catch { /* non-critical */ }
+        // Also emit to all other participants' personal rooms so the
+        // sender sees blue ticks even if they left the chat screen.
+        try {
+          const participants = await prisma.conversationParticipant.findMany({
+            where: { conversationId, userId: { not: userId }, leftAt: null },
+            select: { userId: true },
+          });
+          for (const p of participants) {
+            io.to(`user:${p.userId}`).emit('chat:read', readPayload);
+          }
+        } catch { /* non-critical */ }
+      }
 
-      logger.debug({ conversationId, userId }, 'Read receipt broadcast');
+      // Always sync the reader's own devices/screens so the notification inbox
+      // reflects the new read state without requiring a manual refresh.
+      io.to(`user:${userId}`).emit('notification:read-conversation', { conversationId });
+
+      logger.debug({ conversationId, userId }, 'Read receipt processed');
     } catch (error: any) {
       logger.error({ error, userId }, 'Error marking as read');
     }

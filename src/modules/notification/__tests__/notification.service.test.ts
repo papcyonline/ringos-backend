@@ -109,6 +109,7 @@ describe('notification.service', () => {
           body: 'Hello there',
           imageUrl: '/uploads/avatars/owl.jpg',
           data: { conversationId: 'conv-1', senderId: 'sender-1' },
+          isRead: false,
         },
       });
     });
