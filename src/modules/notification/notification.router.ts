@@ -45,6 +45,18 @@ router.post('/read-conversation/:conversationId', authenticate, async (req: Auth
   }
 });
 
+// POST /read-missed-calls - Mark all MISSED_CALL notifications as read.
+// Called when the calls tab is opened so the notifications inbox stays in
+// sync with what the user has actually seen.
+router.post('/read-missed-calls', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    await notificationService.markMissedCallNotificationsAsRead(req.user!.userId);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /read-all - Mark all notifications as read
 router.post('/read-all', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

@@ -82,6 +82,22 @@ export async function markConversationNotificationsAsRead(userId: string, conver
   });
 }
 
+/**
+ * Mark every MISSED_CALL notification for `userId` as read. Triggered by the
+ * client when the calls tab is opened — the missed-call list is the user's
+ * inbox for these, so seeing the tab counts as seeing the entries.
+ */
+export async function markMissedCallNotificationsAsRead(userId: string) {
+  await prisma.notification.updateMany({
+    where: {
+      userId,
+      isRead: false,
+      type: 'MISSED_CALL',
+    },
+    data: { isRead: true },
+  });
+}
+
 export async function deleteNotification(userId: string, notificationId: string) {
   await prisma.notification.deleteMany({
     where: { id: notificationId, userId },
