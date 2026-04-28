@@ -34,12 +34,13 @@ const PUSH_ACK_WINDOW_MS = 5_000;
  * VoIP push entirely — the in-app IncomingCallOverlay handles the UX, and we
  * avoid the brief CallKit flash that iOS forces every VoIP push to display
  * (Apple won't let us suppress it once the push lands; the only fix is to
- * not send it). 250ms covers cross-region socket round-trips with margin
+ * not send it). 500ms covers cross-region socket round-trips with comfortable
+ * margin (cellular networks, weak Wi-Fi, app-foregrounding-mid-call edges)
  * while keeping the wake-from-sleep latency for genuinely-offline receivers
  * imperceptible. Mirrors the WebSocket-first / push-fallback pattern used by
  * Telegram, Signal, and Wazo-style platforms.
  */
-const PUSH_GATE_MS = 250;
+const PUSH_GATE_MS = 500;
 
 /**
  * Per-instance retry-timer registry. Timers can't cross Node processes, but

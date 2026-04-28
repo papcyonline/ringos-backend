@@ -400,11 +400,19 @@ export async function sendCallPush(
 
   const fcmData = buildCallPayload(payload);
 
-  // Send to Android devices via FCM. iOS devices receive CallKit via the
-  // VoIP push below — sending FCM to them would add a duplicate alert
-  // banner on top of the CallKit ring.
+  // Send only the MOST RECENT FCM token per user. Reinstalls / token
+  // refreshes leave stale tokens in the DB; iOS dedups duplicate VoIP
+  // pushes for the same callId by briefly flashing CallKit (the "several
+  // toast notifications" symptom). The cleanup-on-failure path below
+  // reaps invalid tokens over time, but the simplest defence is to only
+  // push to the freshest registration. Multi-device users would only
+  // ring on their most recently active device — acceptable trade-off
+  // since the common case is one user, one device, and stale tokens
+  // are the dominant source of duplicate CallKit fires.
   const fcmTokens = await prisma.fcmToken.findMany({
     where: { userId, platform: 'android' },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
     select: { token: true },
   });
 
@@ -421,9 +429,12 @@ export async function sendCallPush(
     await sendFcmWithRetry(message, fcmTokens, userId, 'call push');
   }
 
-  // Send iOS VoIP push via APNs (PushKit → CallKit)
+  // Send iOS VoIP push via APNs (PushKit → CallKit). Same single-token
+  // policy as FCM above.
   const voipTokens = await prisma.voipToken.findMany({
     where: { userId },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
     select: { token: true },
   });
 
@@ -463,8 +474,13 @@ export async function sendCallCancelPush(
   userId: string,
   callId: string,
 ) {
+  // Match sendCallPush: only target the most recent token so a cancel
+  // can't fan out to stale tokens and trigger extra dedup-throwaway
+  // CallKit flashes.
   const voipTokens = await prisma.voipToken.findMany({
     where: { userId },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
     select: { token: true },
   });
 
