@@ -134,10 +134,16 @@ export async function registerFcmToken(
   token: string,
   platform: 'android' | 'ios' = 'android',
 ) {
+  // Bump createdAt on re-register so "most recently registered" actually
+  // tracks "most recently confirmed alive". sendCallPush picks the single
+  // most-recent token to avoid stale-token CallKit flashes; without this
+  // bump, a token first registered weeks ago would lose the most-recent
+  // race to a stale token from a later install, even though the older
+  // token is the actually-live one.
   await prisma.fcmToken.upsert({
     where: { token },
     create: { userId, token, platform },
-    update: { userId, platform },
+    update: { userId, platform, createdAt: new Date() },
   });
 }
 
@@ -150,10 +156,15 @@ export async function removeFcmToken(token: string) {
 // ─── VoIP Token Management (iOS) ─────────────────────────
 
 export async function registerVoipToken(userId: string, token: string) {
+  // Bump createdAt on re-register so "most recently registered" actually
+  // tracks "most recently confirmed alive" (see registerFcmToken comment).
+  // iOS PushKit tokens are persistent across installs, so the same token
+  // can hit this code path many times — we need each one to refresh the
+  // recency stamp so the call-push gate picks the right token.
   await prisma.voipToken.upsert({
     where: { token },
     create: { userId, token, platform: 'ios' },
-    update: { userId },
+    update: { userId, createdAt: new Date() },
   });
 }
 
