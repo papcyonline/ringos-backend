@@ -23,9 +23,20 @@ export async function emitToParticipantRooms(
     where: { conversationId, leftAt: null },
     select: { userId: true },
   });
-  logger.info({ conversationId, participantCount: participants.length }, 'Emitting chat:list-update to participant rooms');
+  logger.info({ conversationId, participantCount: participants.length }, 'Emitting chat:list-update + chat:message to participant rooms');
   for (const p of participants) {
+    // chat:list-update drives the chats-list lastMessage UI.
     io.to(`user:${p.userId}`).emit('chat:list-update', payload);
+    // chat:message is also emitted to the participant's personal user room
+    // as a belt-and-suspenders fallback against the conversation:${id} room
+    // membership being briefly stale — e.g. after a socket reconnect when
+    // chat:join hasn't been processed yet, or the user navigated away from
+    // the chat screen but is still online. Without this, a sender whose
+    // socket reconnected after a network drop never sees their own message
+    // come back from a retry, even though the server saved it (the user
+    // sees a "failed" state until they cold-restart the app and refetch).
+    // Frontend dedupes by message id, so the duplicate emit is safe.
+    io.to(`user:${p.userId}`).emit('chat:message', payload);
   }
 }
 
