@@ -77,6 +77,18 @@ export interface CallStateStore {
   /** Has `userId` acked ringing for `callId`? Used by the receipt-driven retry. */
   hasRingingAcked(callId: string, userId: string): Promise<boolean>;
   /**
+   * Resolves true as soon as `userId` acks ringing for `callId`, or false if
+   * `timeoutMs` elapses without an ack. Used by the call-initiate gate to
+   * decide whether to fall back to a VoIP push: if the receiver's WebSocket
+   * is alive, they ack within ~25-100ms and the in-app overlay handles the
+   * UX. If the WebSocket is gone (background/killed/offline), the timeout
+   * elapses and the gateway sends a push to wake CallKit.
+   *
+   * Implemented as polling (~25ms interval) so it works identically against
+   * both the in-memory and Redis-backed stores without needing pub/sub.
+   */
+  waitForRingingAck(callId: string, userId: string, timeoutMs: number): Promise<boolean>;
+  /**
    * True iff a VoIP push was enqueued for `userId` within `windowMs` AND
    * the recipient has NOT acked ringing. The gateway's call:end cancel
    * branch must skip sendCallCancelPush in that window — let the original
@@ -170,6 +182,17 @@ class InMemoryCallStateStore implements CallStateStore {
 
   async hasRingingAcked(callId: string, userId: string): Promise<boolean> {
     return this.ringingAcked.has(`${callId}:${userId}`);
+  }
+
+  async waitForRingingAck(callId: string, userId: string, timeoutMs: number): Promise<boolean> {
+    const key = `${callId}:${userId}`;
+    if (this.ringingAcked.has(key)) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+      if (this.ringingAcked.has(key)) return true;
+    }
+    return false;
   }
 
   async shouldSuppressCancelPush(
@@ -389,6 +412,16 @@ class RedisCallStateStore implements CallStateStore {
   async hasRingingAcked(callId: string, userId: string): Promise<boolean> {
     const v = await this.redis.get(ringingAckedKey(callId, userId));
     return v === '1';
+  }
+
+  async waitForRingingAck(callId: string, userId: string, timeoutMs: number): Promise<boolean> {
+    if (await this.hasRingingAcked(callId, userId)) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+      if (await this.hasRingingAcked(callId, userId)) return true;
+    }
+    return false;
   }
 
   async shouldSuppressCancelPush(

@@ -3,7 +3,6 @@ import { randomUUID } from 'crypto';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { sendCallPush, sendCallCancelPush, sendMissedCallNotification } from '../notification/notification.service';
-import { isUserForeground } from '../../config/socket';
 import { checkCallMinutes, addCallMinutes } from '../../shared/usage.service';
 import { generateCallToken, LIVEKIT_URL } from './call.livekit';
 import { isBlocked } from '../safety/safety.service';
@@ -27,6 +26,20 @@ const DISCONNECT_GRACE_MS = 10_000;
  * 5-second windows fits comfortably inside the 45s call timeout.
  */
 const PUSH_ACK_WINDOW_MS = 5_000;
+
+/**
+ * Pre-push gate. We always emit `call:incoming` over the socket first; if the
+ * receiver's WebSocket is alive (foreground or recently-active app), the
+ * frontend acks with `call:ringing` within ~25-100ms and we skip sending the
+ * VoIP push entirely — the in-app IncomingCallOverlay handles the UX, and we
+ * avoid the brief CallKit flash that iOS forces every VoIP push to display
+ * (Apple won't let us suppress it once the push lands; the only fix is to
+ * not send it). 250ms covers cross-region socket round-trips with margin
+ * while keeping the wake-from-sleep latency for genuinely-offline receivers
+ * imperceptible. Mirrors the WebSocket-first / push-fallback pattern used by
+ * Telegram, Signal, and Wazo-style platforms.
+ */
+const PUSH_GATE_MS = 250;
 
 /**
  * Per-instance retry-timer registry. Timers can't cross Node processes, but
@@ -423,9 +436,9 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
       });
       const userMap = new Map(participantUsers.map((u) => [u.id, u]));
 
-      // Notify each target user
-      for (const targetId of targetUserIds) {
-        // Check if target has active sockets in their room
+      // Notify each target user. Targets are independent — fan out in parallel
+      // so the per-call latency stays ~PUSH_GATE_MS regardless of group size.
+      await Promise.all(targetUserIds.map(async (targetId) => {
         const targetSockets = await io.in(`user:${targetId}`).fetchSockets();
         const isOnline = targetSockets.length > 0;
 
@@ -435,7 +448,6 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         );
 
         if (isOnline) {
-          // User is online — send via socket
           io.to(`user:${targetId}`).emit('call:incoming', {
             callId,
             conversationId,
@@ -452,36 +464,39 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
                 avatarUrl: userMap.get(id)?.avatarUrl ?? null,
               })),
           });
+
+          // Wait for the receiver's `call:ringing` ack. Their app acks
+          // within ~25-100ms when the socket event arrives, so PUSH_GATE_MS
+          // is plenty. If they ack, the in-app overlay handles the UX and
+          // we skip the VoIP push (no CallKit flash on iOS).
+          const acked = await callState.waitForRingingAck(callId, targetId, PUSH_GATE_MS);
+          if (acked) return;
         }
 
-        // Send push only when the receiver isn't actively in the app.
-        // If they ARE foreground, the socket call:incoming above is enough
-        // and the in-app IncomingCallOverlay handles the UX. Sending the
-        // push too would stack a CallKit / FCM banner on top of the
-        // overlay (the "double notification" issue).
-        if (!(await isUserForeground(targetId))) {
-          // Stamp BEFORE the fire-and-forget so a fast cancel path can see
-          // that a push is in flight (used by call:end to suppress a
-          // cancel-only VoIP that would race ahead of the original).
-          await callState.markPushEnqueued(callId, targetId, Date.now());
-          const pushPayload = {
-            callId,
-            conversationId,
-            callType: resolvedCallType,
-            callerId: userId,
-            callerName: caller?.displayName ?? 'Unknown',
-            callerAvatar: caller?.avatarUrl,
-            isGroup: isGroup ?? false,
-          };
-          sendCallPush(targetId, pushPayload).catch((err) => {
-            logger.error({ err, targetId, callId }, 'Failed to send call push notification');
-          });
-          // Receipt-driven retry: if the recipient doesn't ack ringing
-          // within the window, resend once. After a second silent window,
-          // emit call:unavailable to the caller.
-          schedulePushRetry(io, callId, targetId, userId, pushPayload);
-        }
-      }
+        // Receiver isn't reachable via socket (offline, killed, or socket
+        // alive-but-app-frozen — the latter happens briefly on iOS background).
+        // Wake their device with a VoIP push (iOS) / FCM data push (Android).
+        const pushPayload = {
+          callId,
+          conversationId,
+          callType: resolvedCallType,
+          callerId: userId,
+          callerName: caller?.displayName ?? 'Unknown',
+          callerAvatar: caller?.avatarUrl,
+          isGroup: isGroup ?? false,
+        };
+        // Stamp BEFORE the fire-and-forget so a fast cancel path can see
+        // that a push is in flight (used by call:end to suppress a
+        // cancel-only VoIP that would race ahead of the original).
+        await callState.markPushEnqueued(callId, targetId, Date.now());
+        sendCallPush(targetId, pushPayload).catch((err) => {
+          logger.error({ err, targetId, callId }, 'Failed to send call push notification');
+        });
+        // Receipt-driven retry: if the recipient still doesn't ack ringing
+        // within PUSH_ACK_WINDOW_MS, resend once. After a second silent
+        // window, emit call:unavailable to the caller.
+        schedulePushRetry(io, callId, targetId, userId, pushPayload);
+      }));
 
       // Confirm to the initiator
       socket.emit('call:initiated', { callId, callType: resolvedCallType });
@@ -525,7 +540,12 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
                 callerAvatar: caller?.avatarUrl ?? null,
               });
 
-              const targetForeground = await isUserForeground(targetId);
+              // Skip the push banner if the receiver's app already saw the
+              // incoming-call event (acked ringing). hasRingingAcked is a
+              // direct observation of the receiver's app state — far more
+              // reliable than the foreground presence room, which races on
+              // app launch / background-foreground transitions.
+              const seenIncoming = await callState.hasRingingAcked(callId, targetId);
 
               sendMissedCallNotification(
                 targetId,
@@ -537,7 +557,7 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
                   callerName: caller?.displayName ?? 'Unknown',
                   callerAvatar: caller?.avatarUrl,
                 },
-                { skipPush: targetForeground },
+                { skipPush: seenIncoming },
               ).catch((err) => {
                 logger.error({ err, targetId, callId }, 'Failed to send missed call notification');
               });
@@ -884,20 +904,22 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
             reason: 'caller_cancelled',
           });
 
-          // When the receiver is foreground the in-app overlay already
-          // dismissed via call:cancel above and the in-app notifications
-          // list will refresh from the in-app missed-call entry. Sending
-          // the VoIP cancel push and the FCM missed-call banner on top of
-          // that stacks a CallKit toast + system banner — the "double on
-          // drop" half of the doubled-notification report.
+          // If the receiver's app already acked ringing, the in-app overlay
+          // saw call:cancel above and the missed-call entry will land in
+          // their inbox. Sending the VoIP cancel push + FCM banner on top
+          // would stack a CallKit toast + system banner — the "double on
+          // drop" half of the original report.
           //
-          // For backgrounded receivers we still need both: the VoIP push
-          // dismisses CallKit on iOS even when the socket is dead, and
-          // the FCM banner is the user's only signal that they were
-          // called.
-          const targetForeground = await isUserForeground(targetId);
+          // For receivers that never acked (background/killed/offline) we
+          // still need both: the VoIP cancel dismisses CallKit on iOS
+          // when the socket is dead, and the FCM banner is the user's
+          // only signal that they were called.
+          //
+          // hasRingingAcked is direct observation — far more reliable than
+          // the presence room, which races on launch / lifecycle changes.
+          const seenIncoming = await callState.hasRingingAcked(callId, targetId);
 
-          if (!targetForeground) {
+          if (!seenIncoming) {
             // Cancel-before-original guard: if we sent the call VoIP push
             // less than 3 seconds ago AND the recipient hasn't confirmed
             // ringing, sending a cancel VoIP now would arrive at APNs
@@ -941,7 +963,7 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
               callerName: caller?.displayName ?? 'Unknown',
               callerAvatar: caller?.avatarUrl,
             },
-            { skipPush: targetForeground },
+            { skipPush: seenIncoming },
           ).catch((err) => {
             logger.error({ err, targetId, callId }, 'Failed to send missed call notification');
           });
