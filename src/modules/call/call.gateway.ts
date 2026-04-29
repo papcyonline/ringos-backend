@@ -22,10 +22,19 @@ const DISCONNECT_GRACE_MS = 10_000;
 /**
  * Receipt-driven push retry window. If we haven't received call:ringing from
  * a target within this window, we resend the VoIP push once. After a second
- * window with still no ack, we emit call:unavailable to the caller. Two
- * 5-second windows fits comfortably inside the 45s call timeout.
+ * window with still no ack, we emit call:unavailable to the caller.
+ *
+ * Bumped 5s → 15s. iOS PushKit dedups duplicate-callId pushes by forcing
+ * the AppDelegate to call reportNewIncomingCall + immediately end with a
+ * throwaway UUID — that briefly flashes CallKit, which the user sees as
+ * a second banner. A 5s retry window fired before a backgrounded/killed
+ * app could boot, connect socket, and ack ringing, so the retry kept
+ * triggering on every call. 15s is enough for cold-launch wake to
+ * complete + ack, and Apple's VoIP delivery is reliable enough that
+ * retrying that fast was over-engineered. Two 15s windows = 30s total,
+ * still inside the 45s call timeout.
  */
-const PUSH_ACK_WINDOW_MS = 5_000;
+const PUSH_ACK_WINDOW_MS = 15_000;
 
 /**
  * Pre-push gate. We always emit `call:incoming` over the socket first; if the
