@@ -24,17 +24,14 @@ const DISCONNECT_GRACE_MS = 10_000;
  * a target within this window, we resend the VoIP push once. After a second
  * window with still no ack, we emit call:unavailable to the caller.
  *
- * Bumped 5s → 15s. iOS PushKit dedups duplicate-callId pushes by forcing
- * the AppDelegate to call reportNewIncomingCall + immediately end with a
- * throwaway UUID — that briefly flashes CallKit, which the user sees as
- * a second banner. A 5s retry window fired before a backgrounded/killed
- * app could boot, connect socket, and ack ringing, so the retry kept
- * triggering on every call. 15s is enough for cold-launch wake to
- * complete + ack, and Apple's VoIP delivery is reliable enough that
- * retrying that fast was over-engineered. Two 15s windows = 30s total,
- * still inside the 45s call timeout.
+ * Two 20-second windows — wide enough that a cold-launch app can boot,
+ * connect socket, and ack ringing before we ever consider retrying, but
+ * still inside the 45s call timeout. The previous 5s window was firing on
+ * every cold-launch wake (app needs longer than 5s to boot + connect socket
+ * + ack), generating duplicate VoIP pushes that triggered AppDelegate's
+ * dedup-throwaway flash and the user-visible "second banner".
  */
-const PUSH_ACK_WINDOW_MS = 15_000;
+const PUSH_ACK_WINDOW_MS = 20_000;
 
 /**
  * Pre-push gate. We always emit `call:incoming` over the socket first; if the
@@ -657,7 +654,14 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
 
       await callState.mapUserToCall(userId, callId);
       socket.join(`call:${callId}`);
-      if (firstAnswer) callState.clearUnansweredTimer(callId);
+      if (firstAnswer) {
+        callState.clearUnansweredTimer(callId);
+        // Belt-and-suspenders: cancel any in-flight push retry. If we were
+        // racing the receiver's call:ringing ack and the user answered
+        // anyway, we don't want a stale retry firing 20s later and waking
+        // CallKit with a dedup-throwaway flash for an already-answered call.
+        clearPushRetryTimer(callId, userId);
+      }
 
       // Keep the local `call` snapshot consistent for downstream branches.
       if (firstAnswer && !call.answeredAt) call.answeredAt = new Date();
