@@ -467,6 +467,7 @@ export async function sendCallPush(
 
   if (voipTokens.length > 0) {
     const voipPayload = {
+      // Existing keys stay so any older client builds still work.
       callId: payload.callId,
       conversationId: payload.conversationId,
       callType: payload.callType,
@@ -474,6 +475,14 @@ export async function sendCallPush(
       callerName: payload.callerName,
       callerAvatar: payload.callerAvatar ?? null,
       isGroup: String(payload.isGroup ?? false),
+      // Additional keys the flutter_callkit_incoming plugin expects from the
+      // VoIP payload — id (used as CallKit UUID), nameCaller (display name),
+      // handle (caller-side ID), isVideo. Keeping the redundant pairs lets
+      // both old and new client builds parse the same push.
+      id: payload.callId,
+      nameCaller: payload.callerName,
+      handle: payload.callerId,
+      isVideo: payload.callType === 'VIDEO',
     };
 
     for (const { token } of voipTokens) {
