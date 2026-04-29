@@ -29,6 +29,33 @@ export async function createGroup(
   isPublic?: boolean,
   isChannel?: boolean,
 ) {
+  // Fetch the creator once — used by both the verified-only group gate
+  // below and the auto-verify branch further down.
+  const creatorRecord = await prisma.user.findUnique({
+    where: { id: creatorId },
+    select: { isVerified: true },
+  });
+  const creatorVerified = creatorRecord?.isVerified ?? false;
+
+  // Unverified users can only create 1 group. Verified users get unlimited.
+  // Channels have their own free-vs-pro gate further down — don't double-gate
+  // them here.
+  if (!isChannel && !creatorVerified) {
+    const groupCount = await prisma.conversation.count({
+      where: {
+        type: 'GROUP',
+        isChannel: false,
+        status: 'ACTIVE',
+        participants: { some: { userId: creatorId, role: 'ADMIN', leftAt: null } },
+      },
+    });
+    if (groupCount >= 1) {
+      throw new ForbiddenError(
+        'Unverified users can create only 1 group. Get verified to create more.',
+      );
+    }
+  }
+
   // Free users can only create 1 channel
   if (isChannel) {
     const pro = await isPro(creatorId);
@@ -69,11 +96,8 @@ export async function createGroup(
   // Used to be channel-only, which contradicted the documented perk
   // ("groups and channels you create are auto-verified") and forced
   // verified users to manually toggle the flag for groups.
-  const creatorRecord = await prisma.user.findUnique({
-    where: { id: creatorId },
-    select: { isVerified: true },
-  });
-  const autoVerify = creatorRecord?.isVerified ?? false;
+  // Reuse the creator lookup from the group-limit gate above.
+  const autoVerify = creatorVerified;
 
   const conversation = await prisma.conversation.create({
     data: {
