@@ -65,12 +65,15 @@ export async function createGroup(
   // Ensure creator is not in memberIds (they're added separately as ADMIN)
   const uniqueMembers = [...new Set(memberIds.filter((id) => id !== creatorId))];
 
-  // Auto-verify channel if creator is a verified user
-  let autoVerify = false;
-  if (isChannel) {
-    const creator = await prisma.user.findUnique({ where: { id: creatorId }, select: { isVerified: true } });
-    autoVerify = creator?.isVerified ?? false;
-  }
+  // Auto-verify both groups AND channels created by verified users.
+  // Used to be channel-only, which contradicted the documented perk
+  // ("groups and channels you create are auto-verified") and forced
+  // verified users to manually toggle the flag for groups.
+  const creatorRecord = await prisma.user.findUnique({
+    where: { id: creatorId },
+    select: { isVerified: true },
+  });
+  const autoVerify = creatorRecord?.isVerified ?? false;
 
   const conversation = await prisma.conversation.create({
     data: {
@@ -405,9 +408,27 @@ export async function toggleGroupVerified(conversationId: string, userId: string
     throw new NotFoundError('Group not found');
   }
 
+  // Verifying (turning on) requires the toggling admin to be a verified
+  // user themselves. Without this gate, any admin — including unverified
+  // ones — could flip their own group's isVerified flag to true and
+  // farm the verified-channel/group perks. Un-verifying (turning off)
+  // is allowed regardless: removing a badge can't be abused.
+  const willEnable = !conversation.isVerified;
+  if (willEnable) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { isVerified: true },
+    });
+    if (!user?.isVerified) {
+      throw new ForbiddenError(
+        'Only verified users can verify a group. Get verified first.',
+      );
+    }
+  }
+
   const updated = await prisma.conversation.update({
     where: { id: conversationId },
-    data: { isVerified: !conversation.isVerified },
+    data: { isVerified: willEnable },
     include: {
       participants: {
         where: { leftAt: null },
