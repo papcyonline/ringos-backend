@@ -26,7 +26,9 @@ export async function createReel(
     throw new BadRequestError('Video storage is not configured');
   }
   // Cap duration at 60s so we don't end up with long videos in the reels feed.
-  if (options.durationSec != null && options.durationSec > 60) {
+  // Allow 2s tolerance — on-device compression aligns to keyframes and may
+  // report 60.5s for a clean 60s trim.
+  if (options.durationSec != null && options.durationSec > 62) {
     throw new BadRequestError('Reels must be 60 seconds or less');
   }
 
