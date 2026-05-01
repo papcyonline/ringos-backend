@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
@@ -83,4 +83,44 @@ export async function uploadVideoToR2(
   // R2 doesn't auto-generate thumbnails like Cloudinary
   // Thumbnail will be null - frontend shows first frame
   return { url, thumbnailUrl: null };
+}
+
+/**
+ * Upload a buffer to R2 and return BOTH the URL and the storage key (so the
+ * caller can issue deletes later). Use this when you need to keep a handle
+ * to the object beyond just rendering its URL.
+ */
+export async function uploadToR2WithKey(
+  buffer: Buffer,
+  folder: string,
+  originalName: string,
+  contentType: string,
+): Promise<{ url: string; key: string }> {
+  const ext = path.extname(originalName) || '.bin';
+  const key = `${folder}/${uuidv4()}${ext}`;
+
+  const client = getClient();
+  await client.send(new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  }));
+
+  const url = publicUrl
+    ? `${publicUrl}/${key}`
+    : `https://${bucketName}.${accountId}.r2.dev/${key}`;
+  return { url, key };
+}
+
+/**
+ * Delete an object from R2 by key. Best-effort — caller can ignore errors.
+ */
+export async function deleteFromR2(key: string): Promise<void> {
+  if (!isR2Configured) return;
+  const client = getClient();
+  await client.send(new DeleteObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+  }));
 }

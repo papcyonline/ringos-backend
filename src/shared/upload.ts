@@ -216,27 +216,6 @@ export async function fileToStoryVideoUrl(
   return { secureUrl: url, publicId: '', thumbnailUrl: null };
 }
 
-// ── Reel video upload ─────────────────────────────────────────────────
-
-export async function fileToReelVideoUrl(
-  file: Express.Multer.File,
-  userId: string,
-): Promise<{ secureUrl: string; publicId: string; thumbnailUrl: string | null }> {
-  if (cloudinaryService.isCloudinaryConfigured) {
-    const result = await cloudinaryService.uploadBuffer(file.buffer, {
-      folder: `yomeet/reels/${userId}`,
-      resourceType: 'video',
-    });
-    if (result) {
-      const optimizedUrl = result.secureUrl.replace('/upload/', '/upload/w_720,q_auto,f_auto/');
-      const thumbnailUrl = optimizedUrl.replace(/\.[^.]+$/, '.jpg');
-      return { secureUrl: optimizedUrl, publicId: result.publicId, thumbnailUrl };
-    }
-  }
-  const url = saveToDisk(file.buffer, 'uploads/reels', '/uploads/reels', path.extname(file.originalname) || '.mp4');
-  return { secureUrl: url, publicId: '', thumbnailUrl: null };
-}
-
 // ── Post media upload (images + videos, max 10 files, 100MB) ──────────
 
 export const postMediaUpload = multer({

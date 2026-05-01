@@ -1,8 +1,11 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../shared/errors';
-import { fileToReelVideoUrl } from '../../shared/upload';
-import * as cloudinaryService from '../../shared/cloudinary.service';
+import {
+  isR2Configured,
+  uploadToR2WithKey,
+  deleteFromR2,
+} from '../../shared/r2.service';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
 
 // ─── Create Reel ───────────────────────────────────────────
@@ -19,19 +22,30 @@ export async function createReel(
   if (!file) {
     throw new BadRequestError('Video file is required');
   }
+  if (!isR2Configured) {
+    throw new BadRequestError('Video storage is not configured');
+  }
   // Cap duration at 60s so we don't end up with long videos in the reels feed.
   if (options.durationSec != null && options.durationSec > 60) {
     throw new BadRequestError('Reels must be 60 seconds or less');
   }
 
-  const upload = await fileToReelVideoUrl(file, userId);
+  const upload = await uploadToR2WithKey(
+    file.buffer,
+    `reels/${userId}`,
+    file.originalname || 'reel.mp4',
+    file.mimetype || 'video/mp4',
+  );
 
+  // R2 doesn't auto-generate thumbnails — FE renders the first frame via
+  // VideoPlayer until we add a server-side thumbnail step.
   const reel = await prisma.reel.create({
     data: {
       userId,
-      videoUrl: upload.secureUrl,
-      cloudinaryId: upload.publicId || null,
-      thumbnailUrl: upload.thumbnailUrl,
+      videoUrl: upload.url,
+      // Reusing this column to store the R2 storage key for cleanup.
+      cloudinaryId: upload.key,
+      thumbnailUrl: null,
       caption: options.caption?.trim() || null,
       musicTitle: options.musicTitle?.trim() || null,
       durationSec: options.durationSec ?? null,
@@ -148,6 +162,8 @@ export async function deleteReel(reelId: string, userId: string) {
 
   await prisma.reel.delete({ where: { id: reelId } });
   if (reel.cloudinaryId) {
-    cloudinaryService.deleteFile(reel.cloudinaryId, 'video').catch(() => {});
+    deleteFromR2(reel.cloudinaryId).catch((err) => {
+      logger.warn({ err, key: reel.cloudinaryId }, 'Failed to delete reel from R2');
+    });
   }
 }
