@@ -10,6 +10,9 @@ import {
   unlikeReel,
   markReelViewed,
   deleteReel,
+  addReelComment,
+  getReelComments,
+  deleteReelComment,
 } from './reel.service';
 
 const router = Router();
@@ -92,6 +95,63 @@ router.post('/:id/view', authenticate, async (req: AuthRequest, res: Response) =
     res.status(500).json({ error: 'Failed to mark viewed' });
   }
 });
+
+// ─── GET /api/reels/:id/comments ────────────────────────────
+
+router.get('/:id/comments', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const cursor = req.query.cursor as string | undefined;
+    const limit = parseInt((req.query.limit as string) || '30', 10);
+    const data = await getReelComments(
+      req.params.id as string,
+      cursor,
+      Math.min(Math.max(limit, 1), 50),
+    );
+    res.json(data);
+  } catch (error) {
+    logger.error({ error }, 'Error fetching reel comments');
+    res.status(500).json({ error: 'Failed to fetch comments' });
+  }
+});
+
+// ─── POST /api/reels/:id/comments ───────────────────────────
+
+router.post('/:id/comments', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId;
+    const content = (req.body?.content as string | undefined) ?? '';
+    const comment = await addReelComment(req.params.id as string, userId, content);
+    res.json({ comment });
+  } catch (error: any) {
+    if (error?.statusCode === 400 || error?.statusCode === 404) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
+    logger.error({ error }, 'Error creating comment');
+    res.status(500).json({ error: 'Failed to create comment' });
+  }
+});
+
+// ─── DELETE /api/reels/comments/:commentId ──────────────────
+
+router.delete(
+  '/comments/:commentId',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      await deleteReelComment(
+        req.params.commentId as string,
+        req.user!.userId,
+      );
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error?.statusCode === 403 || error?.statusCode === 404) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
+      logger.error({ error }, 'Error deleting comment');
+      res.status(500).json({ error: 'Failed to delete comment' });
+    }
+  },
+);
 
 // ─── DELETE /api/reels/:id ──────────────────────────────────
 

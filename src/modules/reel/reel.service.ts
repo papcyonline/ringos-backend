@@ -150,6 +150,97 @@ export async function markReelViewed(reelId: string) {
   }).catch(() => {});
 }
 
+// ─── Comments ──────────────────────────────────────────────
+
+export async function addReelComment(
+  reelId: string,
+  userId: string,
+  content: string,
+) {
+  const trimmed = content.trim();
+  if (!trimmed) throw new BadRequestError('Comment is required');
+  if (trimmed.length > 500) throw new BadRequestError('Comment too long');
+
+  const reel = await prisma.reel.findUnique({
+    where: { id: reelId },
+    select: { id: true },
+  });
+  if (!reel) throw new NotFoundError('Reel not found');
+
+  const comment = await prisma.$transaction(async (tx) => {
+    const c = await tx.reelComment.create({
+      data: { reelId, userId, content: trimmed },
+      include: {
+        user: {
+          select: {
+            id: true,
+            displayName: true,
+            avatarUrl: true,
+            isVerified: true,
+          },
+        },
+      },
+    });
+    await tx.reel.update({
+      where: { id: reelId },
+      data: { commentCount: { increment: 1 } },
+    });
+    return c;
+  });
+  return comment;
+}
+
+export async function getReelComments(
+  reelId: string,
+  cursor?: string,
+  limit = 30,
+) {
+  const comments = await prisma.reelComment.findMany({
+    where: { reelId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          displayName: true,
+          avatarUrl: true,
+          isVerified: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+  const hasMore = comments.length > limit;
+  const items = hasMore ? comments.slice(0, limit) : comments;
+  return {
+    comments: items.map((c) => ({
+      id: c.id,
+      content: c.content,
+      createdAt: c.createdAt,
+      user: c.user,
+    })),
+    nextCursor: hasMore ? items[items.length - 1].id : null,
+  };
+}
+
+export async function deleteReelComment(commentId: string, userId: string) {
+  const c = await prisma.reelComment.findUnique({
+    where: { id: commentId },
+    select: { userId: true, reelId: true },
+  });
+  if (!c) throw new NotFoundError('Comment not found');
+  if (c.userId !== userId) throw new ForbiddenError('Not your comment');
+
+  await prisma.$transaction(async (tx) => {
+    await tx.reelComment.delete({ where: { id: commentId } });
+    await tx.reel.update({
+      where: { id: c.reelId },
+      data: { commentCount: { decrement: 1 } },
+    });
+  });
+}
+
 // ─── Delete ────────────────────────────────────────────────
 
 export async function deleteReel(reelId: string, userId: string) {

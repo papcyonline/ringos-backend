@@ -226,6 +226,7 @@ model User {
   storyMutesReceived  StoryMute[] @relation("StoryMutesReceived")
   reels               Reel[]
   reelLikes           ReelLike[]
+  reelComments        ReelComment[]
   coinBalance      CoinBalance?
   coinTransactions CoinTransaction[]
   giftsSent        StoryGift[]    @relation("GiftsSent")
@@ -909,8 +910,9 @@ model Reel {
   commentCount Int      @default(0)
   createdAt    DateTime @default(now())
 
-  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  likes ReelLike[]
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes    ReelLike[]
+  comments ReelComment[]
 
   @@index([userId, createdAt])
   @@index([createdAt])
@@ -927,6 +929,20 @@ model ReelLike {
 
   @@unique([reelId, userId])
   @@index([reelId])
+  @@index([userId])
+}
+
+model ReelComment {
+  id        String   @id @default(uuid())
+  reelId    String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  reel Reel @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([reelId, createdAt])
   @@index([userId])
 }
 
