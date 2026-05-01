@@ -294,23 +294,45 @@ export async function unrepostReel(reelId: string, userId: string) {
 
 // ─── View ──────────────────────────────────────────────────
 
-export async function markReelViewed(reelId: string, userId: string) {
+export async function markReelViewed(
+  reelId: string,
+  userId: string,
+  progress: { watchedSec?: number; completed?: boolean } = {},
+) {
+  const watchedSec = Math.max(0, Math.floor(progress.watchedSec ?? 0));
+  const completed = progress.completed ?? false;
+
   // First view per user: create ReelView row + increment public viewCount.
-  // Repeat view: refresh viewedAt, no count bump.
+  // Repeat view: keep best-known watch progress (max watchedSec, sticky completed).
   try {
-    await prisma.reelView.create({ data: { reelId, userId } });
+    await prisma.reelView.create({
+      data: { reelId, userId, watchedSec, completed },
+    });
     await prisma.reel.update({
       where: { id: reelId },
       data: { viewCount: { increment: 1 } },
     });
   } catch (e: any) {
-    // P2002 = unique constraint (viewer already counted) — just refresh ts.
-    if (e?.code === 'P2002') {
-      await prisma.reelView.update({
+    // P2002 = unique constraint (viewer already counted). Update progress
+    // monotonically so partial → full watch is captured but not regressed.
+    if (e?.code !== 'P2002') return;
+    const existing = await prisma.reelView
+      .findUnique({
         where: { reelId_userId: { reelId, userId } },
-        data: { viewedAt: new Date() },
-      }).catch(() => {});
-    }
+        select: { watchedSec: true, completed: true },
+      })
+      .catch(() => null);
+    if (!existing) return;
+    await prisma.reelView
+      .update({
+        where: { reelId_userId: { reelId, userId } },
+        data: {
+          viewedAt: new Date(),
+          watchedSec: Math.max(existing.watchedSec, watchedSec),
+          completed: existing.completed || completed,
+        },
+      })
+      .catch(() => {});
   }
 }
 

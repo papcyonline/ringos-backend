@@ -17,6 +17,7 @@ import {
   deleteReelComment,
   countReelsCreatedSince,
 } from './reel.service';
+import { getReelStats } from './reel.stats.service';
 
 const MAX_REELS_PER_HOUR = 10;
 
@@ -142,10 +143,33 @@ router.delete('/:id/repost', authenticate, async (req: AuthRequest, res: Respons
 
 router.post('/:id/view', authenticate, async (req: AuthRequest, res: Response) => {
   try {
-    await markReelViewed(req.params.id as string, req.user!.userId);
+    const watchedSec = Number(req.body?.watchedSec);
+    const completed = req.body?.completed === true;
+    await markReelViewed(req.params.id as string, req.user!.userId, {
+      watchedSec: Number.isFinite(watchedSec) ? watchedSec : undefined,
+      completed,
+    });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to mark viewed' });
+  }
+});
+
+// ─── GET /api/reels/:id/stats ───────────────────────────────
+
+router.get('/:id/stats', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const stats = await getReelStats(req.params.id as string, req.user!.userId);
+    res.json({ stats });
+  } catch (error: any) {
+    if (error?.statusCode === 403) {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error?.statusCode === 404) {
+      return res.status(404).json({ error: error.message });
+    }
+    logger.error({ error }, 'Error fetching reel stats');
+    res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });
 

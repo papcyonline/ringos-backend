@@ -967,10 +967,12 @@ model ReelRepost {
 }
 
 model ReelView {
-  id       String   @id @default(uuid())
-  reelId   String
-  userId   String
-  viewedAt DateTime @default(now())
+  id          String   @id @default(uuid())
+  reelId      String
+  userId      String
+  viewedAt    DateTime @default(now())
+  watchedSec  Int      @default(0)
+  completed   Boolean  @default(false)
 
   reel Reel @relation(fields: [reelId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
