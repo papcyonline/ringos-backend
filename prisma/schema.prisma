@@ -228,6 +228,7 @@ model User {
   reelLikes           ReelLike[]
   reelComments        ReelComment[]
   reelReposts         ReelRepost[]
+  reelViews           ReelView[]
   coinBalance      CoinBalance?
   coinTransactions CoinTransaction[]
   giftsSent        StoryGift[]    @relation("GiftsSent")
@@ -917,6 +918,7 @@ model Reel {
   likes    ReelLike[]
   comments ReelComment[]
   reposts  ReelRepost[]
+  views    ReelView[]
 
   @@index([userId, createdAt])
   @@index([createdAt])
@@ -961,6 +963,20 @@ model ReelRepost {
 
   @@unique([reelId, userId])
   @@index([userId, createdAt])
+  @@index([reelId])
+}
+
+model ReelView {
+  id       String   @id @default(uuid())
+  reelId   String
+  userId   String
+  viewedAt DateTime @default(now())
+
+  reel Reel @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reelId, userId])
+  @@index([userId, viewedAt])
   @@index([reelId])
 }
 

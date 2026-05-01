@@ -15,7 +15,10 @@ import {
   addReelComment,
   getReelComments,
   deleteReelComment,
+  countReelsCreatedSince,
 } from './reel.service';
+
+const MAX_REELS_PER_HOUR = 10;
 
 const router = Router();
 
@@ -26,7 +29,15 @@ router.get('/feed', authenticate, async (req: AuthRequest, res: Response) => {
     const userId = req.user!.userId;
     const cursor = req.query.cursor as string | undefined;
     const limit = parseInt((req.query.limit as string) || '10', 10);
-    const data = await getReelFeed(userId, cursor, Math.min(Math.max(limit, 1), 30));
+    const audience = (req.query.audience as string | undefined) === 'following'
+      ? 'following' as const
+      : 'all' as const;
+    const data = await getReelFeed(
+      userId,
+      cursor,
+      Math.min(Math.max(limit, 1), 30),
+      audience,
+    );
     res.json(data);
   } catch (error) {
     logger.error({ error }, 'Error fetching reel feed');
@@ -46,6 +57,15 @@ router.post(
       const file = req.file as Express.Multer.File | undefined;
       if (!file) {
         return res.status(400).json({ error: 'video file is required' });
+      }
+      // Rate limit: cap reel uploads per user per hour.
+      const oneHourAgo = new Date(Date.now() - 3600 * 1000);
+      const recentCount = await countReelsCreatedSince(userId, oneHourAgo);
+      if (recentCount >= MAX_REELS_PER_HOUR) {
+        return res.status(429).json({
+          error: `Rate limit reached — max ${MAX_REELS_PER_HOUR} reels per hour`,
+          code: 'RATE_LIMITED',
+        });
       }
       const caption = (req.body.caption as string | undefined)?.trim();
       const musicTitle = (req.body.musicTitle as string | undefined)?.trim();
@@ -115,7 +135,7 @@ router.delete('/:id/repost', authenticate, async (req: AuthRequest, res: Respons
 
 router.post('/:id/view', authenticate, async (req: AuthRequest, res: Response) => {
   try {
-    await markReelViewed(req.params.id as string);
+    await markReelViewed(req.params.id as string, req.user!.userId);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to mark viewed' });
