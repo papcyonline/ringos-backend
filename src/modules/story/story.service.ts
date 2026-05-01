@@ -135,12 +135,13 @@ export async function getStoryFeed(requesterId: string) {
     return cached.data;
   }
 
-  const [blockedIds, mutualFollowIds] = await Promise.all([
+  // Friends section = stories of users WHO FOLLOW ME (incoming followers).
+  const [blockedIds, followerIds] = await Promise.all([
     getBlockedUserIds(requesterId),
-    getMutualFollowIds(requesterId),
+    getFollowerIds(requesterId),
   ]);
 
-  const audienceIds = [requesterId, ...mutualFollowIds].filter(
+  const audienceIds = [requesterId, ...followerIds].filter(
     (id) => !blockedIds.has(id),
   );
   const now = new Date();
@@ -326,31 +327,21 @@ function groupStoriesByUser(
 }
 
 // ─── Get Following Feed ─────────────────────────────────────
-// Stories from users I follow one-way (they don't follow me back).
-// Mutual-follow friends are excluded — they show up under getStoryFeed.
+// Stories of users I FOLLOW (regardless of whether they follow me back).
 
 export async function getFollowingFeed(requesterId: string) {
-  const [blockedIds, mutualIds, followingIds] = await Promise.all([
+  const [blockedIds, followingIds] = await Promise.all([
     getBlockedUserIds(requesterId),
-    getMutualFollowIds(requesterId),
-    prisma.follow
-      .findMany({
-        where: { followerId: requesterId },
-        select: { followingId: true },
-      })
-      .then((rows) => rows.map((r) => r.followingId)),
+    getFollowingIds(requesterId),
   ]);
 
-  const mutualSet = new Set(mutualIds);
-  const oneWayIds = followingIds.filter(
-    (id) => !mutualSet.has(id) && !blockedIds.has(id),
-  );
-  if (oneWayIds.length === 0) return [];
+  const audienceIds = followingIds.filter((id) => !blockedIds.has(id));
+  if (audienceIds.length === 0) return [];
 
   const now = new Date();
   const stories = await prisma.story.findMany({
     where: {
-      userId: { in: oneWayIds },
+      userId: { in: audienceIds },
       channelId: null,
       OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
     },
@@ -394,16 +385,21 @@ export async function getFollowingFeed(requesterId: string) {
 }
 
 // ─── Get Discover Feed ──────────────────────────────────────
-// Stories from users I'm NOT mutual friends with (and not blocked).
-// Public-ish discovery surface — same shape as getStoryFeed.
+// Stories of users with no follow relationship in either direction.
+// Random people — neither I follow them nor they follow me.
 
 export async function getDiscoverFeed(requesterId: string) {
-  const [blockedIds, mutualFollowIds] = await Promise.all([
+  const [blockedIds, followingIds, followerIds] = await Promise.all([
     getBlockedUserIds(requesterId),
-    getMutualFollowIds(requesterId),
+    getFollowingIds(requesterId),
+    getFollowerIds(requesterId),
   ]);
 
-  const excludeIds = new Set<string>([requesterId, ...mutualFollowIds]);
+  const excludeIds = new Set<string>([
+    requesterId,
+    ...followingIds,
+    ...followerIds,
+  ]);
   for (const id of blockedIds) {
     excludeIds.add(id);
   }
@@ -454,17 +450,22 @@ export async function getDiscoverFeed(requesterId: string) {
   return groupStoriesByUser(stories, requesterId);
 }
 
-// Mutual-follow = users where I follow them AND they follow me back.
-async function getMutualFollowIds(userId: string): Promise<string[]> {
-  const rows = await prisma.$queryRaw<{ userId: string }[]>`
-    SELECT f1."followingId" AS "userId"
-    FROM "Follow" f1
-    INNER JOIN "Follow" f2
-      ON f2."followerId" = f1."followingId"
-      AND f2."followingId" = f1."followerId"
-    WHERE f1."followerId" = ${userId}
-  `;
-  return rows.map((r) => r.userId);
+// People who follow me (incoming).
+async function getFollowerIds(userId: string): Promise<string[]> {
+  const rows = await prisma.follow.findMany({
+    where: { followingId: userId },
+    select: { followerId: true },
+  });
+  return rows.map((r) => r.followerId);
+}
+
+// People I follow (outgoing).
+async function getFollowingIds(userId: string): Promise<string[]> {
+  const rows = await prisma.follow.findMany({
+    where: { followerId: userId },
+    select: { followingId: true },
+  });
+  return rows.map((r) => r.followingId);
 }
 
 // ─── Mark Story Viewed ──────────────────────────────────────
