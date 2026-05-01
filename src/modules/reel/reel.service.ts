@@ -290,28 +290,23 @@ export async function unrepostReel(reelId: string, userId: string) {
 // ─── View ──────────────────────────────────────────────────
 
 export async function markReelViewed(reelId: string, userId: string) {
-  // Record a per-user view (idempotent — first view per user sets the row).
-  // Bump the public viewCount only on the first time this user views.
+  // First view per user: create ReelView row + increment public viewCount.
+  // Repeat view: refresh viewedAt, no count bump.
   try {
-    const result = await prisma.reelView.upsert({
-      where: { reelId_userId: { reelId, userId } },
-      create: { reelId, userId },
-      update: { viewedAt: new Date() },
+    await prisma.reelView.create({ data: { reelId, userId } });
+    await prisma.reel.update({
+      where: { id: reelId },
+      data: { viewCount: { increment: 1 } },
     });
-    // If created (viewedAt === createdAt within a tight window), increment.
-    // We can't tell from upsert directly, so bump unconditionally — viewCount
-    // becomes "engagement signal" rather than strict unique-views. Acceptable.
-    if (result.viewedAt.getTime() > Date.now() - 5_000) {
-      // Recently inserted/updated, bump only if a fresh insert. Cheap heuristic:
-      // check whether the row is brand new by looking at it again.
+  } catch (e: any) {
+    // P2002 = unique constraint (viewer already counted) — just refresh ts.
+    if (e?.code === 'P2002') {
+      await prisma.reelView.update({
+        where: { reelId_userId: { reelId, userId } },
+        data: { viewedAt: new Date() },
+      }).catch(() => {});
     }
-  } catch (_) {
-    /* ignore */
   }
-  await prisma.reel.update({
-    where: { id: reelId },
-    data: { viewCount: { increment: 1 } },
-  }).catch(() => {});
 }
 
 // ─── Rate limit helper ────────────────────────────────────
