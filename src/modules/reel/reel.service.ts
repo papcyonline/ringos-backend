@@ -82,6 +82,10 @@ export async function getReelFeed(
         where: { userId: requesterId },
         select: { id: true },
       },
+      reposts: {
+        where: { userId: requesterId },
+        select: { id: true },
+      },
     },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
@@ -103,8 +107,10 @@ export async function getReelFeed(
       viewCount: r.viewCount,
       likeCount: r.likeCount,
       commentCount: r.commentCount,
+      repostCount: r.repostCount,
       createdAt: r.createdAt,
       isLiked: r.likes.length > 0,
+      isReposted: r.reposts.length > 0,
       user: r.user,
     })),
     nextCursor,
@@ -137,6 +143,36 @@ export async function unlikeReel(reelId: string, userId: string) {
     await tx.reel.update({
       where: { id: reelId },
       data: { likeCount: { decrement: 1 } },
+    });
+  });
+}
+
+// ─── Repost / Unrepost ─────────────────────────────────────
+
+export async function repostReel(reelId: string, userId: string) {
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.reelRepost.findUnique({
+      where: { reelId_userId: { reelId, userId } },
+    });
+    if (existing) return;
+    await tx.reelRepost.create({ data: { reelId, userId } });
+    await tx.reel.update({
+      where: { id: reelId },
+      data: { repostCount: { increment: 1 } },
+    });
+  });
+}
+
+export async function unrepostReel(reelId: string, userId: string) {
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.reelRepost.findUnique({
+      where: { reelId_userId: { reelId, userId } },
+    });
+    if (!existing) return;
+    await tx.reelRepost.delete({ where: { id: existing.id } });
+    await tx.reel.update({
+      where: { id: reelId },
+      data: { repostCount: { decrement: 1 } },
     });
   });
 }

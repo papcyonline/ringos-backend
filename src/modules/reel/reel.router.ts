@@ -8,6 +8,8 @@ import {
   getReelFeed,
   likeReel,
   unlikeReel,
+  repostReel,
+  unrepostReel,
   markReelViewed,
   deleteReel,
   addReelComment,
@@ -82,6 +84,30 @@ router.delete('/:id/like', authenticate, async (req: AuthRequest, res: Response)
   } catch (error) {
     logger.error({ error }, 'Error unliking reel');
     res.status(500).json({ error: 'Failed to unlike reel' });
+  }
+});
+
+// ─── POST /api/reels/:id/repost ─────────────────────────────
+
+router.post('/:id/repost', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    await repostReel(req.params.id as string, req.user!.userId);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error({ error }, 'Error reposting reel');
+    res.status(500).json({ error: 'Failed to repost' });
+  }
+});
+
+// ─── DELETE /api/reels/:id/repost ───────────────────────────
+
+router.delete('/:id/repost', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    await unrepostReel(req.params.id as string, req.user!.userId);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error({ error }, 'Error un-reposting reel');
+    res.status(500).json({ error: 'Failed to un-repost' });
   }
 });
 
