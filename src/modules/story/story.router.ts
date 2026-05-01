@@ -7,14 +7,18 @@ import { getLimits, isPro } from '../../shared/usage.service';
 import {
   createStory,
   getStoryFeed,
+  getDiscoverFeed,
+  getFollowingFeed,
   markStoryViewed,
   getStoryViewers,
   likeStory,
+  reactToStory,
+  clearStoryReaction,
+  replyToStory,
   updateSlideCaption,
   deleteStory,
   deleteSlide,
 } from './story.service';
-import { createBoost, getBoostStatus } from './story-boost.service';
 import { getStoryGiftStats } from '../coins/coins.service';
 import { createNotification } from '../notification/notification.service';
 import { prisma } from '../../config/database';
@@ -35,6 +39,40 @@ router.get(
     } catch (error) {
       logger.error({ error }, 'Error fetching story feed');
       res.status(500).json({ error: 'Failed to fetch story feed' });
+    }
+  }
+);
+
+// ─── GET /api/stories/discover ──────────────────────────────
+
+router.get(
+  '/discover',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.userId;
+      const feed = await getDiscoverFeed(userId);
+      res.json({ feed });
+    } catch (error) {
+      logger.error({ error }, 'Error fetching discover feed');
+      res.status(500).json({ error: 'Failed to fetch discover feed' });
+    }
+  }
+);
+
+// ─── GET /api/stories/following ─────────────────────────────
+
+router.get(
+  '/following',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.userId;
+      const feed = await getFollowingFeed(userId);
+      res.json({ feed });
+    } catch (error) {
+      logger.error({ error }, 'Error fetching following feed');
+      res.status(500).json({ error: 'Failed to fetch following feed' });
     }
   }
 );
@@ -237,41 +275,96 @@ router.delete(
   }
 );
 
-// ─── POST /api/stories/:id/boost ─────────────────────────
+// ─── POST /api/stories/:id/react ─────────────────────────
 
 router.post(
-  '/:id/boost',
+  '/:id/react',
   authenticate,
-  async (req: AuthRequest, res: Response, next: NextFunction) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const userId = req.user!.userId;
       const storyId = req.params.id as string;
-      const { tier } = req.body as { tier?: string };
+      const emoji = (req.body?.emoji as string | undefined)?.trim();
 
-      const boost = await createBoost(storyId, userId, tier);
-      res.json({ boost });
-    } catch (err) {
-      next(err);
+      if (!emoji) {
+        return res.status(400).json({ error: 'emoji is required' });
+      }
+
+      const result = await reactToStory(storyId, userId, emoji);
+      if (!result) return res.status(404).json({ error: 'Story not found' });
+
+      // Notify the story owner (skip if reacting to own story)
+      const [story, reactor] = await Promise.all([
+        prisma.story.findUnique({ where: { id: storyId }, select: { userId: true } }),
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { displayName: true, avatarUrl: true, isVerified: true },
+        }),
+      ]);
+
+      if (story && reactor && story.userId !== userId) {
+        createNotification({
+          userId: story.userId,
+          type: 'STORY_LIKED',
+          title: reactor.displayName,
+          body: `Reacted ${emoji} to your story`,
+          imageUrl: reactor.avatarUrl ?? undefined,
+          data: { storyId, userId, emoji, isVerified: reactor.isVerified ?? false },
+        }).catch((err) => {
+          logger.error({ err, userId: story.userId }, 'Failed to send story reaction notification');
+        });
+      }
+
+      res.json({ success: true, emoji: result.emoji });
+    } catch (error: any) {
+      if (error?.statusCode === 400) {
+        return res.status(400).json({ error: error.message });
+      }
+      logger.error({ error }, 'Error reacting to story');
+      res.status(500).json({ error: 'Failed to react to story' });
     }
   }
 );
 
-// ─── GET /api/stories/:id/boost-status ───────────────────
+// ─── DELETE /api/stories/:id/react ───────────────────────
 
-router.get(
-  '/:id/boost-status',
+router.delete(
+  '/:id/react',
   authenticate,
-  async (req: AuthRequest, res: Response, next: NextFunction) => {
+  async (req: AuthRequest, res: Response) => {
     try {
+      const userId = req.user!.userId;
       const storyId = req.params.id as string;
-      // Verify the requester owns this story
-      const story = await prisma.story.findUnique({ where: { id: storyId }, select: { userId: true } });
-      if (!story) return res.status(404).json({ error: 'Story not found' });
-      if (story.userId !== req.user!.userId) return res.status(403).json({ error: 'Not your story' });
-      const status = await getBoostStatus(storyId);
-      res.json(status);
-    } catch (err) {
-      next(err);
+      await clearStoryReaction(storyId, userId);
+      res.json({ success: true });
+    } catch (error) {
+      logger.error({ error }, 'Error clearing story reaction');
+      res.status(500).json({ error: 'Failed to clear reaction' });
+    }
+  }
+);
+
+// ─── POST /api/stories/:id/reply ─────────────────────────
+
+router.post(
+  '/:id/reply',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const senderId = req.user!.userId;
+      const storyId = req.params.id as string;
+      const text = (req.body?.text as string | undefined) ?? '';
+
+      const result = await replyToStory(storyId, senderId, text);
+      if (!result) return res.status(404).json({ error: 'Story not found' });
+
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      if (error?.statusCode === 400 || error?.statusCode === 403) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
+      logger.error({ error }, 'Error replying to story');
+      res.status(500).json({ error: 'Failed to reply to story' });
     }
   }
 );

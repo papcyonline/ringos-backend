@@ -1,11 +1,14 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
-import { ForbiddenError } from '../../shared/errors';
+import { BadRequestError, ForbiddenError } from '../../shared/errors';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
 import { isPro } from '../../shared/usage.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
-import { getBoostedStoryIds } from './story-boost.service';
+import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
+
+export const ALLOWED_REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '👏'] as const;
+const ALLOWED_REACTION_SET = new Set<string>(ALLOWED_REACTION_EMOJIS);
 
 // ─── Feed Cache ─────────────────────────────────────────────
 // Per-user feed cache with short TTL to avoid hammering the DB on every poll.
@@ -127,33 +130,26 @@ export async function createStory(
 // ─── Get Story Feed ─────────────────────────────────────────
 
 export async function getStoryFeed(requesterId: string) {
-  // Return cached feed if still fresh
   const cached = feedCache.get(requesterId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
   }
 
-  const [blockedIds, boostedStoryIds, subscribedChannelIds] = await Promise.all([
+  const [blockedIds, mutualFollowIds] = await Promise.all([
     getBlockedUserIds(requesterId),
-    getBoostedStoryIds(),
-    prisma.conversationParticipant.findMany({
-      where: { userId: requesterId, leftAt: null, conversation: { isChannel: true, status: 'ACTIVE' } },
-      select: { conversationId: true },
-    }).then((subs) => subs.map((s) => s.conversationId)),
+    getMutualFollowIds(requesterId),
   ]);
+
+  const audienceIds = [requesterId, ...mutualFollowIds].filter(
+    (id) => !blockedIds.has(id),
+  );
   const now = new Date();
 
   const stories = await prisma.story.findMany({
     where: {
+      userId: { in: audienceIds },
+      channelId: null,
       OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
-      userId: { notIn: Array.from(blockedIds) },
-      // Include personal stories + channel stories from subscribed channels
-      AND: {
-        OR: [
-          { channelId: null }, // personal stories
-          { channelId: { in: subscribedChannelIds } }, // channel stories
-        ],
-      },
     },
     include: {
       slides: {
@@ -177,87 +173,68 @@ export async function getStoryFeed(requesterId: string) {
           verifiedRole: true,
         },
       },
-      channel: {
-        select: { id: true, name: true, avatarUrl: true, isVerified: true },
-      },
       views: {
         where: { viewerId: requesterId },
-        select: { id: true, liked: true },
+        select: { id: true },
+      },
+      reactions: {
+        where: { userId: requesterId },
+        select: { emoji: true },
       },
       _count: { select: { views: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
 
-  // Group stories by user (or by channel for channel stories)
-  const userMap = new Map<string, {
+  const byUser = new Map<string, {
     userId: string;
-    channelId?: string;
     displayName: string;
     avatarUrl: string | null;
     isVerified: boolean;
     isOfficial: boolean;
-    isChannel: boolean;
-    stories: typeof stories;
+    isSelf: boolean;
     hasUnviewed: boolean;
     latestCreatedAt: Date;
-    hasBoosted: boolean;
-    bestBoostTier: string | null;
+    stories: typeof stories;
   }>();
 
   for (const story of stories) {
-    // Use channelId as grouping key for channel stories, userId for personal
-    const key = story.channelId ?? story.userId;
-    const hasViewed = story.views.length > 0;
-    const boostTier = boostedStoryIds.get(story.id) || null;
-    const isChannelStory = !!story.channelId;
-
-    if (!userMap.has(key)) {
-      userMap.set(key, {
+    let entry = byUser.get(story.userId);
+    if (!entry) {
+      entry = {
         userId: story.userId,
-        ...(isChannelStory ? { channelId: story.channelId! } : {}),
-        displayName: isChannelStory ? (story.channel?.name ?? 'Channel') : story.user.displayName,
-        avatarUrl: isChannelStory ? (story.channel?.avatarUrl ?? null) : story.user.avatarUrl,
-        isVerified: isChannelStory ? (story.channel?.isVerified ?? false) : story.user.isVerified,
-        isOfficial: !isChannelStory && story.user.verifiedRole === 'official',
-        isChannel: isChannelStory,
-        stories: [],
+        displayName: story.user.displayName,
+        avatarUrl: story.user.avatarUrl,
+        isVerified: story.user.isVerified,
+        isOfficial: story.user.verifiedRole === 'official',
+        isSelf: story.userId === requesterId,
         hasUnviewed: false,
         latestCreatedAt: story.createdAt,
-        hasBoosted: false,
-        bestBoostTier: null,
-      });
+        stories: [],
+      };
+      byUser.set(story.userId, entry);
     }
-
-    const entry = userMap.get(key)!;
     entry.stories.push(story);
-    if (!hasViewed) entry.hasUnviewed = true;
+    if (story.views.length === 0 && story.userId !== requesterId) {
+      entry.hasUnviewed = true;
+    }
     if (story.createdAt > entry.latestCreatedAt) {
       entry.latestCreatedAt = story.createdAt;
     }
-    if (boostTier) {
-      entry.hasBoosted = true;
-      if (boostTier === 'premium' || !entry.bestBoostTier) {
-        entry.bestBoostTier = boostTier;
-      }
-    }
   }
 
-  const feed = Array.from(userMap.values()).map((entry) => ({
+  const feed = Array.from(byUser.values()).map((entry) => ({
     userId: entry.userId,
     displayName: entry.displayName,
     avatarUrl: entry.avatarUrl,
     isVerified: entry.isVerified,
     isOfficial: entry.isOfficial,
+    isSelf: entry.isSelf,
     hasUnviewed: entry.hasUnviewed,
-    isBoosted: entry.hasBoosted,
-    boostTier: entry.bestBoostTier,
     stories: entry.stories.map((s) => ({
       id: s.id,
       createdAt: s.createdAt,
       expiresAt: s.expiresAt,
-      isBoosted: boostedStoryIds.has(s.id),
-      boostTier: boostedStoryIds.get(s.id) || null,
       slides: s.slides.map((slide) => ({
         id: slide.id,
         type: slide.type,
@@ -268,27 +245,226 @@ export async function getStoryFeed(requesterId: string) {
         position: slide.position,
       })),
       viewed: s.views.length > 0,
-      liked: s.views.some((v) => v.liked),
+      myReaction: s.reactions[0]?.emoji ?? null,
       viewCount: s._count.views,
     })),
   }));
 
-  // Sort: boosted (premium > basic) → official → unviewed → most recent
+  // Snapchat-style ranking: self first, then unviewed friends, then most recent
   feed.sort((a, b) => {
-    // Boosted stories first
-    if (a.isBoosted !== b.isBoosted) return a.isBoosted ? -1 : 1;
-    if (a.isBoosted && b.isBoosted) {
-      if (a.boostTier !== b.boostTier) return a.boostTier === 'premium' ? -1 : 1;
-    }
-    if (a.isOfficial !== b.isOfficial) return a.isOfficial ? -1 : 1;
+    if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
     if (a.hasUnviewed !== b.hasUnviewed) return a.hasUnviewed ? -1 : 1;
     return b.stories[0].createdAt.getTime() - a.stories[0].createdAt.getTime();
   });
 
-  // Cache the result
   feedCache.set(requesterId, { data: feed, expiresAt: Date.now() + FEED_CACHE_TTL_MS });
-
   return feed;
+}
+
+// Shared grouping for getStoryFeed / getFollowingFeed / getDiscoverFeed.
+// Takes a flat list of stories with the standard include shape and returns
+// the public feed payload grouped by user.
+function groupStoriesByUser(
+  stories: Array<any>,
+  requesterId: string,
+) {
+  const byUser = new Map<string, {
+    userId: string;
+    displayName: string;
+    avatarUrl: string | null;
+    isVerified: boolean;
+    isOfficial: boolean;
+    isSelf: boolean;
+    hasUnviewed: boolean;
+    latestCreatedAt: Date;
+    stories: typeof stories;
+  }>();
+
+  for (const story of stories) {
+    let entry = byUser.get(story.userId);
+    if (!entry) {
+      entry = {
+        userId: story.userId,
+        displayName: story.user.displayName,
+        avatarUrl: story.user.avatarUrl,
+        isVerified: story.user.isVerified,
+        isOfficial: story.user.verifiedRole === 'official',
+        isSelf: story.userId === requesterId,
+        hasUnviewed: false,
+        latestCreatedAt: story.createdAt,
+        stories: [],
+      };
+      byUser.set(story.userId, entry);
+    }
+    entry.stories.push(story);
+    if (story.views.length === 0 && story.userId !== requesterId) {
+      entry.hasUnviewed = true;
+    }
+    if (story.createdAt > entry.latestCreatedAt) {
+      entry.latestCreatedAt = story.createdAt;
+    }
+  }
+
+  return Array.from(byUser.values()).map((entry) => ({
+    userId: entry.userId,
+    displayName: entry.displayName,
+    avatarUrl: entry.avatarUrl,
+    isVerified: entry.isVerified,
+    isOfficial: entry.isOfficial,
+    isSelf: entry.isSelf,
+    hasUnviewed: entry.hasUnviewed,
+    stories: entry.stories.map((s) => ({
+      id: s.id,
+      createdAt: s.createdAt,
+      expiresAt: s.expiresAt,
+      slides: s.slides,
+      viewed: s.views.length > 0,
+      myReaction: s.reactions[0]?.emoji ?? null,
+      viewCount: s._count.views,
+    })),
+  }));
+}
+
+// ─── Get Following Feed ─────────────────────────────────────
+// Stories from users I follow one-way (they don't follow me back).
+// Mutual-follow friends are excluded — they show up under getStoryFeed.
+
+export async function getFollowingFeed(requesterId: string) {
+  const [blockedIds, mutualIds, followingIds] = await Promise.all([
+    getBlockedUserIds(requesterId),
+    getMutualFollowIds(requesterId),
+    prisma.follow
+      .findMany({
+        where: { followerId: requesterId },
+        select: { followingId: true },
+      })
+      .then((rows) => rows.map((r) => r.followingId)),
+  ]);
+
+  const mutualSet = new Set(mutualIds);
+  const oneWayIds = followingIds.filter(
+    (id) => !mutualSet.has(id) && !blockedIds.has(id),
+  );
+  if (oneWayIds.length === 0) return [];
+
+  const now = new Date();
+  const stories = await prisma.story.findMany({
+    where: {
+      userId: { in: oneWayIds },
+      channelId: null,
+      OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
+    },
+    include: {
+      slides: {
+        orderBy: { position: 'asc' },
+        select: {
+          id: true,
+          type: true,
+          mediaUrl: true,
+          thumbnailUrl: true,
+          caption: true,
+          duration: true,
+          position: true,
+        },
+      },
+      user: {
+        select: {
+          id: true,
+          displayName: true,
+          avatarUrl: true,
+          isVerified: true,
+          verifiedRole: true,
+        },
+      },
+      views: {
+        where: { viewerId: requesterId },
+        select: { id: true },
+      },
+      reactions: {
+        where: { userId: requesterId },
+        select: { emoji: true },
+      },
+      _count: { select: { views: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
+
+  return groupStoriesByUser(stories, requesterId);
+}
+
+// ─── Get Discover Feed ──────────────────────────────────────
+// Stories from users I'm NOT mutual friends with (and not blocked).
+// Public-ish discovery surface — same shape as getStoryFeed.
+
+export async function getDiscoverFeed(requesterId: string) {
+  const [blockedIds, mutualFollowIds] = await Promise.all([
+    getBlockedUserIds(requesterId),
+    getMutualFollowIds(requesterId),
+  ]);
+
+  const excludeIds = new Set<string>([requesterId, ...mutualFollowIds]);
+  for (const id of blockedIds) {
+    excludeIds.add(id);
+  }
+  const now = new Date();
+
+  const stories = await prisma.story.findMany({
+    where: {
+      userId: { notIn: Array.from(excludeIds) },
+      channelId: null,
+      OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
+    },
+    include: {
+      slides: {
+        orderBy: { position: 'asc' },
+        select: {
+          id: true,
+          type: true,
+          mediaUrl: true,
+          thumbnailUrl: true,
+          caption: true,
+          duration: true,
+          position: true,
+        },
+      },
+      user: {
+        select: {
+          id: true,
+          displayName: true,
+          avatarUrl: true,
+          isVerified: true,
+          verifiedRole: true,
+        },
+      },
+      views: {
+        where: { viewerId: requesterId },
+        select: { id: true },
+      },
+      reactions: {
+        where: { userId: requesterId },
+        select: { emoji: true },
+      },
+      _count: { select: { views: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
+
+  return groupStoriesByUser(stories, requesterId);
+}
+
+// Mutual-follow = users where I follow them AND they follow me back.
+async function getMutualFollowIds(userId: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ userId: string }[]>`
+    SELECT f1."followingId" AS "userId"
+    FROM "Follow" f1
+    INNER JOIN "Follow" f2
+      ON f2."followerId" = f1."followingId"
+      AND f2."followingId" = f1."followerId"
+    WHERE f1."followerId" = ${userId}
+  `;
+  return rows.map((r) => r.userId);
 }
 
 // ─── Mark Story Viewed ──────────────────────────────────────
@@ -348,7 +524,7 @@ export async function getStoryViewers(storyId: string, userId: string) {
   });
 }
 
-// ─── Like Story ────────────────────────────────────────────
+// ─── Like Story (legacy endpoint, kept for old app builds) ─────
 
 export async function likeStory(storyId: string, viewerId: string, liked: boolean = true) {
   const view = await prisma.storyView.findUnique({
@@ -365,8 +541,119 @@ export async function likeStory(storyId: string, viewerId: string, liked: boolea
       data: { liked },
     });
   }
-  // Invalidate feed cache so the liked state is fresh on next fetch
+
+  // Mirror to StoryReaction so the new feed reader sees the like correctly.
+  if (liked) {
+    await prisma.storyReaction.upsert({
+      where: { storyId_userId: { storyId, userId: viewerId } },
+      create: { storyId, userId: viewerId, emoji: '❤️' },
+      update: { emoji: '❤️' },
+    });
+  } else {
+    await prisma.storyReaction.deleteMany({
+      where: { storyId, userId: viewerId },
+    });
+  }
+
   invalidateFeedCache(viewerId);
+}
+
+// ─── React to Story ────────────────────────────────────────
+
+export async function reactToStory(
+  storyId: string,
+  userId: string,
+  emoji: string,
+): Promise<{ emoji: string } | null> {
+  if (!ALLOWED_REACTION_SET.has(emoji)) {
+    throw new BadRequestError('Invalid reaction emoji');
+  }
+
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: { id: true, userId: true },
+  });
+  if (!story) return null;
+
+  await prisma.storyReaction.upsert({
+    where: { storyId_userId: { storyId, userId } },
+    create: { storyId, userId, emoji },
+    update: { emoji },
+  });
+
+  // Mirror ❤️ into legacy StoryView.liked so old app builds keep showing the like.
+  await prisma.storyView.upsert({
+    where: { storyId_viewerId: { storyId, viewerId: userId } },
+    create: { storyId, viewerId: userId, liked: emoji === '❤️' },
+    update: { liked: emoji === '❤️' },
+  });
+
+  invalidateFeedCache(userId);
+  return { emoji };
+}
+
+export async function clearStoryReaction(storyId: string, userId: string) {
+  await prisma.storyReaction.deleteMany({
+    where: { storyId, userId },
+  });
+  await prisma.storyView.updateMany({
+    where: { storyId, viewerId: userId },
+    data: { liked: false },
+  });
+  invalidateFeedCache(userId);
+}
+
+// ─── Reply to Story ────────────────────────────────────────
+// Creates (or reuses) a 1-on-1 DM with the story owner and posts the reply
+// as a chat message. The slide context is stashed in metadata so the FE can
+// render it as a quoted snippet above the reply bubble.
+
+export async function replyToStory(
+  storyId: string,
+  senderId: string,
+  text: string,
+): Promise<{ conversationId: string; messageId: string } | null> {
+  const trimmed = text.trim();
+  if (!trimmed) throw new BadRequestError('Reply text is required');
+
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: {
+      id: true,
+      userId: true,
+      slides: {
+        select: { id: true, type: true, mediaUrl: true, thumbnailUrl: true },
+        orderBy: { position: 'asc' },
+        take: 1,
+      },
+    },
+  });
+  if (!story) return null;
+  if (story.userId === senderId) {
+    throw new BadRequestError('Cannot reply to your own story');
+  }
+
+  const conversation = await getOrCreateDirectConversation(senderId, story.userId);
+  const firstSlide = story.slides[0] ?? null;
+
+  const message = await sendMessage(conversation.id, senderId, trimmed, {
+    metadata: {
+      storyContext: {
+        storyId,
+        ownerId: story.userId,
+        firstSlide: firstSlide
+          ? {
+              id: firstSlide.id,
+              type: firstSlide.type,
+              mediaUrl: firstSlide.mediaUrl,
+              thumbnailUrl: firstSlide.thumbnailUrl,
+            }
+          : null,
+      },
+    },
+  });
+
+  return { conversationId: conversation.id, messageId: message.id };
 }
 
 // ─── Update Slide Caption ──────────────────────────────────

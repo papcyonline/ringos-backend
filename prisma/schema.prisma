@@ -220,6 +220,7 @@ model User {
   voipTokens       VoipToken[]
   stories          Story[]
   storyViews       StoryView[]
+  storyReactions   StoryReaction[]
   storyBoosts      StoryBoost[]
   coinBalance      CoinBalance?
   coinTransactions CoinTransaction[]
@@ -408,6 +409,7 @@ model Conversation {
   metadata  Json?
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
+  archivedAt DateTime?
 
   participants ConversationParticipant[]
   messages     Message[]
@@ -769,6 +771,7 @@ model Story {
   views   StoryView[]
   boosts  StoryBoost[]
   gifts   StoryGift[]
+  reactions StoryReaction[]
 
   @@index([userId, expiresAt])
   @@index([channelId, expiresAt])
@@ -864,6 +867,21 @@ model StoryView {
   @@unique([storyId, viewerId])
   @@index([storyId])
   @@index([viewerId])
+}
+
+model StoryReaction {
+  id        String   @id @default(uuid())
+  storyId   String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, userId])
+  @@index([storyId])
+  @@index([userId])
 }
 
 // ─── Chat Folders ──────────────────────────────────────
