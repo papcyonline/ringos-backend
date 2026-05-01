@@ -224,6 +224,8 @@ model User {
   storyBoosts      StoryBoost[]
   storyMutesInitiated StoryMute[] @relation("StoryMutesInitiated")
   storyMutesReceived  StoryMute[] @relation("StoryMutesReceived")
+  reels               Reel[]
+  reelLikes           ReelLike[]
   coinBalance      CoinBalance?
   coinTransactions CoinTransaction[]
   giftsSent        StoryGift[]    @relation("GiftsSent")
@@ -890,6 +892,41 @@ model StoryReaction {
 
   @@unique([storyId, userId])
   @@index([storyId])
+  @@index([userId])
+}
+
+model Reel {
+  id           String   @id @default(uuid())
+  userId       String
+  videoUrl     String
+  cloudinaryId String?
+  thumbnailUrl String?
+  caption      String?
+  musicTitle   String?
+  durationSec  Int?
+  viewCount    Int      @default(0)
+  likeCount    Int      @default(0)
+  commentCount Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes ReelLike[]
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+model ReelLike {
+  id        String   @id @default(uuid())
+  reelId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  reel Reel @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reelId, userId])
+  @@index([reelId])
   @@index([userId])
 }
 
