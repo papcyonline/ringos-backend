@@ -6,6 +6,7 @@ import {
   uploadToR2WithKey,
   deleteFromR2,
 } from '../../shared/r2.service';
+import { moderateVideoUrl } from '../../shared/moderation.service';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
 
 // ─── Create Reel ───────────────────────────────────────────
@@ -38,6 +39,14 @@ export async function createReel(
     file.originalname || 'reel.mp4',
     file.mimetype || 'video/mp4',
   );
+
+  // Sightengine moderation — sample frames for nudity/offensive/weapon content.
+  // If unsafe, delete the just-uploaded object so we don't leak storage.
+  const moderation = await moderateVideoUrl(upload.url);
+  if (!moderation.safe) {
+    await deleteFromR2(upload.key).catch(() => {});
+    throw new BadRequestError(moderation.reason || 'Video failed content moderation');
+  }
 
   // R2 doesn't auto-generate thumbnails — FE renders the first frame via
   // VideoPlayer until we add a server-side thumbnail step.
