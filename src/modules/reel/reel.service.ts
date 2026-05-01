@@ -139,10 +139,15 @@ export async function getReelFeed(
     where: {
       createdAt: { gte: lookbackStart },
       userId: { notIn: Array.from(blockedIds) },
-      id: { notIn: Array.from(viewedReelIds) },
       ...(audience === 'following'
         ? { userId: { in: Array.from(followingIds) } }
         : {}),
+      // Hide reels the requester already watched in the last 24h —
+      // EXCEPT their own reels, which should always surface for them.
+      OR: [
+        { id: { notIn: Array.from(viewedReelIds) } },
+        { userId: requesterId },
+      ],
     },
     include: {
       user: {
