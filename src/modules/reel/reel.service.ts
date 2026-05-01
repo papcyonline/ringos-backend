@@ -52,10 +52,28 @@ export async function createReel(
       musicTitle: options.musicTitle?.trim() || null,
       durationSec: options.durationSec ?? null,
     },
+    include: {
+      user: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
+    },
   });
 
   logger.info({ reelId: reel.id, userId }, 'Reel created');
-  return reel;
+  return {
+    id: reel.id,
+    videoUrl: reel.videoUrl,
+    thumbnailUrl: reel.thumbnailUrl,
+    caption: reel.caption,
+    musicTitle: reel.musicTitle,
+    durationSec: reel.durationSec,
+    viewCount: reel.viewCount,
+    likeCount: reel.likeCount,
+    commentCount: reel.commentCount,
+    repostCount: reel.repostCount,
+    createdAt: reel.createdAt,
+    isLiked: false,
+    isReposted: false,
+    user: reel.user,
+  };
 }
 
 // ─── Feed ──────────────────────────────────────────────────
