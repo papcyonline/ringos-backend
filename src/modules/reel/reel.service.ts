@@ -45,7 +45,11 @@ export async function createReel(
   const moderation = await moderateVideoUrl(upload.url);
   if (!moderation.safe) {
     await deleteFromR2(upload.key).catch(() => {});
-    throw new BadRequestError(moderation.reason || 'Video failed content moderation');
+    const err: any = new BadRequestError(
+      moderation.reason || 'Video failed content moderation',
+    );
+    err.code = 'MODERATION_REJECTED';
+    throw err;
   }
 
   // R2 doesn't auto-generate thumbnails — FE renders the first frame via

@@ -75,7 +75,10 @@ router.post(
       res.json({ reel });
     } catch (error: any) {
       if (error?.statusCode === 400) {
-        return res.status(400).json({ error: error.message });
+        return res.status(400).json({
+          error: error.message,
+          code: error.code,
+        });
       }
       logger.error({ error, stack: error?.stack, name: error?.name }, 'Error creating reel');
       res.status(500).json({
