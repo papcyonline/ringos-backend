@@ -30,9 +30,12 @@ router.get('/feed', authenticate, async (req: AuthRequest, res: Response) => {
     const userId = req.user!.userId;
     const cursor = req.query.cursor as string | undefined;
     const limit = parseInt((req.query.limit as string) || '10', 10);
-    const audience = (req.query.audience as string | undefined) === 'following'
-      ? 'following' as const
-      : 'all' as const;
+    const audienceQ = req.query.audience as string | undefined;
+    const audience: 'all' | 'following' | 'mine' = audienceQ === 'following'
+      ? 'following'
+      : audienceQ === 'mine'
+        ? 'mine'
+        : 'all';
     const data = await getReelFeed(
       userId,
       cursor,

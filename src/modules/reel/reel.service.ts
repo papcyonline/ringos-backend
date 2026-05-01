@@ -109,7 +109,7 @@ export async function getReelFeed(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _cursor?: string,
   limit = 10,
-  audience: 'all' | 'following' = 'all',
+  audience: 'all' | 'following' | 'mine' = 'all',
 ) {
   const now = Date.now();
   const lookbackStart = new Date(now - RANKING_LOOKBACK_DAYS * 24 * 3600 * 1000);
@@ -133,6 +133,47 @@ export async function getReelFeed(
 
   if (audience === 'following' && followingIds.size === 0) {
     return { reels: [], nextCursor: null };
+  }
+
+  // 'mine' is a focused query: just the requester's own reels, all-time-new
+  // first. No view-filter, no follow-filter, no ranking — chronological.
+  if (audience === 'mine') {
+    const mine = await prisma.reel.findMany({
+      where: { userId: requesterId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: {
+        user: {
+          select: {
+            id: true,
+            displayName: true,
+            avatarUrl: true,
+            isVerified: true,
+          },
+        },
+        likes: { where: { userId: requesterId }, select: { id: true } },
+        reposts: { where: { userId: requesterId }, select: { id: true } },
+      },
+    });
+    return {
+      reels: mine.map((r) => ({
+        id: r.id,
+        videoUrl: r.videoUrl,
+        thumbnailUrl: r.thumbnailUrl,
+        caption: r.caption,
+        musicTitle: r.musicTitle,
+        durationSec: r.durationSec,
+        viewCount: r.viewCount,
+        likeCount: r.likeCount,
+        commentCount: r.commentCount,
+        repostCount: r.repostCount,
+        createdAt: r.createdAt,
+        isLiked: r.likes.length > 0,
+        isReposted: r.reposts.length > 0,
+        user: r.user,
+      })),
+      nextCursor: null,
+    };
   }
 
   const candidates = await prisma.reel.findMany({
