@@ -222,6 +222,8 @@ model User {
   storyViews       StoryView[]
   storyReactions   StoryReaction[]
   storyBoosts      StoryBoost[]
+  storyMutesInitiated StoryMute[] @relation("StoryMutesInitiated")
+  storyMutesReceived  StoryMute[] @relation("StoryMutesReceived")
   coinBalance      CoinBalance?
   coinTransactions CoinTransaction[]
   giftsSent        StoryGift[]    @relation("GiftsSent")
@@ -757,13 +759,19 @@ model SpotlightLog {
   @@index([startedAt])
 }
 
+enum StoryVisibility {
+  FRIENDS
+  PUBLIC
+}
+
 model Story {
-  id          String       @id @default(uuid())
+  id          String          @id @default(uuid())
   userId      String
   channelId   String?
-  createdAt   DateTime     @default(now())
+  createdAt   DateTime        @default(now())
   expiresAt   DateTime
-  isPermanent Boolean      @default(false)
+  isPermanent Boolean         @default(false)
+  visibility  StoryVisibility @default(FRIENDS)
 
   user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   channel Conversation? @relation(fields: [channelId], references: [id], onDelete: Cascade)
@@ -776,6 +784,7 @@ model Story {
   @@index([userId, expiresAt])
   @@index([channelId, expiresAt])
   @@index([expiresAt])
+  @@index([visibility, expiresAt])
 }
 
 model StoryBoost {
@@ -882,6 +891,20 @@ model StoryReaction {
   @@unique([storyId, userId])
   @@index([storyId])
   @@index([userId])
+}
+
+model StoryMute {
+  id          String   @id @default(uuid())
+  muterId     String
+  mutedUserId String
+  createdAt   DateTime @default(now())
+
+  muter     User @relation("StoryMutesInitiated", fields: [muterId], references: [id], onDelete: Cascade)
+  mutedUser User @relation("StoryMutesReceived", fields: [mutedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([muterId, mutedUserId])
+  @@index([muterId])
+  @@index([mutedUserId])
 }
 
 // ─── Chat Folders ──────────────────────────────────────

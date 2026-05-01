@@ -15,6 +15,8 @@ import {
   reactToStory,
   clearStoryReaction,
   replyToStory,
+  muteUserStories,
+  unmuteUserStories,
   updateSlideCaption,
   deleteStory,
   deleteSlide,
@@ -56,6 +58,45 @@ router.get(
     } catch (error) {
       logger.error({ error }, 'Error fetching discover feed');
       res.status(500).json({ error: 'Failed to fetch discover feed' });
+    }
+  }
+);
+
+// ─── POST /api/stories/mute/:userId ─────────────────────────
+
+router.post(
+  '/mute/:userId',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const muterId = req.user!.userId;
+      const mutedUserId = req.params.userId as string;
+      await muteUserStories(muterId, mutedUserId);
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error?.statusCode === 400) {
+        return res.status(400).json({ error: error.message });
+      }
+      logger.error({ error }, 'Error muting user stories');
+      res.status(500).json({ error: 'Failed to mute user' });
+    }
+  }
+);
+
+// ─── DELETE /api/stories/mute/:userId ───────────────────────
+
+router.delete(
+  '/mute/:userId',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const muterId = req.user!.userId;
+      const mutedUserId = req.params.userId as string;
+      await unmuteUserStories(muterId, mutedUserId);
+      res.json({ success: true });
+    } catch (error) {
+      logger.error({ error }, 'Error unmuting user stories');
+      res.status(500).json({ error: 'Failed to unmute user' });
     }
   }
 );
@@ -123,7 +164,14 @@ router.post(
 
       const isPermanent = req.body.isPermanent === 'true' || req.body.isPermanent === true;
       const channelId = req.body.channelId as string | undefined;
-      const story = await createStory(userId, files, slidesMetadata, { isPermanent, channelId });
+      const visibility = (req.body.visibility as string | undefined) === 'PUBLIC'
+          ? 'PUBLIC' as const
+          : 'FRIENDS' as const;
+      const story = await createStory(userId, files, slidesMetadata, {
+        isPermanent,
+        channelId,
+        visibility,
+      });
 
       // Notify all connected users so their feed refreshes instantly
       try {

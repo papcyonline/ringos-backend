@@ -51,7 +51,11 @@ export async function createStory(
   userId: string,
   files: Express.Multer.File[],
   slidesMetadata?: SlideMetadata[],
-  options?: { isPermanent?: boolean; channelId?: string },
+  options?: {
+    isPermanent?: boolean;
+    channelId?: string;
+    visibility?: 'FRIENDS' | 'PUBLIC';
+  },
 ) {
   // If posting as a channel, verify user is admin
   if (options?.channelId) {
@@ -115,6 +119,7 @@ export async function createStory(
       ...(options?.channelId ? { channelId: options.channelId } : {}),
       expiresAt,
       isPermanent: permanent,
+      visibility: options?.visibility === 'PUBLIC' ? 'PUBLIC' : 'FRIENDS',
       slides: {
         create: uploads,
       },
@@ -136,13 +141,15 @@ export async function getStoryFeed(requesterId: string) {
   }
 
   // Friends section = stories of users WHO FOLLOW ME (incoming followers).
-  const [blockedIds, followerIds] = await Promise.all([
+  const [blockedIds, followerIds, mutedIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getFollowerIds(requesterId),
+    getMutedUserIds(requesterId),
   ]);
 
+  const mutedSet = new Set(mutedIds);
   const audienceIds = [requesterId, ...followerIds].filter(
-    (id) => !blockedIds.has(id),
+    (id) => !blockedIds.has(id) && !mutedSet.has(id),
   );
   const now = new Date();
 
@@ -330,12 +337,16 @@ function groupStoriesByUser(
 // Stories of users I FOLLOW (regardless of whether they follow me back).
 
 export async function getFollowingFeed(requesterId: string) {
-  const [blockedIds, followingIds] = await Promise.all([
+  const [blockedIds, followingIds, mutedIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getFollowingIds(requesterId),
+    getMutedUserIds(requesterId),
   ]);
 
-  const audienceIds = followingIds.filter((id) => !blockedIds.has(id));
+  const mutedSet = new Set(mutedIds);
+  const audienceIds = followingIds.filter(
+    (id) => !blockedIds.has(id) && !mutedSet.has(id),
+  );
   if (audienceIds.length === 0) return [];
 
   const now = new Date();
@@ -387,18 +398,21 @@ export async function getFollowingFeed(requesterId: string) {
 // ─── Get Discover Feed ──────────────────────────────────────
 // Stories of users with no follow relationship in either direction.
 // Random people — neither I follow them nor they follow me.
+// Only PUBLIC-visibility stories surface here.
 
 export async function getDiscoverFeed(requesterId: string) {
-  const [blockedIds, followingIds, followerIds] = await Promise.all([
+  const [blockedIds, followingIds, followerIds, mutedIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getFollowingIds(requesterId),
     getFollowerIds(requesterId),
+    getMutedUserIds(requesterId),
   ]);
 
   const excludeIds = new Set<string>([
     requesterId,
     ...followingIds,
     ...followerIds,
+    ...mutedIds,
   ]);
   for (const id of blockedIds) {
     excludeIds.add(id);
@@ -409,6 +423,7 @@ export async function getDiscoverFeed(requesterId: string) {
     where: {
       userId: { notIn: Array.from(excludeIds) },
       channelId: null,
+      visibility: 'PUBLIC',
       OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
     },
     include: {
@@ -466,6 +481,36 @@ async function getFollowingIds(userId: string): Promise<string[]> {
     select: { followingId: true },
   });
   return rows.map((r) => r.followingId);
+}
+
+// Users I've muted from my story feed.
+async function getMutedUserIds(userId: string): Promise<string[]> {
+  const rows = await prisma.storyMute.findMany({
+    where: { muterId: userId },
+    select: { mutedUserId: true },
+  });
+  return rows.map((r) => r.mutedUserId);
+}
+
+// ─── Mute / Unmute ──────────────────────────────────────────
+
+export async function muteUserStories(muterId: string, mutedUserId: string) {
+  if (muterId === mutedUserId) {
+    throw new BadRequestError('Cannot mute yourself');
+  }
+  await prisma.storyMute.upsert({
+    where: { muterId_mutedUserId: { muterId, mutedUserId } },
+    create: { muterId, mutedUserId },
+    update: {},
+  });
+  invalidateFeedCache(muterId);
+}
+
+export async function unmuteUserStories(muterId: string, mutedUserId: string) {
+  await prisma.storyMute.deleteMany({
+    where: { muterId, mutedUserId },
+  });
+  invalidateFeedCache(muterId);
 }
 
 // ─── Mark Story Viewed ──────────────────────────────────────
