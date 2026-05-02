@@ -75,7 +75,30 @@ router.post(
       const musicTitle = (req.body.musicTitle as string | undefined)?.trim();
       const durationStr = req.body.durationSec as string | undefined;
       const durationSec = durationStr ? parseInt(durationStr, 10) : undefined;
-      const reel = await createReel(userId, file, { caption, musicTitle, durationSec });
+      // Viewer-side video edits ride along as a JSON-encoded multipart field
+      // (matches stories' slidesMetadata pattern). Reject malformed JSON
+      // outright — silently dropping would post a video without the user's
+      // edits, which is exactly the bug we just fixed for stories.
+      let videoEdits: Record<string, unknown> | undefined;
+      const editsRaw = req.body.videoEdits as string | undefined;
+      if (editsRaw && editsRaw.trim().length > 0) {
+        try {
+          const parsed = JSON.parse(editsRaw);
+          if (parsed && typeof parsed === 'object') {
+            videoEdits = parsed as Record<string, unknown>;
+          }
+        } catch {
+          return res
+            .status(400)
+            .json({ error: 'videoEdits must be valid JSON' });
+        }
+      }
+      const reel = await createReel(userId, file, {
+        caption,
+        musicTitle,
+        durationSec,
+        videoEdits,
+      });
       res.json({ reel });
     } catch (error: any) {
       if (error?.statusCode === 400) {

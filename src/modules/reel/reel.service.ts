@@ -18,6 +18,8 @@ export async function createReel(
     caption?: string;
     musicTitle?: string;
     durationSec?: number;
+    /// Viewer-side edits (filter/overlays/speed) — stored as-is.
+    videoEdits?: Record<string, unknown>;
   } = {},
 ) {
   if (!file) {
@@ -64,6 +66,7 @@ export async function createReel(
       caption: options.caption?.trim() || null,
       musicTitle: options.musicTitle?.trim() || null,
       durationSec: options.durationSec ?? null,
+      videoEdits: (options.videoEdits as any) ?? undefined,
     },
     include: {
       user: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
@@ -83,6 +86,7 @@ export async function createReel(
     commentCount: reel.commentCount,
     repostCount: reel.repostCount,
     createdAt: reel.createdAt,
+    videoEdits: reel.videoEdits,
     isLiked: false,
     isReposted: false,
     user: reel.user,
@@ -168,6 +172,7 @@ export async function getReelFeed(
         commentCount: r.commentCount,
         repostCount: r.repostCount,
         createdAt: r.createdAt,
+        videoEdits: r.videoEdits,
         isLiked: r.likes.length > 0,
         isReposted: r.reposts.length > 0,
         user: r.user,
@@ -263,6 +268,7 @@ export async function getReelFeed(
       commentCount: r.commentCount,
       repostCount: r.repostCount,
       createdAt: r.createdAt,
+      videoEdits: r.videoEdits,
       isLiked: r.likes.length > 0,
       isReposted: r.reposts.length > 0,
       user: r.user,

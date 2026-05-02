@@ -948,6 +948,9 @@ model Reel {
   createdAt    DateTime @default(now())
 
   repostCount Int @default(0)
+  /// Per-reel viewer-side video edits (filter / overlays / speed) stored
+  /// as JSON. Applied at playback by the FE — no server bake.
+  videoEdits  Json?
 
   user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   likes    ReelLike[]
