@@ -38,27 +38,10 @@ interface SlideMetadata {
   position: number;
   duration?: number;
   caption?: string;
-  music?: {
-    previewUrl: string;
-    title?: string;
-    artist?: string;
-    artwork?: string;
-  };
-  /// Edits to apply at playback (viewer-side rendering — no server bake).
-  /// filterId: 'sepia' | 'bw' | ... | null. overlays: list of text overlays
-  /// with fractional positions. speed: playback rate multiplier.
-  videoEdits?: {
-    filterId?: string;
-    speed?: number;
-    overlays?: Array<{
-      text: string;
-      xFrac: number;
-      yFrac: number;
-      fontSizeFrac?: number;
-      colorHex?: string;
-      fontId?: string;
-    }>;
-  };
+  // Loose JSON blobs — validated at use site rather than at the boundary
+  // so the router can hand JSON.parse output through without tight typing.
+  music?: Record<string, unknown>;
+  videoEdits?: Record<string, unknown>;
 }
 
 // ─── Create Story ───────────────────────────────────────────
