@@ -44,6 +44,21 @@ interface SlideMetadata {
     artist?: string;
     artwork?: string;
   };
+  /// Edits to apply at playback (viewer-side rendering — no server bake).
+  /// filterId: 'sepia' | 'bw' | ... | null. overlays: list of text overlays
+  /// with fractional positions. speed: playback rate multiplier.
+  videoEdits?: {
+    filterId?: string;
+    speed?: number;
+    overlays?: Array<{
+      text: string;
+      xFrac: number;
+      yFrac: number;
+      fontSizeFrac?: number;
+      colorHex?: string;
+      fontId?: string;
+    }>;
+  };
 }
 
 // ─── Create Story ───────────────────────────────────────────
@@ -82,9 +97,13 @@ export async function createStory(
       const position = meta?.position ?? index;
 
       // Prisma JSON fields require `undefined` for "no value" (not null).
-      const slideMetadata: Record<string, any> | undefined = meta?.music
-        ? { music: meta.music }
-        : undefined;
+      // Pack music + videoEdits into the same JSON blob so the slide row
+      // round-trips both for the viewer.
+      const metaBlob: Record<string, any> = {};
+      if (meta?.music) metaBlob.music = meta.music;
+      if (meta?.videoEdits) metaBlob.videoEdits = meta.videoEdits;
+      const slideMetadata: Record<string, any> | undefined =
+          Object.keys(metaBlob).length > 0 ? metaBlob : undefined;
       if (slideType === 'VIDEO') {
         const result = await fileToStoryVideoUrl(file, userId);
         return {

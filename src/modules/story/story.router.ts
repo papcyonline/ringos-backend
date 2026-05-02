@@ -134,7 +134,14 @@ router.post(
       }
 
       // Parse slidesMetadata if provided (backward compat: treat all as IMAGE if missing)
-      let slidesMetadata: Array<{ type: 'IMAGE' | 'VIDEO' | 'TEXT'; position: number; duration?: number }> | undefined;
+      let slidesMetadata: Array<{
+        type: 'IMAGE' | 'VIDEO' | 'TEXT';
+        position: number;
+        duration?: number;
+        caption?: string;
+        music?: Record<string, unknown>;
+        videoEdits?: Record<string, unknown>;
+      }> | undefined;
       if (req.body.slidesMetadata) {
         try {
           slidesMetadata = JSON.parse(req.body.slidesMetadata);
