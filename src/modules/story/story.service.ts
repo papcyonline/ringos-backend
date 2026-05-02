@@ -6,6 +6,7 @@ import { isPro } from '../../shared/usage.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
+import { notifyFollowersOfNewStory } from './story.notify';
 
 export const ALLOWED_REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '👏'] as const;
 const ALLOWED_REACTION_SET = new Set<string>(ALLOWED_REACTION_EMOJIS);
@@ -129,6 +130,13 @@ export async function createStory(
 
   logger.info({ storyId: story.id, userId, slideCount: files.length }, 'Story created');
   invalidateFeedCache(); // New story affects everyone's feed
+  // Fan-out push notifications to followers — fire-and-forget so the request
+  // returns fast. Skipped for channel stories (different audience).
+  if (!options?.channelId) {
+    notifyFollowersOfNewStory(story.id, userId).catch((err) =>
+      logger.warn({ err, storyId: story.id }, 'notifyFollowersOfNewStory failed'),
+    );
+  }
   return story;
 }
 

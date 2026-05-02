@@ -141,6 +141,7 @@ enum NotificationType {
   POST_COMMENTED
   POST_MENTION
   NEW_POST
+  NEW_STORY
 }
 
 enum TransactionType {

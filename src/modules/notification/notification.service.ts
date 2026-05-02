@@ -113,7 +113,7 @@ export async function deleteAllNotifications(userId: string) {
 
 export async function createNotification(data: {
   userId: string;
-  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'MISSED_CALL' | 'SYSTEM' | 'POST_LIKED' | 'POST_COMMENTED' | 'POST_MENTION' | 'NEW_POST';
+  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'MISSED_CALL' | 'SYSTEM' | 'POST_LIKED' | 'POST_COMMENTED' | 'POST_MENTION' | 'NEW_POST' | 'NEW_STORY';
   title: string;
   body: string;
   imageUrl?: string;
@@ -267,7 +267,7 @@ async function sendFcmWithRetry(
  * Send a data-only push notification via FCM to all devices registered for a user.
  * Data-only messages give the client full control over notification display.
  */
-async function sendDataPushToUser(userId: string, data: Record<string, string>) {
+export async function sendDataPushToUser(userId: string, data: Record<string, string>) {
   const app = getFirebaseApp();
   if (!app) {
     logger.warn({ userId }, 'sendDataPushToUser skipped — Firebase not configured');
