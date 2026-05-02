@@ -742,10 +742,17 @@ export async function deleteSlide(slideId: string, userId: string) {
   if (!slide) return { deleted: false, reason: 'not_found' as const };
   if (slide.story.userId !== userId) return { deleted: false, reason: 'not_owner' as const };
 
-  // Delete from Cloudinary with correct resource type
+  // Cloudinary cleanup is fire-and-forget — same pattern as deleteStory.
+  // Awaiting it would block the API response on a third-party round-trip
+  // (and 500 on cloudinary slowness / outage), which was likely the cause
+  // of the "Failed to delete" toast users were hitting.
   if (slide.cloudinaryId) {
     const resourceType = slide.type === 'VIDEO' ? 'video' : 'image';
-    await cloudinaryService.deleteFile(slide.cloudinaryId, resourceType);
+    cloudinaryService
+      .deleteFile(slide.cloudinaryId, resourceType)
+      .catch((err) =>
+        logger.warn({ err, publicId: slide.cloudinaryId }, 'Cloudinary slide delete failed (background)'),
+      );
   }
 
   // If this is the last slide, delete the entire story
