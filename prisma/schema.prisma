@@ -220,6 +220,7 @@ model User {
   fcmTokens        FcmToken[]
   voipTokens       VoipToken[]
   stories          Story[]
+  storyHighlights  StoryHighlight[]
   storyViews       StoryView[]
   storyReactions   StoryReaction[]
   storyBoosts      StoryBoost[]
@@ -866,6 +867,39 @@ model StorySlide {
   story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
 
   @@index([storyId])
+}
+
+/// A user's permanent collection of saved story slides.
+/// Slides are *copied* from StorySlide at add-time so the highlight
+/// outlives the original story's 24h expiry.
+model StoryHighlight {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  coverUrl  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slides StoryHighlightSlide[]
+
+  @@index([userId, createdAt])
+}
+
+model StoryHighlightSlide {
+  id           String         @id @default(uuid())
+  highlightId  String
+  type         StorySlideType @default(IMAGE)
+  mediaUrl     String
+  thumbnailUrl String?
+  caption      String?
+  duration     Int?
+  position     Int            @default(0)
+  createdAt    DateTime       @default(now())
+
+  highlight StoryHighlight @relation(fields: [highlightId], references: [id], onDelete: Cascade)
+
+  @@index([highlightId, position])
 }
 
 model StoryView {
