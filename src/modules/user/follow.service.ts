@@ -1,5 +1,6 @@
 import { prisma } from '../../config/database';
 import { BadRequestError, ConflictError, NotFoundError } from '../../shared/errors';
+import { invalidateFeedCache } from '../story/story.service';
 
 export async function followUser(followerId: string, followingId: string) {
   if (followerId === followingId) {
@@ -14,10 +15,14 @@ export async function followUser(followerId: string, followingId: string) {
   });
   if (existing) throw new ConflictError('Already following this user');
 
-  return prisma.follow.create({
+  const result = await prisma.follow.create({
     data: { followerId, followingId },
     select: { id: true, followerId: true, followingId: true, createdAt: true },
   });
+  // Story feed is keyed by who you follow; without this the follower
+  // sees a stale feed for up to 60s after following someone new.
+  invalidateFeedCache(followerId);
+  return result;
 }
 
 export async function unfollowUser(followerId: string, followingId: string) {
@@ -29,6 +34,7 @@ export async function unfollowUser(followerId: string, followingId: string) {
   await prisma.follow.delete({
     where: { followerId_followingId: { followerId, followingId } },
   });
+  invalidateFeedCache(followerId);
 }
 
 export async function getFollowers(userId: string) {
