@@ -8,6 +8,11 @@ import {
 } from '../../shared/r2.service';
 import { moderateVideoUrl } from '../../shared/moderation.service';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
+import {
+  isCloudinaryConfigured,
+  uploadUrl as uploadUrlToCloudinary,
+} from '../../shared/cloudinary.service';
+import * as cache from '../../shared/redis.service';
 
 // ─── Create Reel ───────────────────────────────────────────
 
@@ -54,15 +59,45 @@ export async function createReel(
     throw err;
   }
 
-  // R2 doesn't auto-generate thumbnails — FE renders the first frame via
-  // VideoPlayer until we add a server-side thumbnail step.
+  // Send the R2-hosted file through Cloudinary's video pipeline so the
+  // playback URL has (a) the moov atom moved to the front of the file
+  // (faststart) — without this, video_player must download ~the whole MP4
+  // before the first frame renders, which is exactly the multi-second
+  // black screen users were hitting on tab open — and (b) a derived
+  // first-frame thumbnail so the FE has something to show while bytes
+  // arrive. If Cloudinary isn't configured or the upload fails we fall
+  // back to the raw R2 URL with no thumbnail (existing behavior).
+  let videoUrl = upload.url;
+  let thumbnailUrl: string | null = null;
+  if (isCloudinaryConfigured) {
+    try {
+      const cdn = await uploadUrlToCloudinary(upload.url, {
+        folder: `yomeet/reels/${userId}`,
+        resourceType: 'video',
+      });
+      if (cdn?.secureUrl) {
+        videoUrl = cdn.secureUrl;
+        // Cloudinary serves a JPEG of frame 0 by swapping the extension.
+        thumbnailUrl = cdn.secureUrl.replace(
+          /\.(mp4|mov|webm|m4v)(\?.*)?$/i,
+          '.jpg$2',
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        { err, userId },
+        'Cloudinary reel processing failed, falling back to R2 URL',
+      );
+    }
+  }
+
   const reel = await prisma.reel.create({
     data: {
       userId,
-      videoUrl: upload.url,
+      videoUrl,
       // Reusing this column to store the R2 storage key for cleanup.
       cloudinaryId: upload.key,
-      thumbnailUrl: null,
+      thumbnailUrl,
       caption: options.caption?.trim() || null,
       musicTitle: options.musicTitle?.trim() || null,
       durationSec: options.durationSec ?? null,
@@ -72,6 +107,13 @@ export async function createReel(
       user: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
     },
   });
+
+  // The user just posted, so any cached "all/following/mine" feed for them
+  // (and their followers, eventually) is stale. We only have to invalidate
+  // the requester's own feed cache here — followers' caches expire on their
+  // own short TTL. Cheap insurance so the new reel shows up immediately
+  // when the FE prepends and the next refresh fires.
+  await invalidateReelFeedCache(userId).catch(() => {});
 
   logger.info({ reelId: reel.id, userId }, 'Reel created');
   return {
@@ -108,13 +150,44 @@ const RANKING_LOOKBACK_DAYS = 7;
 const VIEWED_LOOKBACK_HOURS = 24;
 const MAX_CONSECUTIVE_SAME_AUTHOR = 1;
 
+// 30s TTL for the first-page feed. Short enough that newly-viewed reels
+// cycle out quickly; long enough to absorb the burst of requests when a
+// user opens the tab on a cold backend (the pre-warm + tab tap can fire
+// the same query within seconds). Cursor-paginated requests bypass the
+// cache because they're meant to advance past the cached page.
+const REEL_FEED_CACHE_TTL_SEC = 30;
+
+function reelFeedCacheKey(
+  requesterId: string,
+  audience: 'all' | 'following' | 'mine',
+  limit: number,
+) {
+  return `reels:feed:${requesterId}:${audience}:${limit}`;
+}
+
+export async function invalidateReelFeedCache(requesterId: string) {
+  await cache.delPattern(`reels:feed:${requesterId}:*`);
+}
+
 export async function getReelFeed(
   requesterId: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _cursor?: string,
+  cursor?: string,
   limit = 10,
   audience: 'all' | 'following' | 'mine' = 'all',
 ) {
+  // First page is cacheable (30s) — see REEL_FEED_CACHE_TTL_SEC. We skip the
+  // cache when the FE asks for "more" because the response would otherwise
+  // duplicate the first page (the backend ignores cursors and re-runs the
+  // ranking, so cache hits would freeze pagination at the same 10 reels).
+  const cacheKey = reelFeedCacheKey(requesterId, audience, limit);
+  if (!cursor) {
+    const cached = await cache.get<{
+      reels: unknown[];
+      nextCursor: string | null;
+    }>(cacheKey, true);
+    if (cached) return cached;
+  }
+
   const now = Date.now();
   const lookbackStart = new Date(now - RANKING_LOOKBACK_DAYS * 24 * 3600 * 1000);
   const viewedCutoff = new Date(now - VIEWED_LOOKBACK_HOURS * 3600 * 1000);
@@ -136,7 +209,9 @@ export async function getReelFeed(
   ]);
 
   if (audience === 'following' && followingIds.size === 0) {
-    return { reels: [], nextCursor: null };
+    const empty = { reels: [], nextCursor: null };
+    if (!cursor) await cache.set(cacheKey, empty, REEL_FEED_CACHE_TTL_SEC);
+    return empty;
   }
 
   // 'mine' is a focused query: just the requester's own reels, all-time-new
@@ -159,7 +234,7 @@ export async function getReelFeed(
         reposts: { where: { userId: requesterId }, select: { id: true } },
       },
     });
-    return {
+    const result = {
       reels: mine.map((r) => ({
         id: r.id,
         videoUrl: r.videoUrl,
@@ -179,6 +254,8 @@ export async function getReelFeed(
       })),
       nextCursor: null,
     };
+    if (!cursor) await cache.set(cacheKey, result, REEL_FEED_CACHE_TTL_SEC);
+    return result;
   }
 
   const candidates = await prisma.reel.findMany({
@@ -255,7 +332,7 @@ export async function getReelFeed(
     ordered.push(next);
   }
 
-  return {
+  const result = {
     reels: ordered.map((r) => ({
       id: r.id,
       videoUrl: r.videoUrl,
@@ -277,6 +354,8 @@ export async function getReelFeed(
     // and excludes recently-viewed reels naturally.
     nextCursor: ordered.length === limit ? 'more' : null,
   };
+  if (!cursor) await cache.set(cacheKey, result, REEL_FEED_CACHE_TTL_SEC);
+  return result;
 }
 
 // ─── Reactions ─────────────────────────────────────────────
@@ -536,4 +615,5 @@ export async function deleteReel(reelId: string, userId: string) {
       logger.warn({ err, key: reel.cloudinaryId }, 'Failed to delete reel from R2');
     });
   }
+  await invalidateReelFeedCache(userId).catch(() => {});
 }
