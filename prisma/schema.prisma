@@ -231,6 +231,7 @@ model User {
   reelComments        ReelComment[]
   reelReposts         ReelRepost[]
   reelViews           ReelView[]
+  reelReactions       ReelReaction[]
   coinBalance      CoinBalance?
   coinTransactions CoinTransaction[]
   giftsSent        StoryGift[]    @relation("GiftsSent")
@@ -952,14 +953,30 @@ model Reel {
   /// as JSON. Applied at playback by the FE — no server bake.
   videoEdits  Json?
 
-  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  likes    ReelLike[]
-  comments ReelComment[]
-  reposts  ReelRepost[]
-  views    ReelView[]
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes     ReelLike[]
+  comments  ReelComment[]
+  reposts   ReelRepost[]
+  views     ReelView[]
+  reactions ReelReaction[]
 
   @@index([userId, createdAt])
   @@index([createdAt])
+}
+
+model ReelReaction {
+  id        String   @id @default(uuid())
+  reelId    String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  reel Reel @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reelId, userId])
+  @@index([reelId])
+  @@index([userId])
 }
 
 model ReelLike {

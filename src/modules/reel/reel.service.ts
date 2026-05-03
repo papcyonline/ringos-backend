@@ -279,6 +279,41 @@ export async function getReelFeed(
   };
 }
 
+// ─── Reactions ─────────────────────────────────────────────
+// Same allow-list as stories so the FE can share its emoji burst sheet
+// across reels and stories. Single-row-per-user upsert: a second react
+// replaces the prior emoji rather than stacking.
+
+import { ALLOWED_REACTION_EMOJIS } from '../story/story.service';
+
+const ALLOWED_REEL_REACTIONS = new Set<string>(ALLOWED_REACTION_EMOJIS);
+
+export async function reactToReel(
+  reelId: string,
+  userId: string,
+  emoji: string,
+): Promise<{ emoji: string } | null> {
+  if (!ALLOWED_REEL_REACTIONS.has(emoji)) {
+    throw new BadRequestError('Invalid reaction emoji');
+  }
+  const reel = await prisma.reel.findUnique({
+    where: { id: reelId },
+    select: { id: true },
+  });
+  if (!reel) return null;
+
+  await prisma.reelReaction.upsert({
+    where: { reelId_userId: { reelId, userId } },
+    create: { reelId, userId, emoji },
+    update: { emoji },
+  });
+  return { emoji };
+}
+
+export async function clearReelReaction(reelId: string, userId: string) {
+  await prisma.reelReaction.deleteMany({ where: { reelId, userId } });
+}
+
 // ─── Like / Unlike ─────────────────────────────────────────
 
 export async function likeReel(reelId: string, userId: string) {

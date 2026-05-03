@@ -16,6 +16,8 @@ import {
   getReelComments,
   deleteReelComment,
   countReelsCreatedSince,
+  reactToReel,
+  clearReelReaction,
 } from './reel.service';
 import { getReelStats } from './reel.stats.service';
 
@@ -138,6 +140,37 @@ router.delete('/:id/like', authenticate, async (req: AuthRequest, res: Response)
   } catch (error) {
     logger.error({ error }, 'Error unliking reel');
     res.status(500).json({ error: 'Failed to unlike reel' });
+  }
+});
+
+// ─── POST /api/reels/:id/react ──────────────────────────────
+// Body: { emoji }. Emoji must be in the shared ALLOWED_REACTION_EMOJIS
+// allow-list. Upsert semantics — re-tapping replaces the prior emoji.
+
+router.post('/:id/react', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const emoji = (req.body?.emoji ?? '') as string;
+    const result = await reactToReel(req.params.id as string, req.user!.userId, emoji);
+    if (!result) return res.status(404).json({ error: 'Reel not found' });
+    res.json({ success: true, emoji: result.emoji });
+  } catch (error: any) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ error: error.message });
+    }
+    logger.error({ error }, 'Error reacting to reel');
+    res.status(500).json({ error: 'Failed to react' });
+  }
+});
+
+// ─── DELETE /api/reels/:id/react ────────────────────────────
+
+router.delete('/:id/react', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    await clearReelReaction(req.params.id as string, req.user!.userId);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error({ error }, 'Error clearing reel reaction');
+    res.status(500).json({ error: 'Failed to clear reaction' });
   }
 });
 
