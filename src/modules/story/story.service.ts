@@ -6,7 +6,7 @@ import { isPro } from '../../shared/usage.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
-import { notifyFollowersOfNewStory } from './story.notify';
+import { notifyFollowersOfNewStory, notifyStoryOwnerOfView } from './story.notify';
 
 export const ALLOWED_REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '👏'] as const;
 const ALLOWED_REACTION_SET = new Set<string>(ALLOWED_REACTION_EMOJIS);
@@ -526,10 +526,23 @@ export async function unmuteUserStories(muterId: string, mutedUserId: string) {
 // ─── Mark Story Viewed ──────────────────────────────────────
 
 export async function markStoryViewed(storyId: string, viewerId: string, isStealth = false) {
-  await prisma.storyView.createMany({
+  const result = await prisma.storyView.createMany({
     data: [{ storyId, viewerId, isStealth }],
     skipDuplicates: true,
   });
+  // Only fire the "viewed your story" notification on the FIRST view by
+  // this viewer (createMany.count > 0 means a row was actually inserted)
+  // and never for stealth views — those are intentionally invisible.
+  if (result.count > 0 && !isStealth) {
+    const story = await prisma.story.findUnique({
+      where: { id: storyId },
+      select: { userId: true },
+    });
+    if (story) {
+      // Fire-and-forget — don't await, don't block playback on push.
+      void notifyStoryOwnerOfView(storyId, story.userId, viewerId);
+    }
+  }
 }
 
 // ─── Get Story Viewers ──────────────────────────────────────

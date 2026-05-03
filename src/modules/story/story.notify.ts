@@ -6,6 +6,53 @@ import {
 } from '../notification/notification.service';
 
 /**
+ * Send a "X viewed your story" push + in-app notification to the story
+ * owner. Caller is responsible for ensuring this is the FIRST view —
+ * markStoryViewed checks `createMany.count > 0` so we never re-notify
+ * for a re-view, and silently skips stealth views. Best-effort: errors
+ * are logged but never thrown so playback never breaks on push failure.
+ */
+export async function notifyStoryOwnerOfView(
+  storyId: string,
+  ownerId: string,
+  viewerId: string,
+): Promise<void> {
+  if (ownerId === viewerId) return; // own view — no notification
+  try {
+    const viewer = await prisma.user.findUnique({
+      where: { id: viewerId },
+      select: { displayName: true, avatarUrl: true },
+    });
+    if (!viewer) return;
+
+    const title = viewer.displayName;
+    const body = 'viewed your story';
+
+    await Promise.allSettled([
+      createNotification({
+        userId: ownerId,
+        type: 'STORY_VIEWED',
+        title,
+        body,
+        imageUrl: viewer.avatarUrl ?? undefined,
+        data: { storyId, viewerId, route: '/stories' },
+      }),
+      sendDataPushToUser(ownerId, {
+        type: 'story_viewed',
+        title,
+        body,
+        storyId,
+        viewerId,
+        viewerName: viewer.displayName,
+        avatarUrl: viewer.avatarUrl ?? '',
+      }),
+    ]);
+  } catch (err) {
+    logger.error({ err, storyId, ownerId, viewerId }, 'notifyStoryOwnerOfView failed');
+  }
+}
+
+/**
  * Fan-out a push + in-app notification to every follower of [authorId]
  * announcing they posted a new story. Owner is excluded. Muted users are
  * excluded so unmute is honoured. Best-effort — caller should not await.
