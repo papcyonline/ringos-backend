@@ -1224,10 +1224,13 @@ router.post(
         await chatService.markConversationAsRead(convId, userId);
 
         const readPayload = { conversationId: convId, userId };
-        io.to(`conversation:${convId}`).emit('chat:read', readPayload);
-
-        // Also emit to all other participants' personal rooms so the
-        // sender sees blue ticks even if they left the chat screen.
+        // DO NOT emit to `conversation:X` here — that room includes the
+        // requester's own sockets, and Socket.IO REST handlers can't
+        // exclude the originating socket. Echoing back caused the
+        // sender to see GREEN ticks the instant they sent a message
+        // (their own chat:read flipped their own messages to read).
+        // Only push to OTHER participants' personal rooms — that's
+        // enough for the recipient to see the receipt live.
         prisma.conversationParticipant.findMany({
           where: { conversationId: convId, userId: { not: userId }, leftAt: null },
           select: { userId: true },
