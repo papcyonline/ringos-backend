@@ -233,6 +233,8 @@ model User {
   reelReposts         ReelRepost[]
   reelViews           ReelView[]
   reelReactions       ReelReaction[]
+  streaksAsA          MessageStreak[] @relation("StreakUserA")
+  streaksAsB          MessageStreak[] @relation("StreakUserB")
   coinBalance      CoinBalance?
   coinTransactions CoinTransaction[]
   giftsSent        StoryGift[]    @relation("GiftsSent")
@@ -389,6 +391,27 @@ model MatchRequest {
   @@index([status, intent])
   @@index([status, createdAt])
   @@index([userId])
+}
+
+/// Snap-style daily-message streak between two users. Canonical pairing:
+/// userAId < userBId so each pair has exactly one row, regardless of who
+/// sends first. The streak is "alive" while now - lastMutualDay <= 1 day;
+/// no cron needed — display logic short-circuits to 0 once it lapses.
+model MessageStreak {
+  userAId               String
+  userBId               String
+  count                 Int      @default(0)
+  lastMutualDay         DateTime?
+  lastUserAMessageDay   DateTime?
+  lastUserBMessageDay   DateTime?
+  updatedAt             DateTime @updatedAt
+
+  userA User @relation("StreakUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB User @relation("StreakUserB", fields: [userBId], references: [id], onDelete: Cascade)
+
+  @@id([userAId, userBId])
+  @@index([userAId])
+  @@index([userBId])
 }
 
 model Conversation {

@@ -17,8 +17,22 @@ import { transcribeMessage } from './transcription.service';
 import { notifyChatMessage, markConversationNotificationsAsRead } from '../notification/notification.service';
 import { prisma } from '../../config/database';
 import * as folderService from './folder.service';
+import { getStreak } from './streak.service';
 
 const router = Router();
+
+// ─── Streak ──────────────────────────────────────────────
+// GET /streak/:partnerId - Snap-style daily-message streak between the
+// authed user and partnerId. Returns { count, isActive } where isActive
+// is true while the streak is still alive (mutual day within last 24h).
+
+router.get('/streak/:partnerId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const partnerId = req.params.partnerId as string;
+    const snapshot = await getStreak(req.user!.userId, partnerId);
+    res.json(snapshot);
+  } catch (err) { next(err); }
+});
 
 // ─── Chat Folders ────────────────────────────────────────
 

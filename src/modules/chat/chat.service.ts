@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { isBlocked, blockUser } from '../safety/safety.service';
+import { tryRecordMessageForStreak } from './streak.service';
 import { getLimits } from '../../shared/usage.service';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import ogs from 'open-graph-scraper';
@@ -1030,6 +1031,19 @@ export async function sendMessage(
   // Async: fetch link preview if message contains a URL (fire-and-forget)
   if (content && urlRegex.test(content)) {
     fetchLinkPreview(message.id, content).catch(() => {});
+  }
+
+  // Streak update for 1-on-1 chats only. Group messages don't form
+  // pairwise streaks. Best-effort, never blocks the send path.
+  if (conversation.type !== 'GROUP') {
+    void (async () => {
+      const others = await prisma.conversationParticipant.findMany({
+        where: { conversationId, userId: { not: senderId }, leftAt: null },
+        select: { userId: true },
+      });
+      const partnerId = others[0]?.userId;
+      if (partnerId) await tryRecordMessageForStreak(senderId, partnerId);
+    })();
   }
 
   return message;
