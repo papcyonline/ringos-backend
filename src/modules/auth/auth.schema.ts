@@ -63,11 +63,16 @@ export const usernameSchema = z.object({
     .min(5, 'Bio must be at least 5 characters')
     .max(200)
     .refine(isReadableText, 'Bio looks like keyboard-mash — please write something readable'),
+  // Profession is optional — Apple Guideline 5.1.1(v) rejected the
+  // previous submission for requiring it. Frontend shows the field
+  // without an "(optional)" tag as a soft nudge but doesn't gate
+  // submission on it. Same pattern as location/gender/DOB.
   profession: z
     .string()
-    .min(2, 'Profession is required')
+    .min(2)
     .max(80)
-    .refine(isReadableText, 'Profession looks like keyboard-mash — please write something readable'),
+    .refine(isReadableText, 'Profession looks like keyboard-mash — please write something readable')
+    .optional(),
   // Gender is optional — Apple Guideline 5.1.1 rejected the previous
   // submission for requiring it. Frontend doesn't collect it; this
   // exists only so legacy / API clients can still pass it.

@@ -306,6 +306,16 @@ export async function sendDataPushToUser(userId: string, data: Record<string, st
     notifBody = data.content || 'New message';
   }
 
+  // For chat / voice-note pushes we collapse on a per-conversation key
+  // so a burst of 8 messages from one chat shows as ONE updated entry
+  // in iOS Notification Center instead of stacking 8 separate ones.
+  // Other push types (calls, story-view, follow, like, etc.) skip the
+  // header so they remain individually visible. The collapse-id is
+  // capped at 64 bytes by APNS — chat-<uuid> is well under that.
+  const isChat = data.type === 'chat_message' || data.type === 'voice_note';
+  const collapseId =
+    isChat && data.conversationId ? `chat-${data.conversationId}` : undefined;
+
   // Android: data-only (no notification payload) so the native
   // YomeetFirebaseMessagingService ALWAYS handles display — this ensures
   // proper lock-screen visibility, screen wake, sound, and heads-up.
@@ -316,11 +326,17 @@ export async function sendDataPushToUser(userId: string, data: Record<string, st
     data,
     android: {
       priority: 'high',
+      // Mirror of apns-collapse-id — Android's "collapse_key" replaces
+      // any pending message with the same key. Only meaningful when the
+      // device is offline; once delivered the FCM service handles the
+      // per-conversation merging via the notification ID.
+      ...(collapseId ? { collapseKey: collapseId } : {}),
     },
     apns: {
       headers: {
         'apns-priority': '10',
         'apns-push-type': 'alert',
+        ...(collapseId ? { 'apns-collapse-id': collapseId } : {}),
       },
       payload: {
         aps: {
