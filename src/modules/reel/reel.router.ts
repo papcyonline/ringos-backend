@@ -75,6 +75,9 @@ router.post(
       }
       const caption = (req.body.caption as string | undefined)?.trim();
       const musicTitle = (req.body.musicTitle as string | undefined)?.trim();
+      const musicPreviewUrl = (req.body.musicPreviewUrl as string | undefined)?.trim();
+      const musicArtist = (req.body.musicArtist as string | undefined)?.trim();
+      const musicArtwork = (req.body.musicArtwork as string | undefined)?.trim();
       const durationStr = req.body.durationSec as string | undefined;
       const durationSec = durationStr ? parseInt(durationStr, 10) : undefined;
       // Viewer-side video edits ride along as a JSON-encoded multipart field
@@ -98,6 +101,9 @@ router.post(
       const reel = await createReel(userId, file, {
         caption,
         musicTitle,
+        musicPreviewUrl,
+        musicArtist,
+        musicArtwork,
         durationSec,
         videoEdits,
       });

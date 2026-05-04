@@ -970,7 +970,12 @@ model Reel {
   cloudinaryId String?
   thumbnailUrl String?
   caption      String?
-  musicTitle   String?
+  musicTitle       String?
+  // iTunes 30-sec preview URL — frontend AudioPlayer plays this under
+  // the active reel. Mirrors the music attachment used by stories.
+  musicPreviewUrl  String?
+  musicArtist      String?
+  musicArtwork     String?
   durationSec  Int?
   viewCount    Int      @default(0)
   likeCount    Int      @default(0)

@@ -180,6 +180,10 @@ export async function getStoryFeed(requesterId: string) {
           caption: true,
           duration: true,
           position: true,
+          // Music + videoEdits ride along in this JSON blob. Without
+          // it, the viewer never gets the music URL/title and the
+          // attached track silently doesn't play.
+          metadata: true,
         },
       },
       user: {
@@ -261,6 +265,8 @@ export async function getStoryFeed(requesterId: string) {
         caption: slide.caption,
         duration: slide.duration,
         position: slide.position,
+        // Pass through the music + videoEdits JSON the viewer needs.
+        metadata: slide.metadata,
       })),
       viewed: s.views.length > 0,
       myReaction: s.reactions[0]?.emoji ?? null,
@@ -377,6 +383,10 @@ export async function getFollowingFeed(requesterId: string) {
           caption: true,
           duration: true,
           position: true,
+          // Music + videoEdits ride along in this JSON blob. Without
+          // it, the viewer never gets the music URL/title and the
+          // attached track silently doesn't play.
+          metadata: true,
         },
       },
       user: {
@@ -447,6 +457,10 @@ export async function getDiscoverFeed(requesterId: string) {
           caption: true,
           duration: true,
           position: true,
+          // Music + videoEdits ride along in this JSON blob. Without
+          // it, the viewer never gets the music URL/title and the
+          // attached track silently doesn't play.
+          metadata: true,
         },
       },
       user: {

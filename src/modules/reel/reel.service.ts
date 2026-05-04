@@ -22,6 +22,10 @@ export async function createReel(
   options: {
     caption?: string;
     musicTitle?: string;
+    /// iTunes 30-sec preview URL the viewer plays under the reel.
+    musicPreviewUrl?: string;
+    musicArtist?: string;
+    musicArtwork?: string;
     durationSec?: number;
     /// Viewer-side edits (filter/overlays/speed) — stored as-is.
     videoEdits?: Record<string, unknown>;
@@ -100,6 +104,9 @@ export async function createReel(
       thumbnailUrl,
       caption: options.caption?.trim() || null,
       musicTitle: options.musicTitle?.trim() || null,
+      musicPreviewUrl: options.musicPreviewUrl?.trim() || null,
+      musicArtist: options.musicArtist?.trim() || null,
+      musicArtwork: options.musicArtwork?.trim() || null,
       durationSec: options.durationSec ?? null,
       videoEdits: (options.videoEdits as any) ?? undefined,
     },
@@ -122,6 +129,9 @@ export async function createReel(
     thumbnailUrl: reel.thumbnailUrl,
     caption: reel.caption,
     musicTitle: reel.musicTitle,
+    musicPreviewUrl: reel.musicPreviewUrl,
+    musicArtist: reel.musicArtist,
+    musicArtwork: reel.musicArtwork,
     durationSec: reel.durationSec,
     viewCount: reel.viewCount,
     likeCount: reel.likeCount,
@@ -241,6 +251,9 @@ export async function getReelFeed(
         thumbnailUrl: r.thumbnailUrl,
         caption: r.caption,
         musicTitle: r.musicTitle,
+        musicPreviewUrl: r.musicPreviewUrl,
+        musicArtist: r.musicArtist,
+        musicArtwork: r.musicArtwork,
         durationSec: r.durationSec,
         viewCount: r.viewCount,
         likeCount: r.likeCount,
