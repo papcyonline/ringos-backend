@@ -17,39 +17,16 @@ export async function notifyStoryOwnerOfView(
   ownerId: string,
   viewerId: string,
 ): Promise<void> {
-  if (ownerId === viewerId) return; // own view — no notification
-  try {
-    const viewer = await prisma.user.findUnique({
-      where: { id: viewerId },
-      select: { displayName: true, avatarUrl: true },
-    });
-    if (!viewer) return;
-
-    const title = viewer.displayName;
-    const body = 'viewed your story';
-
-    await Promise.allSettled([
-      createNotification({
-        userId: ownerId,
-        type: 'STORY_VIEWED',
-        title,
-        body,
-        imageUrl: viewer.avatarUrl ?? undefined,
-        data: { storyId, viewerId, route: '/stories' },
-      }),
-      sendDataPushToUser(ownerId, {
-        type: 'story_viewed',
-        title,
-        body,
-        storyId,
-        viewerId,
-        viewerName: viewer.displayName,
-        avatarUrl: viewer.avatarUrl ?? '',
-      }),
-    ]);
-  } catch (err) {
-    logger.error({ err, storyId, ownerId, viewerId }, 'notifyStoryOwnerOfView failed');
-  }
+  // Intentionally a no-op. Per-view notifications don't scale: a story
+  // with even a few hundred viewers would buzz the owner's phone all
+  // day, and at 10k+ views the notification inbox becomes unusable.
+  // WhatsApp / Instagram / Snapchat all keep view counts in-app only —
+  // the owner sees viewers via the viewer-list panel inside the story
+  // (still recorded in markStoryViewed → ReelView). Function kept so
+  // existing callers compile; no in-app row + no push goes out.
+  if (ownerId === viewerId) return;
+  // No-op. View is already persisted by the caller (markStoryViewed).
+  return;
 }
 
 /**
