@@ -161,6 +161,7 @@ router.post(
         profession: parsed.profession,
         gender: parsed.gender,
         location: parsed.location,
+        dateOfBirth: parsed.dateOfBirth,
         availabilityNote: parsed.availabilityNote,
         language: parsed.language,
       });

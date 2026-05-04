@@ -19,10 +19,28 @@ export const loginSchema = z.object({
 
 export const usernameSchema = z.object({
   username: z.string().min(3).max(12),
-  bio: z.string().min(10, 'Bio must be at least 10 characters').max(200),
+  // Bio min lowered from 10 → 5 to match the frontend nudge for shorter
+  // bios. Single-word bios like "hello" now pass.
+  bio: z.string().min(5, 'Bio must be at least 5 characters').max(200),
   profession: z.string().min(2, 'Profession is required').max(80),
-  gender: z.enum(['male', 'female', 'MALE', 'FEMALE']).transform(v => v.toUpperCase() as 'MALE' | 'FEMALE'),
-  location: z.string().min(2, 'Location is required').max(100),
+  // Gender is optional — Apple Guideline 5.1.1 rejected the previous
+  // submission for requiring it. Frontend doesn't collect it; this
+  // exists only so legacy / API clients can still pass it.
+  gender: z
+    .enum(['male', 'female', 'MALE', 'FEMALE'])
+    .transform((v) => v.toUpperCase() as 'MALE' | 'FEMALE')
+    .optional(),
+  // Location optional — same Apple rejection forced this. Frontend
+  // shows the field without an "(optional)" tag as a soft nudge but
+  // doesn't gate submission on it.
+  location: z.string().min(2).max(100).optional(),
+  // ISO 8601 date string. Required on profile completion (COPPA /
+  // GDPR-K compliance + App Store age-gating). The 13+ age check
+  // happens in the service layer where we have the parsed Date.
+  dateOfBirth: z
+    .string()
+    .datetime({ offset: true })
+    .or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')),
   availabilityNote: z.string().max(120).optional(),
   language: z
     .string()

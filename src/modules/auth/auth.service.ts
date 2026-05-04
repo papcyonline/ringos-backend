@@ -587,7 +587,7 @@ export async function checkUsernameAvailable(username: string, excludeUserId?: s
 export async function setUsername(
   userId: string,
   username: string,
-  opts?: { avatarUrl?: string; bio?: string; profession?: string; gender?: 'MALE' | 'FEMALE'; location?: string; availabilityNote?: string; language?: string },
+  opts?: { avatarUrl?: string; bio?: string; profession?: string; gender?: 'MALE' | 'FEMALE'; location?: string; dateOfBirth?: string; availabilityNote?: string; language?: string },
 ) {
   // Validation is handled by Zod schema in the router middleware.
   // Service-level check is only needed for the username uniqueness
@@ -595,6 +595,24 @@ export async function setUsername(
   const available = await checkUsernameAvailable(username, userId);
   if (!available) {
     throw new BadRequestError('Username is already taken');
+  }
+
+  // Age gate (COPPA / GDPR-K). Reject under-13s. Apple's age-rated
+  // categories also expect this for any social app.
+  let dob: Date | undefined;
+  if (opts?.dateOfBirth) {
+    dob = new Date(opts.dateOfBirth);
+    if (Number.isNaN(dob.getTime())) {
+      throw new BadRequestError('Invalid date of birth');
+    }
+    const ageMs = Date.now() - dob.getTime();
+    const ageYears = ageMs / (365.25 * 24 * 60 * 60 * 1000);
+    if (ageYears < 13) {
+      throw new BadRequestError('You must be at least 13 years old to use Yomeet');
+    }
+    if (ageYears > 120) {
+      throw new BadRequestError('Invalid date of birth');
+    }
   }
 
   const data: Record<string, unknown> = {
@@ -605,6 +623,7 @@ export async function setUsername(
     gender: opts?.gender,
     location: opts?.location,
   };
+  if (dob) data.dateOfBirth = dob;
   if (opts?.avatarUrl) data.avatarUrl = opts.avatarUrl;
   if (opts?.availabilityNote) data.availabilityNote = opts.availabilityNote;
 

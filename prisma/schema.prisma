@@ -170,6 +170,11 @@ model User {
   profession    String?
   gender        Gender?
   location      String?
+  // Required for COPPA / GDPR-K compliance + App Store age-gating.
+  // Stored as DateTime so age can be computed precisely; nullable so
+  // existing users without DOB don't break (they're prompted on next
+  // launch via isProfileComplete()).
+  dateOfBirth   DateTime?
   status        String    @default("available")
   availabilityNote String?
   isAnonymous   Boolean   @default(true)
