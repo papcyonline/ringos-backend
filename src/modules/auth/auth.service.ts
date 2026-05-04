@@ -587,7 +587,7 @@ export async function checkUsernameAvailable(username: string, excludeUserId?: s
 export async function setUsername(
   userId: string,
   username: string,
-  opts?: { avatarUrl?: string; bio?: string; profession?: string; gender?: 'MALE' | 'FEMALE'; location?: string; dateOfBirth?: string; availabilityNote?: string; language?: string },
+  opts?: { avatarUrl?: string; bio?: string; gender?: 'MALE' | 'FEMALE'; location?: string; availabilityNote?: string; language?: string },
 ) {
   // Validation is handled by Zod schema in the router middleware.
   // Service-level check is only needed for the username uniqueness
@@ -597,33 +597,19 @@ export async function setUsername(
     throw new BadRequestError('Username is already taken');
   }
 
-  // Age gate (COPPA / GDPR-K). Reject under-13s. Apple's age-rated
-  // categories also expect this for any social app.
-  let dob: Date | undefined;
-  if (opts?.dateOfBirth) {
-    dob = new Date(opts.dateOfBirth);
-    if (Number.isNaN(dob.getTime())) {
-      throw new BadRequestError('Invalid date of birth');
-    }
-    const ageMs = Date.now() - dob.getTime();
-    const ageYears = ageMs / (365.25 * 24 * 60 * 60 * 1000);
-    if (ageYears < 13) {
-      throw new BadRequestError('You must be at least 13 years old to use Yomeet');
-    }
-    if (ageYears > 120) {
-      throw new BadRequestError('Invalid date of birth');
-    }
-  }
+  // Profession and dateOfBirth are no longer collected at signup per
+  // Apple Guideline 5.1.1(v). The DB columns remain — the separate
+  // profile-edit endpoint can still set them — but they are not part
+  // of the signup payload anymore. The 13+ age gate that previously
+  // depended on dateOfBirth has moved to the App Store age rating.
 
   const data: Record<string, unknown> = {
     displayName: username,
     isAnonymous: false, // Profile complete — user now visible in People tab
     bio: opts?.bio,
-    profession: opts?.profession,
     gender: opts?.gender,
     location: opts?.location,
   };
-  if (dob) data.dateOfBirth = dob;
   if (opts?.avatarUrl) data.avatarUrl = opts.avatarUrl;
   if (opts?.availabilityNote) data.availabilityNote = opts.availabilityNote;
 

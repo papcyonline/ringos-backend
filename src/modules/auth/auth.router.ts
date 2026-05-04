@@ -158,10 +158,8 @@ router.post(
       const result = await authService.setUsername(userId, parsed.username, {
         avatarUrl,
         bio: parsed.bio,
-        profession: parsed.profession,
         gender: parsed.gender,
         location: parsed.location,
-        dateOfBirth: parsed.dateOfBirth,
         availabilityNote: parsed.availabilityNote,
         language: parsed.language,
       });

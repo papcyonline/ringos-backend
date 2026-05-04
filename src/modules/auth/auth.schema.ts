@@ -63,16 +63,6 @@ export const usernameSchema = z.object({
     .min(5, 'Bio must be at least 5 characters')
     .max(200)
     .refine(isReadableText, 'Bio looks like keyboard-mash — please write something readable'),
-  // Profession is optional — Apple Guideline 5.1.1(v) rejected the
-  // previous submission for requiring it. Frontend shows the field
-  // without an "(optional)" tag as a soft nudge but doesn't gate
-  // submission on it. Same pattern as location/gender/DOB.
-  profession: z
-    .string()
-    .min(2)
-    .max(80)
-    .refine(isReadableText, 'Profession looks like keyboard-mash — please write something readable')
-    .optional(),
   // Gender is optional — Apple Guideline 5.1.1 rejected the previous
   // submission for requiring it. Frontend doesn't collect it; this
   // exists only so legacy / API clients can still pass it.
@@ -84,15 +74,11 @@ export const usernameSchema = z.object({
   // shows the field without an "(optional)" tag as a soft nudge but
   // doesn't gate submission on it.
   location: z.string().min(2).max(100).optional(),
-  // ISO 8601 date string. Optional — Apple Guideline 5.1.1(v) rejected
-  // requiring it (per their reviewer, DOB isn't necessary for the app
-  // to function). Service layer still age-gates (13+) when provided so
-  // the validation lives on for the day we re-introduce the field.
-  dateOfBirth: z
-    .string()
-    .datetime({ offset: true })
-    .or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'))
-    .optional(),
+  // Profession and dateOfBirth removed entirely from signup per Apple
+  // Guideline 5.1.1(v) (build 136 / 138 rejections). DB columns remain
+  // for existing users and for the (separate) profile-edit endpoint to
+  // populate, but the username / signup endpoint no longer accepts
+  // either field.
   availabilityNote: z.string().max(120).optional(),
   language: z
     .string()
