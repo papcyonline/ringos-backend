@@ -1,0 +1,10 @@
+# Pre-push hook: catch broken types before they leave your machine.
+# Mirrors the CI typecheck step so a deploy can never be blocked by
+# a TS error you didn't see locally. Skipped in CI environments.
+
+if [ "$CI" = "true" ]; then
+  exit 0
+fi
+
+echo "[pre-push] running tsc --noEmit ..."
+NODE_OPTIONS="--max-old-space-size=8192" npx tsc --noEmit
