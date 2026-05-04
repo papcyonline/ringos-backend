@@ -976,6 +976,11 @@ model Reel {
   musicPreviewUrl  String?
   musicArtist      String?
   musicArtwork     String?
+  // Mix levels 0..1 the creator picked in the editor. Null = use the
+  // legacy default ("music replaces video": video volume 0, music 1).
+  // Both columns are nullable so existing reels keep working.
+  videoVolume      Float?
+  musicVolume      Float?
   durationSec  Int?
   viewCount    Int      @default(0)
   likeCount    Int      @default(0)

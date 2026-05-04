@@ -26,6 +26,10 @@ export async function createReel(
     musicPreviewUrl?: string;
     musicArtist?: string;
     musicArtwork?: string;
+    /// Mix levels 0..1 — null preserves the legacy "music replaces video"
+    /// behaviour the viewer falls back to when these are absent.
+    videoVolume?: number;
+    musicVolume?: number;
     durationSec?: number;
     /// Viewer-side edits (filter/overlays/speed) — stored as-is.
     videoEdits?: Record<string, unknown>;
@@ -107,6 +111,8 @@ export async function createReel(
       musicPreviewUrl: options.musicPreviewUrl?.trim() || null,
       musicArtist: options.musicArtist?.trim() || null,
       musicArtwork: options.musicArtwork?.trim() || null,
+      videoVolume: options.videoVolume ?? null,
+      musicVolume: options.musicVolume ?? null,
       durationSec: options.durationSec ?? null,
       videoEdits: (options.videoEdits as any) ?? undefined,
     },
@@ -132,6 +138,8 @@ export async function createReel(
     musicPreviewUrl: reel.musicPreviewUrl,
     musicArtist: reel.musicArtist,
     musicArtwork: reel.musicArtwork,
+    videoVolume: reel.videoVolume,
+    musicVolume: reel.musicVolume,
     durationSec: reel.durationSec,
     viewCount: reel.viewCount,
     likeCount: reel.likeCount,
@@ -254,6 +262,8 @@ export async function getReelFeed(
         musicPreviewUrl: r.musicPreviewUrl,
         musicArtist: r.musicArtist,
         musicArtwork: r.musicArtwork,
+        videoVolume: r.videoVolume,
+        musicVolume: r.musicVolume,
         durationSec: r.durationSec,
         viewCount: r.viewCount,
         likeCount: r.likeCount,
@@ -355,6 +365,8 @@ export async function getReelFeed(
       musicPreviewUrl: r.musicPreviewUrl,
       musicArtist: r.musicArtist,
       musicArtwork: r.musicArtwork,
+      videoVolume: r.videoVolume,
+      musicVolume: r.musicVolume,
       durationSec: r.durationSec,
       viewCount: r.viewCount,
       likeCount: r.likeCount,

@@ -78,6 +78,16 @@ router.post(
       const musicPreviewUrl = (req.body.musicPreviewUrl as string | undefined)?.trim();
       const musicArtist = (req.body.musicArtist as string | undefined)?.trim();
       const musicArtwork = (req.body.musicArtwork as string | undefined)?.trim();
+      // Mix levels (0..1) — multipart strings, parsed defensively. Out-of-
+      // range values are clamped so a buggy client can't poison the row.
+      const parseVolume = (raw: unknown): number | undefined => {
+        if (typeof raw !== 'string' || raw.trim().length === 0) return undefined;
+        const n = parseFloat(raw);
+        if (Number.isNaN(n)) return undefined;
+        return Math.max(0, Math.min(1, n));
+      };
+      const videoVolume = parseVolume(req.body.videoVolume);
+      const musicVolume = parseVolume(req.body.musicVolume);
       const durationStr = req.body.durationSec as string | undefined;
       const durationSec = durationStr ? parseInt(durationStr, 10) : undefined;
       // Viewer-side video edits ride along as a JSON-encoded multipart field
@@ -104,6 +114,8 @@ router.post(
         musicPreviewUrl,
         musicArtist,
         musicArtwork,
+        videoVolume,
+        musicVolume,
         durationSec,
         videoEdits,
       });
