@@ -14,7 +14,7 @@
     "test": "vitest",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.982.0",
