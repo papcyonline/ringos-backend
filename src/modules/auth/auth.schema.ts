@@ -79,13 +79,15 @@ export const usernameSchema = z.object({
   // shows the field without an "(optional)" tag as a soft nudge but
   // doesn't gate submission on it.
   location: z.string().min(2).max(100).optional(),
-  // ISO 8601 date string. Required on profile completion (COPPA /
-  // GDPR-K compliance + App Store age-gating). The 13+ age check
-  // happens in the service layer where we have the parsed Date.
+  // ISO 8601 date string. Optional — Apple Guideline 5.1.1(v) rejected
+  // requiring it (per their reviewer, DOB isn't necessary for the app
+  // to function). Service layer still age-gates (13+) when provided so
+  // the validation lives on for the day we re-introduce the field.
   dateOfBirth: z
     .string()
     .datetime({ offset: true })
-    .or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')),
+    .or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'))
+    .optional(),
   availabilityNote: z.string().max(120).optional(),
   language: z
     .string()
