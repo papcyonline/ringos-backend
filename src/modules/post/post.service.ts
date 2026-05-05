@@ -791,7 +791,14 @@ async function notifyChannelFollowers(channelId: string, authorId: string, postI
 
   if (!channel || followers.length === 0) return;
 
-  const title = channel.name ?? 'Channel';
+  // Title now includes the author's name so the recipient can tell at a
+  // glance who posted. Previously the title was just the channel name —
+  // readers had to open the app to see the author. Channel name stays
+  // for the senderName field below so the lock-screen Communication
+  // Notification still shows the channel avatar (Telegram-style).
+  const channelName = channel.name ?? 'Channel';
+  const authorName = author?.displayName ?? 'Someone';
+  const title = `${authorName} in ${channelName}`;
   const body = content.length > 100 ? content.substring(0, 97) + '...' : (content || 'New post');
 
   // Treat the CHANNEL as the "sender" for Communication Notifications so
@@ -817,8 +824,12 @@ async function notifyChannelFollowers(channelId: string, authorId: string, postI
         postId,
         channelId,
         authorId,
+        // senderName stays as the bare channel name so the iOS NSE
+        // upgrade groups channel pushes by the channel and the avatar
+        // shown is the channel logo. The user-visible title above is
+        // already "<author> in <channel>" so they can still see who.
         senderId: channelId,
-        senderName: title,
+        senderName: channelName,
         senderAvatar: channel.avatarUrl ?? '',
       },
     }).catch(() => {});
@@ -965,12 +976,24 @@ export async function getBookmarkedPosts(userId: string, cursor?: string, limit 
  * Notify users who were tagged in a post.
  */
 async function notifyTaggedUsers(userIds: string[], authorId: string, postId: string, channelId: string) {
-  const [author, channel] = await Promise.all([
+  // Pull the post content too so the body can preview the actual post
+  // instead of restating the title. Title already says "<name>
+  // mentioned you" — body used to add "You were tagged in a post on
+  // <channel>" which was just the title in different words.
+  const [author, channel, post] = await Promise.all([
     prisma.user.findUnique({ where: { id: authorId }, select: { displayName: true } }),
     prisma.conversation.findUnique({ where: { id: channelId }, select: { name: true } }),
+    prisma.post.findUnique({ where: { id: postId }, select: { content: true } }),
   ]);
   const authorName = author?.displayName ?? 'Someone';
   const channelName = channel?.name ?? 'a channel';
+  const content = (post?.content ?? '').trim();
+  // Prefer a snippet of the post so the recipient can see context at a
+  // glance; fall back to the channel name if the post had no text body
+  // (e.g. an image-only post).
+  const body = content.length > 0
+    ? (content.length > 80 ? `${content.slice(0, 77)}…` : content)
+    : `in ${channelName}`;
 
   for (const userId of userIds) {
     if (userId === authorId) continue;
@@ -978,7 +1001,7 @@ async function notifyTaggedUsers(userIds: string[], authorId: string, postId: st
       userId,
       type: 'POST_MENTION',
       title: `${authorName} mentioned you`,
-      body: `You were tagged in a post on ${channelName}`,
+      body,
       data: { postId, channelId, authorId },
     }).catch(() => {});
   }

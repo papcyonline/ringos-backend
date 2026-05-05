@@ -581,10 +581,12 @@ export async function sendMissedCallNotification(
   },
   options?: { skipPush?: boolean },
 ) {
+  // Title is already the caller's name (set on createNotification a few
+  // lines below) and the lock-screen / inbox renders title+body stacked,
+  // so repeating the name in the body would read "Papcy / Missed call
+  // from Papcy" — drop the redundant "from <name>".
   const isVideo = payload.callType === 'VIDEO';
-  const body = isVideo
-    ? `Missed video call from ${payload.callerName}`
-    : `Missed call from ${payload.callerName}`;
+  const body = isVideo ? 'Missed video call' : 'Missed call';
 
   // Create in-app notification (also emits notification:new socket event)
   createNotification({
