@@ -67,6 +67,9 @@ export async function notifyFollowersOfNewStory(
   const body = 'posted a new story';
 
   // In-app notification (DB row + socket event) + FCM data push, in parallel.
+  // sendDataPushToUser reads `senderName` and `content` from the payload to
+  // build the iOS lock-screen alert title/body — without these the push
+  // would show "Yomeet / New message" because the fallbacks kick in.
   await Promise.allSettled(
     targets.flatMap((userId) => [
       createNotification({
@@ -79,10 +82,13 @@ export async function notifyFollowersOfNewStory(
       }),
       sendDataPushToUser(userId, {
         type: 'new_story',
-        title,
-        body,
+        senderName: title,
+        content: body,
         storyId,
         authorId,
+        senderAvatar: author.avatarUrl ?? '',
+        // Legacy keys kept for in-app banner / older clients that still
+        // read authorName / avatarUrl.
         authorName: author.displayName,
         avatarUrl: author.avatarUrl ?? '',
       }),

@@ -22,7 +22,7 @@ import {
   deleteSlide,
 } from './story.service';
 import { getStoryGiftStats } from '../coins/coins.service';
-import { createNotification } from '../notification/notification.service';
+import { createNotification, sendPostPush } from '../notification/notification.service';
 import { prisma } from '../../config/database';
 import { getIO } from '../../config/socket';
 
@@ -257,15 +257,32 @@ router.post(
       ]);
 
       if (story && liker && story.userId !== viewerId) {
+        const likeTitle = liker.displayName;
+        const likeBody = 'Liked your story';
         createNotification({
           userId: story.userId,
           type: 'STORY_LIKED',
-          title: liker.displayName,
-          body: 'Liked your story',
+          title: likeTitle,
+          body: likeBody,
           imageUrl: liker.avatarUrl ?? undefined,
           data: { storyId, userId: viewerId, isVerified: liker.isVerified ?? false },
         }).catch((err) => {
           logger.error({ err, userId: story.userId }, 'Failed to send story like notification');
+        });
+        sendPostPush(story.userId, {
+          title: likeTitle,
+          body: likeBody,
+          imageUrl: liker.avatarUrl ?? undefined,
+          data: {
+            type: 'STORY_LIKED',
+            storyId,
+            userId: viewerId,
+            senderId: viewerId,
+            senderName: likeTitle,
+            senderAvatar: liker.avatarUrl ?? '',
+          },
+        }).catch((err) => {
+          logger.error({ err, userId: story.userId }, 'Failed to send story-like push');
         });
       }
 
@@ -358,15 +375,33 @@ router.post(
       ]);
 
       if (story && reactor && story.userId !== userId) {
+        const reactTitle = reactor.displayName;
+        const reactBody = `Reacted ${emoji} to your story`;
         createNotification({
           userId: story.userId,
           type: 'STORY_LIKED',
-          title: reactor.displayName,
-          body: `Reacted ${emoji} to your story`,
+          title: reactTitle,
+          body: reactBody,
           imageUrl: reactor.avatarUrl ?? undefined,
           data: { storyId, userId, emoji, isVerified: reactor.isVerified ?? false },
         }).catch((err) => {
           logger.error({ err, userId: story.userId }, 'Failed to send story reaction notification');
+        });
+        sendPostPush(story.userId, {
+          title: reactTitle,
+          body: reactBody,
+          imageUrl: reactor.avatarUrl ?? undefined,
+          data: {
+            type: 'STORY_LIKED',
+            storyId,
+            userId,
+            emoji,
+            senderId: userId,
+            senderName: reactTitle,
+            senderAvatar: reactor.avatarUrl ?? '',
+          },
+        }).catch((err) => {
+          logger.error({ err, userId: story.userId }, 'Failed to send story-react push');
         });
       }
 

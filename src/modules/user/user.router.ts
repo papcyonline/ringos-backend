@@ -11,7 +11,7 @@ import { updatePreferenceSchema, updateAvailabilitySchema, updatePrivacySchema, 
 import * as userService from './user.service';
 import * as followService from './follow.service';
 import * as likeService from './like.service';
-import { createNotification } from '../notification/notification.service';
+import { createNotification, sendPostPush } from '../notification/notification.service';
 import { getUsageSummary } from '../../shared/usage.service';
 
 const router = Router();
@@ -257,15 +257,34 @@ router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response,
 
     // Send notification to the followed user
     const follower = await userService.getProfile(req.user!.userId);
+    const followTitle = follower.displayName;
+    const followBody = 'Started following you';
     createNotification({
       userId: (req.params.id as string),
       type: 'NEW_FOLLOWER',
-      title: follower.displayName,
-      body: 'Started following you',
+      title: followTitle,
+      body: followBody,
       imageUrl: follower.avatarUrl ?? undefined,
       data: { userId: req.user!.userId, isVerified: follower.isVerified ?? false },
     }).catch((err) => {
       logger.error({ err, userId: (req.params.id as string) }, 'Failed to send follow notification');
+    });
+    // Lock-screen push so the recipient sees it even when the app is
+    // closed — without this the follow only shows up next time they
+    // open Yomeet, which kills engagement.
+    sendPostPush((req.params.id as string), {
+      title: followTitle,
+      body: followBody,
+      imageUrl: follower.avatarUrl ?? undefined,
+      data: {
+        type: 'NEW_FOLLOWER',
+        userId: req.user!.userId,
+        senderId: req.user!.userId,
+        senderName: followTitle,
+        senderAvatar: follower.avatarUrl ?? '',
+      },
+    }).catch((err) => {
+      logger.error({ err }, 'Failed to send follow push');
     });
 
     res.status(201).json(result);
@@ -291,15 +310,31 @@ router.post('/:id/like', authenticate, async (req: AuthRequest, res: Response, n
 
     // Send notification to the liked user
     const liker = await userService.getProfile(req.user!.userId);
+    const likeTitle = liker.displayName;
+    const likeBody = 'Liked your profile';
     createNotification({
       userId: (req.params.id as string),
       type: 'PROFILE_LIKED',
-      title: liker.displayName,
-      body: 'Liked your profile',
+      title: likeTitle,
+      body: likeBody,
       imageUrl: liker.avatarUrl ?? undefined,
       data: { userId: req.user!.userId, isVerified: liker.isVerified ?? false },
     }).catch((err) => {
       logger.error({ err, userId: (req.params.id as string) }, 'Failed to send like notification');
+    });
+    sendPostPush((req.params.id as string), {
+      title: likeTitle,
+      body: likeBody,
+      imageUrl: liker.avatarUrl ?? undefined,
+      data: {
+        type: 'PROFILE_LIKED',
+        userId: req.user!.userId,
+        senderId: req.user!.userId,
+        senderName: likeTitle,
+        senderAvatar: liker.avatarUrl ?? '',
+      },
+    }).catch((err) => {
+      logger.error({ err }, 'Failed to send profile-like push');
     });
 
     res.status(201).json(result);

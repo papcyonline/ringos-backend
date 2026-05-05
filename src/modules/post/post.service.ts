@@ -995,14 +995,38 @@ async function notifyTaggedUsers(userIds: string[], authorId: string, postId: st
     ? (content.length > 80 ? `${content.slice(0, 77)}…` : content)
     : `in ${channelName}`;
 
+  // Pull the author avatar once for both the in-app row and the push.
+  const authorAvatar = await prisma.user
+    .findUnique({ where: { id: authorId }, select: { avatarUrl: true } })
+    .then((u) => u?.avatarUrl ?? undefined);
+
+  const mentionTitle = `${authorName} mentioned you`;
   for (const userId of userIds) {
     if (userId === authorId) continue;
     createNotification({
       userId,
       type: 'POST_MENTION',
-      title: `${authorName} mentioned you`,
+      title: mentionTitle,
       body,
+      imageUrl: authorAvatar,
       data: { postId, channelId, authorId },
+    }).catch(() => {});
+    // Lock-screen push so a mention surfaces immediately even with the
+    // app closed — without this the user only learns they were tagged
+    // next time they open Yomeet.
+    sendPostPush(userId, {
+      title: mentionTitle,
+      body,
+      imageUrl: authorAvatar,
+      data: {
+        type: 'POST_MENTION',
+        postId,
+        channelId,
+        authorId,
+        senderId: authorId,
+        senderName: authorName,
+        senderAvatar: authorAvatar ?? '',
+      },
     }).catch(() => {});
   }
 }

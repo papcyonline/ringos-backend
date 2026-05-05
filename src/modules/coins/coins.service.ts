@@ -1,7 +1,7 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { BadRequestError, NotFoundError } from '../../shared/errors';
-import { createNotification } from '../notification/notification.service';
+import { createNotification, sendPostPush } from '../notification/notification.service';
 
 // ─── Gift Types ──────────────────────────────────────────
 
@@ -148,15 +148,33 @@ export async function sendGift(
   });
 
   if (sender) {
+    const giftTitle = sender.displayName;
+    const giftBody = `Sent you a ${giftType} (${coinAmount} coins) on your story`;
     createNotification({
       userId: story.userId,
       type: 'STORY_GIFT',
-      title: sender.displayName,
-      body: `Sent you a ${giftType} (${coinAmount} coins) on your story`,
+      title: giftTitle,
+      body: giftBody,
       imageUrl: sender.avatarUrl ?? undefined,
       data: { storyId, senderId, giftType, coinAmount },
     }).catch((err) => {
       logger.error({ err, recipientId: story.userId }, 'Failed to send gift notification');
+    });
+    sendPostPush(story.userId, {
+      title: giftTitle,
+      body: giftBody,
+      imageUrl: sender.avatarUrl ?? undefined,
+      data: {
+        type: 'STORY_GIFT',
+        storyId,
+        senderId,
+        senderName: giftTitle,
+        senderAvatar: sender.avatarUrl ?? '',
+        giftType,
+        coinAmount: String(coinAmount),
+      },
+    }).catch((err) => {
+      logger.error({ err, recipientId: story.userId }, 'Failed to send gift push');
     });
   }
 
