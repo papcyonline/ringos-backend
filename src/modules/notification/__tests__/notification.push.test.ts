@@ -138,10 +138,14 @@ describe('notification.service — APNs payload regression (iOS lock screen bug)
     // The regression guard.
     expect(msg.apns.payload.aps).not.toHaveProperty('content-available');
 
-    // And the shape we DO want.
+    // And the shape we DO want. The apns-collapse-id is set per
+    // conversation for chat / voice-note pushes so a burst of N
+    // messages from the same chat collapses into a single updated
+    // entry on the iOS lock screen instead of stacking.
     expect(msg.apns.headers).toEqual({
       'apns-priority': '10',
       'apns-push-type': 'alert',
+      'apns-collapse-id': 'chat-conv-1',
     });
     expect(msg.apns.payload.aps.alert).toEqual({
       title: 'Alice',
@@ -164,7 +168,12 @@ describe('notification.service — APNs payload regression (iOS lock screen bug)
     await tick();
 
     const msg = mockSendEachForMulticast.mock.calls[0][0];
-    expect(msg.android).toEqual({ priority: 'high' });
+    // Android mirrors the apns-collapse-id via FCM's collapseKey so the
+    // same per-chat collapsing applies to Android offline-queued pushes.
+    expect(msg.android).toEqual({
+      priority: 'high',
+      collapseKey: 'chat-conv-1',
+    });
     expect(msg.android.notification).toBeUndefined();
     // Data-only payload carries the type for the native Kotlin handler to route on.
     expect(msg.data.type).toBe('chat_message');
@@ -185,9 +194,12 @@ describe('notification.service — APNs payload regression (iOS lock screen bug)
     expect(mockSendEachForMulticast).toHaveBeenCalledTimes(1);
     const msg = mockSendEachForMulticast.mock.calls[0][0];
     expect(msg.apns.payload.aps).not.toHaveProperty('content-available');
+    // Body no longer says "from <name>" — the title already shows the
+    // caller name and stacking both made the lock-screen banner read
+    // "Charlie / Missed call from Charlie".
     expect(msg.apns.payload.aps.alert).toEqual({
       title: 'Charlie',
-      body: 'Missed call from Charlie',
+      body: 'Missed call',
     });
     expect(msg.apns.payload.aps['mutable-content']).toBe(1);
     // badge must NOT be hardcoded to 1 — it would overwrite the real unread
@@ -389,7 +401,7 @@ describe('notification.service — sendMissedCallNotification', () => {
       data: expect.objectContaining({
         type: 'MISSED_CALL',
         title: 'Frank',
-        body: 'Missed video call from Frank',
+        body: 'Missed video call',
       }),
     });
   });
@@ -405,7 +417,7 @@ describe('notification.service — sendMissedCallNotification', () => {
 
     expect(mockPrisma.notification.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        body: 'Missed call from Gina',
+        body: 'Missed call',
       }),
     });
   });
