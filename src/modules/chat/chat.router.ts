@@ -5,7 +5,7 @@ import { userRateLimit } from '../../middleware/userRateLimit';
 
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
-import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl, chatDocumentUpload, fileToChatDocumentUrl } from '../../shared/upload';
+import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl, chatDocumentUpload, fileToChatDocumentUrl, chatVideoUpload, fileToChatVideoUrl, fileToChatVideoThumbnailUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema, forwardMessageSchema, searchMessagesSchema } from './chat.schema';
 import * as chatService from './chat.service';
@@ -602,6 +602,64 @@ router.post(
       );
 
       broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
+
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/video - Send a video message
+//
+// Multipart with two files: `video` (the .mp4) + `thumbnail` (jpg/png
+// generated client-side at upload time, since R2 doesn't auto-extract
+// poster frames). Both go to R2 and the message is persisted with all
+// three fields (videoUrl, videoThumbnailUrl, videoDuration). Caption,
+// replyTo, and viewOnce are forwarded the same way as the image
+// endpoint so the bubble renders consistently.
+router.post(
+  '/conversations/:conversationId/video',
+  authenticate,
+  chatVideoUpload.fields([
+    { name: 'video', maxCount: 1 },
+    { name: 'thumbnail', maxCount: 1 },
+  ]),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const files = req.files as { [field: string]: Express.Multer.File[] } | undefined;
+      const videoFile = files?.video?.[0];
+      const thumbnailFile = files?.thumbnail?.[0];
+      if (!videoFile) {
+        return res.status(400).json({ error: 'No video file uploaded' });
+      }
+      const conversationId = req.params.conversationId as string;
+      // Upload both in parallel — independent R2 PUTs, no ordering.
+      const [videoUrl, videoThumbnailUrl] = await Promise.all([
+        fileToChatVideoUrl(videoFile, conversationId),
+        thumbnailFile
+          ? fileToChatVideoThumbnailUrl(thumbnailFile, conversationId)
+          : Promise.resolve<string | undefined>(undefined),
+      ]);
+      const videoDuration = parseInt(req.body.duration as string, 10) || 0;
+      const caption = (req.body.caption as string | undefined) ?? '';
+      const replyToId = req.body.replyToId as string | undefined;
+      const viewOnce = req.body.viewOnce === 'true';
+
+      const message = await chatService.sendMessage(
+        conversationId,
+        req.user!.userId,
+        caption,
+        {
+          replyToId,
+          videoUrl,
+          videoThumbnailUrl,
+          videoDuration,
+          viewOnce,
+        },
+      );
+
+      broadcastAndNotifyMessage(message, conversationId, req.user!.userId);
 
       res.status(201).json(message);
     } catch (err) {

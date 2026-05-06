@@ -627,6 +627,14 @@ model Message {
   // Set-once via the voice:played socket event; subsequent plays are
   // server-side idempotent (no overwrite once non-null).
   voicePlayedAt  DateTime?
+  // Chat video attachment (R2-hosted .mp4). Thumbnail is generated
+  // client-side at upload time (R2 doesn't auto-thumbnail like
+  // Cloudinary) and uploaded alongside the video. Duration in seconds
+  // is captured at the same time so the bubble can show the chip
+  // without having to spin up a player.
+  videoUrl           String?
+  videoThumbnailUrl  String?
+  videoDuration      Int?
   viewOnce       Boolean   @default(false)
   viewOnceOpened Boolean   @default(false)
   isPinned       Boolean   @default(false)

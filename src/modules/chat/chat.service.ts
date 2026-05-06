@@ -918,10 +918,23 @@ export async function sendMessage(
     viewOnce?: boolean;
     audioUrl?: string;
     audioDuration?: number;
+    videoUrl?: string;
+    videoThumbnailUrl?: string;
+    videoDuration?: number;
     metadata?: Record<string, any>;
   },
 ) {
-  const { replyToId, imageUrl, viewOnce, audioUrl, audioDuration, metadata } = options ?? {};
+  const {
+    replyToId,
+    imageUrl,
+    viewOnce,
+    audioUrl,
+    audioDuration,
+    videoUrl,
+    videoThumbnailUrl,
+    videoDuration,
+    metadata,
+  } = options ?? {};
 
   // Run conversation lookup and participant verification in parallel
   const [conversation, participant] = await Promise.all([
@@ -1003,6 +1016,9 @@ export async function sendMessage(
         viewOnce: viewOnce || false,
         audioUrl: audioUrl || undefined,
         audioDuration: audioDuration ?? undefined,
+        videoUrl: videoUrl || undefined,
+        videoThumbnailUrl: videoThumbnailUrl || undefined,
+        videoDuration: videoDuration ?? undefined,
         metadata: metadata ?? undefined,
         expiresAt,
       },

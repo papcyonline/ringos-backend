@@ -40,6 +40,21 @@ function audioFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFi
   }
 }
 
+function videoFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
+  if (file.mimetype.startsWith('video/')) {
+    cb(null, true);
+    return;
+  }
+  // Some pickers mislabel video/quicktime as application/octet-stream; fall
+  // back to extension. Same belt-and-suspenders trick we use for HEIC.
+  const ext = (file.originalname || '').split('.').pop()?.toLowerCase() || '';
+  if (['mp4', 'mov', 'm4v', 'webm', '3gp'].includes(ext)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only MP4, MOV, M4V, WebM, and 3GP videos are allowed'));
+  }
+}
+
 // ── Multer middleware (memory storage, validates types + sizes) ──────────
 
 export const avatarUpload = multer({
@@ -58,6 +73,16 @@ export const chatAudioUpload = multer({
   storage: memoryStorage,
   limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: audioFilter,
+});
+
+// Pre-compressed videos from the client target ~16MB (matches WhatsApp);
+// the 60MB server cap leaves headroom for compression slop. Multer
+// rejects anything above this BEFORE buffering to memory, so a malicious
+// client can't OOM the worker by streaming a giant file.
+export const chatVideoUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 60 * 1024 * 1024 },
+  fileFilter: videoFilter,
 });
 
 function documentFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
@@ -127,6 +152,49 @@ export async function fileToChatAudioUrl(file: Express.Multer.File, conversation
     if (result) return result.secureUrl;
   }
   return saveToDisk(file.buffer, 'uploads/audio', '/uploads/audio', path.extname(file.originalname) || '.m4a');
+}
+
+/**
+ * Upload a chat video to R2 (cheap egress, byte-range streaming via
+ * Cloudflare's CDN). Falls back to Cloudinary if R2 isn't configured,
+ * and to local disk as a last resort. Always returns the public URL
+ * for the video; thumbnails are uploaded separately via
+ * fileToChatVideoThumbnailUrl since R2 has no auto-thumbnail like
+ * Cloudinary.
+ */
+export async function fileToChatVideoUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
+  if (isR2Configured) {
+    try {
+      const result = await uploadVideoToR2(file.buffer, `chat/${conversationId}/videos`, file.originalname || 'video.mp4');
+      return result.url;
+    } catch (err) { /* R2 failed, fall back */ }
+  }
+  if (cloudinaryService.isCloudinaryConfigured) {
+    const result = await cloudinaryService.uploadBuffer(file.buffer, {
+      folder: `yomeet/chat/${conversationId}/videos`,
+      resourceType: 'video',
+    });
+    if (result) return result.secureUrl;
+  }
+  return saveToDisk(file.buffer, 'uploads/chat-videos', '/uploads/chat-videos', path.extname(file.originalname) || '.mp4');
+}
+
+/**
+ * Upload a chat video's poster thumbnail (jpg/png) — same R2 bucket,
+ * different folder. Generated client-side because R2 doesn't auto-
+ * extract poster frames the way Cloudinary does.
+ */
+export async function fileToChatVideoThumbnailUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
+  if (isR2Configured) {
+    try {
+      return await uploadImageToR2(file.buffer, `chat/${conversationId}/video-thumbnails`, file.originalname || 'thumb.jpg', file.mimetype);
+    } catch (err) { /* R2 failed, fall back */ }
+  }
+  if (cloudinaryService.isCloudinaryConfigured) {
+    const result = await cloudinaryService.uploadChatImage(file.buffer, conversationId);
+    if (result) return result.secureUrl;
+  }
+  return saveToDisk(file.buffer, 'uploads/chat-videos', '/uploads/chat-videos', path.extname(file.originalname) || '.jpg');
 }
 
 export async function fileToChatDocumentUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
