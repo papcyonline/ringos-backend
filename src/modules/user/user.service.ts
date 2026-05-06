@@ -162,9 +162,19 @@ export async function listUsers(currentUserId: string, page = 1, limit = 50) {
 
   const skip = (page - 1) * limit;
 
+  // Users must have actually finished onboarding to appear in the
+  // People tab. isAnonymous flips to false inside setUsername — but
+  // we ALSO require a non-empty displayName + bio so a legacy row
+  // somehow flagged complete without any actual profile content
+  // (data drift, partial migration, manual DB tinkering) doesn't
+  // surface as a ghost user. The bio check covers both NULL and ''
+  // for the nullable column; displayName is non-null in the schema
+  // so only the empty-string check matters there.
   const userWhere = {
     id: { notIn: [currentUserId, ...blockedIds] },
-    isAnonymous: false, // Only show users who completed profile setup
+    isAnonymous: false,
+    displayName: { not: '' },
+    bio: { not: null, notIn: [''] },
   };
 
   const [users, total] = await Promise.all([
