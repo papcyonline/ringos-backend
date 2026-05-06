@@ -621,6 +621,12 @@ model Message {
   imageUrl       String?
   audioUrl       String?
   audioDuration  Int?
+  // Set on first play by any recipient. Drives the WhatsApp-style
+  // listened indicator: blue dot disappears on the receiver's bubble,
+  // and the sender's mic icon turns blue once a recipient plays.
+  // Set-once via the voice:played socket event; subsequent plays are
+  // server-side idempotent (no overwrite once non-null).
+  voicePlayedAt  DateTime?
   viewOnce       Boolean   @default(false)
   viewOnceOpened Boolean   @default(false)
   isPinned       Boolean   @default(false)

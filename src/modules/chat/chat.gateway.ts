@@ -341,6 +341,65 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
   });
 
   /**
+   * chat:voice-played - Mark a voice note as played by the recipient
+   * and broadcast back so the sender's "listened" indicator (mic icon
+   * turns blue) updates and the recipient's other devices clear the
+   * unplayed dot. Idempotent: only the FIRST play sets voicePlayedAt
+   * (server-side compare-and-swap), so re-listens don't bounce events
+   * around.
+   */
+  socket.on('chat:voice-played', async (data: { messageId: string; conversationId: string }) => {
+    try {
+      const { messageId, conversationId } = data;
+      if (!messageId || !conversationId) {
+        socket.emit('chat:error', { message: 'messageId and conversationId required' });
+        return;
+      }
+      const now = new Date();
+      // Compare-and-swap — only update if voicePlayedAt is still null.
+      // updateMany returns the count so we can suppress the broadcast on
+      // subsequent plays.
+      const result = await prisma.message.updateMany({
+        where: {
+          id: messageId,
+          conversationId,
+          // Sender shouldn't mark their own voice notes played; this also
+          // guards against spoofed messageIds from another conversation.
+          senderId: { not: userId },
+          audioUrl: { not: null },
+          voicePlayedAt: null,
+        },
+        data: { voicePlayedAt: now },
+      });
+      if (result.count === 0) {
+        // Already played by someone else, or message doesn't exist /
+        // belongs to this user. Nothing to broadcast.
+        return;
+      }
+      const payload = {
+        messageId,
+        conversationId,
+        voicePlayedAt: now.toISOString(),
+      };
+      io.to(`conversation:${conversationId}`).emit('chat:voice-played', payload);
+      // Also emit to sender's personal room so the listened indicator
+      // updates even if they left the chat screen.
+      try {
+        const msg = await prisma.message.findUnique({
+          where: { id: messageId },
+          select: { senderId: true },
+        });
+        if (msg) {
+          io.to(`user:${msg.senderId}`).emit('chat:voice-played', payload);
+        }
+      } catch { /* non-critical */ }
+      logger.debug({ messageId, userId }, 'Voice-played receipt broadcast');
+    } catch (error: any) {
+      logger.error({ error, userId }, 'Error broadcasting voice-played receipt');
+    }
+  });
+
+  /**
    * chat:read - Mark conversation as read and notify the room.
    */
   socket.on('chat:read', async (data: { conversationId: string }) => {
