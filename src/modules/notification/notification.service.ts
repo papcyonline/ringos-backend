@@ -436,6 +436,13 @@ export async function sendCallPush(
     callerName: string;
     callerAvatar?: string | null;
     isGroup?: boolean;
+    // Optional pre-issued LiveKit creds so the receiver can pre-join the
+    // room before slide-to-answer — fixes the iOS-26 CallKit-vs-LiveKit
+    // timing race that caused "Call Failed" on lock-screen answers. The
+    // iOS native VoIP handler reads these from the payload and forwards
+    // them to Flutter via the actionCallIncoming bridge event.
+    livekitToken?: string;
+    livekitUrl?: string;
   }
 ) {
   const app = getFirebaseApp();
@@ -482,7 +489,7 @@ export async function sendCallPush(
   });
 
   if (voipTokens.length > 0) {
-    const voipPayload = {
+    const voipPayload: Record<string, unknown> = {
       // Existing keys stay so any older client builds still work.
       callId: payload.callId,
       conversationId: payload.conversationId,
@@ -500,6 +507,15 @@ export async function sendCallPush(
       handle: payload.callerId,
       isVideo: payload.callType === 'VIDEO',
     };
+    // Pre-issued LiveKit creds. AppDelegate.didReceiveIncomingPushWith
+    // pulls these out of the payload and forwards them via Data.extra
+    // so the Flutter bridge can pre-join the room on actionCallIncoming.
+    if (payload.livekitToken) {
+      voipPayload.livekitToken = payload.livekitToken;
+    }
+    if (payload.livekitUrl) {
+      voipPayload.livekitUrl = payload.livekitUrl;
+    }
 
     for (const { token } of voipTokens) {
       sendVoipPush(token, voipPayload)

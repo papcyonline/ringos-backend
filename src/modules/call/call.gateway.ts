@@ -458,6 +458,25 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           'Emitting call:incoming to target user room'
         );
 
+        // Pre-issue a LiveKit token for the receiver so they can begin
+        // joining the room while CallKit's native ring UI is up — without
+        // this, the receiver only gets a token after `call:answer`, and
+        // LiveKit's ~2s join takes longer than CallKit's audio-watchdog
+        // window on iOS 26 (~500ms after CXAnswerCallAction.fulfill),
+        // which causes the lock-screen "Call Failed/Ended" bug. The token
+        // is harmless if the receiver rejects — they just never join.
+        let receiverToken: string | null = null;
+        try {
+          const targetUser = userMap.get(targetId);
+          receiverToken = await generateCallToken(
+            targetId,
+            callId,
+            targetUser?.displayName ?? undefined,
+          );
+        } catch (err) {
+          logger.error({ err, targetId, callId }, 'Failed to pre-issue LiveKit token for receiver — falling back to post-answer issuance');
+        }
+
         if (isOnline) {
           io.to(`user:${targetId}`).emit('call:incoming', {
             callId,
@@ -467,6 +486,12 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
             callerName: caller?.displayName ?? 'Unknown',
             callerAvatar: caller?.avatarUrl ?? null,
             callerId: userId,
+            // Pre-issued LiveKit creds so the receiver app can pre-join
+            // the room muted before the user accepts. Falls back to nulls
+            // if token issuance failed; client then takes the legacy
+            // post-answer-issue path.
+            livekitToken: receiverToken,
+            livekitUrl: receiverToken ? LIVEKIT_URL : null,
             participants: Array.from(participantIds)
               .filter((id) => id !== targetId)
               .map((id) => ({
@@ -487,7 +512,13 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         // Receiver isn't reachable via socket (offline, killed, or socket
         // alive-but-app-frozen — the latter happens briefly on iOS background).
         // Wake their device with a VoIP push (iOS) / FCM data push (Android).
-        const pushPayload = {
+        // Embedding the pre-issued LiveKit creds in the payload lets the
+        // iOS native VoIP handler hand them to Flutter on actionCallIncoming
+        // and pre-join the room before the user slide-to-answers — closes
+        // the CallKit-vs-LiveKit timing race for the killed/locked scenario.
+        // APNS VoIP push payload limit is 4KB; a LiveKit JWT is ~600 bytes,
+        // well under the limit.
+        const pushPayload: Parameters<typeof sendCallPush>[1] = {
           callId,
           conversationId,
           callType: resolvedCallType,
@@ -495,6 +526,9 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           callerName: caller?.displayName ?? 'Unknown',
           callerAvatar: caller?.avatarUrl,
           isGroup: isGroup ?? false,
+          ...(receiverToken
+            ? { livekitToken: receiverToken, livekitUrl: LIVEKIT_URL }
+            : {}),
         };
         // Stamp BEFORE the fire-and-forget so a fast cancel path can see
         // that a push is in flight (used by call:end to suppress a
