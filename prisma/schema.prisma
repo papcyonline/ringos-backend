@@ -619,6 +619,9 @@ model Message {
   metadata       Json?
   replyToId      String?
   imageUrl       String?
+  // Multi-image album. Empty array = single-image (or non-image) message;
+  // imageUrl is still mirrored to imageUrls[0] so old clients keep working.
+  imageUrls      String[]  @default([])
   audioUrl       String?
   audioDuration  Int?
   // Set on first play by any recipient. Drives the WhatsApp-style

@@ -538,6 +538,46 @@ router.post(
   },
 );
 
+// POST /conversations/:conversationId/album - Send a multi-image album.
+// Up to 30 images uploaded in one request; persisted as a single Message
+// with imageUrls[] populated. imageUrl is mirrored to imageUrls[0] in the
+// service so pre-album clients still render the first photo.
+// Sequential upload keeps memory bounded (multer.memoryStorage holds all
+// files in RAM until the handler runs).
+router.post(
+  '/conversations/:conversationId/album',
+  authenticate,
+  chatImageUpload.array('images', 30),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      if (files.length === 0) {
+        return res.status(400).json({ error: 'No images uploaded' });
+      }
+      const conversationId = req.params.conversationId as string;
+      const caption = (req.body.caption as string) || '';
+      const replyToId = req.body.replyToId as string | undefined;
+
+      const imageUrls: string[] = [];
+      for (const file of files) {
+        imageUrls.push(await fileToChatImageUrl(file, conversationId));
+      }
+
+      const message = await chatService.sendMessage(
+        conversationId,
+        req.user!.userId,
+        caption,
+        { replyToId, imageUrls },
+      );
+
+      broadcastAndNotifyMessage(message, conversationId, req.user!.userId);
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // POST /conversations/:conversationId/gif - Send a GIF message.
 // The Giphy URL was already fetched client-side from our /api/giphy proxy;
 // here we just persist it as an imageUrl with metadata.isGif so bubbles can

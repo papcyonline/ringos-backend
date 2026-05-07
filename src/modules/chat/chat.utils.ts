@@ -53,6 +53,7 @@ export function formatMessagePayload(message: any, conversationId: string) {
     senderAvatar: message.sender.avatarUrl,
     content: message.content,
     imageUrl: message.imageUrl,
+    imageUrls: message.imageUrls ?? [],
     audioUrl: message.audioUrl,
     audioDuration: message.audioDuration,
     viewOnce: message.viewOnce,

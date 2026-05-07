@@ -915,6 +915,9 @@ export async function sendMessage(
   options?: {
     replyToId?: string;
     imageUrl?: string;
+    /** Album of 2+ images. When set, imageUrl is forced to imageUrls[0] so
+     *  pre-album clients still render the first photo. */
+    imageUrls?: string[];
     viewOnce?: boolean;
     audioUrl?: string;
     audioDuration?: number;
@@ -926,7 +929,8 @@ export async function sendMessage(
 ) {
   const {
     replyToId,
-    imageUrl,
+    imageUrl: rawImageUrl,
+    imageUrls: rawImageUrls,
     viewOnce,
     audioUrl,
     audioDuration,
@@ -935,6 +939,13 @@ export async function sendMessage(
     videoDuration,
     metadata,
   } = options ?? {};
+
+  // Normalize: an album always carries the array; a single image still
+  // populates the legacy imageUrl field. Mirroring imageUrls[0] keeps
+  // old clients (and existing message-list code paths that read imageUrl)
+  // happy without forking every reader.
+  const imageUrls = rawImageUrls && rawImageUrls.length > 0 ? rawImageUrls : undefined;
+  const imageUrl = imageUrls ? imageUrls[0] : rawImageUrl;
 
   // Run conversation lookup and participant verification in parallel
   const [conversation, participant] = await Promise.all([
@@ -1013,6 +1024,7 @@ export async function sendMessage(
         content,
         replyToId: replyToId || undefined,
         imageUrl: imageUrl || undefined,
+        imageUrls: imageUrls ?? [],
         viewOnce: viewOnce || false,
         audioUrl: audioUrl || undefined,
         audioDuration: audioDuration ?? undefined,
@@ -1140,7 +1152,7 @@ export async function deleteMessage(messageId: string, userId: string, mode: 'me
     }
   }
 
-  await cleanupMediaUrls([message.imageUrl, message.audioUrl]);
+  await cleanupMediaUrls([message.imageUrl, ...message.imageUrls, message.audioUrl]);
 
   if (mode === 'unsend') {
     // Hard delete — message vanishes from DB entirely, no trace for recipient
@@ -1233,7 +1245,7 @@ export async function openViewOnce(messageId: string, userId: string) {
     throw new ForbiddenError('This message has already been opened');
   }
 
-  await cleanupMediaUrls([message.imageUrl, message.audioUrl]);
+  await cleanupMediaUrls([message.imageUrl, ...message.imageUrls, message.audioUrl]);
 
   // Mark as opened and wipe content/media from database
   const updated = await prisma.message.update({
@@ -1883,7 +1895,7 @@ export async function forwardMessageToMany(
   // Verify source message exists
   const original = await prisma.message.findUnique({
     where: { id: messageId },
-    select: { content: true, imageUrl: true, audioUrl: true, audioDuration: true, conversationId: true, deletedAt: true },
+    select: { content: true, imageUrl: true, imageUrls: true, audioUrl: true, audioDuration: true, conversationId: true, deletedAt: true },
   });
   if (!original) throw new NotFoundError('Message not found');
   if (original.deletedAt) throw new ForbiddenError('Cannot forward a deleted message');
@@ -1897,6 +1909,7 @@ export async function forwardMessageToMany(
     await verifyParticipant(target, senderId);
     const msg = await sendMessage(target, senderId, original.content ?? '', {
       imageUrl: original.imageUrl ?? undefined,
+      imageUrls: original.imageUrls.length > 0 ? original.imageUrls : undefined,
       audioUrl: original.audioUrl ?? undefined,
       audioDuration: original.audioDuration ?? undefined,
       metadata: { isForwarded: true },
