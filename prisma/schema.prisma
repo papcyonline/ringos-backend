@@ -827,6 +827,22 @@ model Story {
   isPermanent Boolean         @default(false)
   visibility  StoryVisibility @default(FRIENDS)
 
+  // Public engagement counters shown under each action icon in the
+  // story viewer's right-side rail. Maintained by the story service:
+  //   - likeCount    bumped by likeStory (+1 on like, -1 on unlike)
+  //   - commentCount bumped by replyToStory (+1 per reply)
+  //   - repostCount  bumped by the repost endpoint
+  //   - shareCount   bumped when the user opens the system share sheet
+  //   - downloadCount bumped when the user saves the slide to gallery
+  // Denormalized on the row so the feed query stays one read; the
+  // canonical source-of-truth tables (StoryReaction, Message, etc.)
+  // still exist if a backfill is ever needed.
+  likeCount     Int @default(0)
+  commentCount  Int @default(0)
+  repostCount   Int @default(0)
+  shareCount    Int @default(0)
+  downloadCount Int @default(0)
+
   user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   channel Conversation? @relation(fields: [channelId], references: [id], onDelete: Cascade)
   slides  StorySlide[]

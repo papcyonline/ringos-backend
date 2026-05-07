@@ -20,6 +20,9 @@ import {
   updateSlideCaption,
   deleteStory,
   deleteSlide,
+  bumpStoryShare,
+  bumpStoryDownload,
+  bumpStoryRepost,
 } from './story.service';
 import { getStoryGiftStats } from '../coins/coins.service';
 import { createNotification, sendPostPush } from '../notification/notification.service';
@@ -457,6 +460,53 @@ router.post(
       res.status(500).json({ error: 'Failed to reply to story' });
     }
   }
+);
+
+// ─── Engagement Counter Bumps ─────────────────────────────
+// share / download / repost are fire-and-forget: the FE optimistically
+// increments the count locally and posts here so the server number
+// stays in sync with what other viewers see on next feed refresh.
+
+router.post(
+  '/:id/share',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const ok = await bumpStoryShare(req.params.id as string);
+      if (!ok) return res.status(404).json({ error: 'Story not found' });
+      res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/:id/download',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const ok = await bumpStoryDownload(req.params.id as string);
+      if (!ok) return res.status(404).json({ error: 'Story not found' });
+      res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/:id/repost',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const ok = await bumpStoryRepost(req.params.id as string);
+      if (!ok) return res.status(404).json({ error: 'Story not found' });
+      res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
 );
 
 // ─── GET /api/stories/:id/gift-stats ─────────────────────

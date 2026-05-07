@@ -271,6 +271,11 @@ export async function getStoryFeed(requesterId: string) {
       viewed: s.views.length > 0,
       myReaction: s.reactions[0]?.emoji ?? null,
       viewCount: s._count.views,
+      likeCount: s.likeCount,
+      commentCount: s.commentCount,
+      repostCount: s.repostCount,
+      shareCount: s.shareCount,
+      downloadCount: s.downloadCount,
     })),
   }));
 
@@ -345,6 +350,11 @@ function groupStoriesByUser(
       viewed: s.views.length > 0,
       myReaction: s.reactions[0]?.emoji ?? null,
       viewCount: s._count.views,
+      likeCount: s.likeCount,
+      commentCount: s.commentCount,
+      repostCount: s.repostCount,
+      shareCount: s.shareCount,
+      downloadCount: s.downloadCount,
     })),
   }));
 }
@@ -610,6 +620,15 @@ export async function getStoryViewers(storyId: string, userId: string) {
 // ─── Like Story (legacy endpoint, kept for old app builds) ─────
 
 export async function likeStory(storyId: string, viewerId: string, liked: boolean = true) {
+  // Snapshot previous like state from the source-of-truth StoryReaction
+  // table — that's what reactToStory + clearStoryReaction use, and the
+  // legacy StoryView.liked can drift after an emoji-react flow.
+  const existing = await prisma.storyReaction.findUnique({
+    where: { storyId_userId: { storyId, userId: viewerId } },
+    select: { emoji: true },
+  });
+  const wasLiked = existing?.emoji === '❤️';
+
   const view = await prisma.storyView.findUnique({
     where: { storyId_viewerId: { storyId, viewerId } },
   });
@@ -638,6 +657,16 @@ export async function likeStory(storyId: string, viewerId: string, liked: boolea
     });
   }
 
+  // Keep the denormalized counter in sync with the actual transition.
+  // Skip the write when nothing changed so concurrent identical taps
+  // don't double-count.
+  if (wasLiked !== liked) {
+    await prisma.story.update({
+      where: { id: storyId },
+      data: { likeCount: { increment: liked ? 1 : -1 } },
+    });
+  }
+
   invalidateFeedCache(viewerId);
 }
 
@@ -658,6 +687,15 @@ export async function reactToStory(
   });
   if (!story) return null;
 
+  // Capture the previous reaction so we can keep likeCount in sync as
+  // the user flips between ❤️ and other emojis.
+  const previous = await prisma.storyReaction.findUnique({
+    where: { storyId_userId: { storyId, userId } },
+    select: { emoji: true },
+  });
+  const wasLiked = previous?.emoji === '❤️';
+  const isLiked = emoji === '❤️';
+
   await prisma.storyReaction.upsert({
     where: { storyId_userId: { storyId, userId } },
     create: { storyId, userId, emoji },
@@ -667,15 +705,28 @@ export async function reactToStory(
   // Mirror ❤️ into legacy StoryView.liked so old app builds keep showing the like.
   await prisma.storyView.upsert({
     where: { storyId_viewerId: { storyId, viewerId: userId } },
-    create: { storyId, viewerId: userId, liked: emoji === '❤️' },
-    update: { liked: emoji === '❤️' },
+    create: { storyId, viewerId: userId, liked: isLiked },
+    update: { liked: isLiked },
   });
+
+  if (wasLiked !== isLiked) {
+    await prisma.story.update({
+      where: { id: storyId },
+      data: { likeCount: { increment: isLiked ? 1 : -1 } },
+    });
+  }
 
   invalidateFeedCache(userId);
   return { emoji };
 }
 
 export async function clearStoryReaction(storyId: string, userId: string) {
+  // Read first so we know whether the cleared reaction was a like.
+  // deleteMany returns a row count but not the rows themselves.
+  const existing = await prisma.storyReaction.findUnique({
+    where: { storyId_userId: { storyId, userId } },
+    select: { emoji: true },
+  });
   await prisma.storyReaction.deleteMany({
     where: { storyId, userId },
   });
@@ -683,6 +734,12 @@ export async function clearStoryReaction(storyId: string, userId: string) {
     where: { storyId, viewerId: userId },
     data: { liked: false },
   });
+  if (existing?.emoji === '❤️') {
+    await prisma.story.update({
+      where: { id: storyId },
+      data: { likeCount: { decrement: 1 } },
+    });
+  }
   invalidateFeedCache(userId);
 }
 
@@ -736,7 +793,59 @@ export async function replyToStory(
     },
   });
 
+  // Bump the story's public comment counter shown in the viewer rail.
+  await prisma.story.update({
+    where: { id: storyId },
+    data: { commentCount: { increment: 1 } },
+  });
+
   return { conversationId: conversation.id, messageId: message.id };
+}
+
+// ─── Engagement Counter Bumps (share / download / repost) ──
+// Lightweight write-only endpoints fired from the viewer's right-side
+// rail. They don't return data — the FE optimistically increments the
+// count locally and uses a fire-and-forget HTTP call to keep the
+// authoritative DB number in sync. Returning {ok: true} keeps the
+// route shape simple for retries.
+
+export async function bumpStoryShare(storyId: string): Promise<boolean> {
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: { id: true },
+  });
+  if (!story) return false;
+  await prisma.story.update({
+    where: { id: storyId },
+    data: { shareCount: { increment: 1 } },
+  });
+  return true;
+}
+
+export async function bumpStoryDownload(storyId: string): Promise<boolean> {
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: { id: true },
+  });
+  if (!story) return false;
+  await prisma.story.update({
+    where: { id: storyId },
+    data: { downloadCount: { increment: 1 } },
+  });
+  return true;
+}
+
+export async function bumpStoryRepost(storyId: string): Promise<boolean> {
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: { id: true },
+  });
+  if (!story) return false;
+  await prisma.story.update({
+    where: { id: storyId },
+    data: { repostCount: { increment: 1 } },
+  });
+  return true;
 }
 
 // ─── Update Slide Caption ──────────────────────────────────
