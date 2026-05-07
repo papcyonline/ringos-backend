@@ -895,7 +895,8 @@ export async function deleteSlide(slideId: string, userId: string) {
   if (slide.story._count.slides <= 1) {
     await prisma.story.delete({ where: { id: slide.storyId } });
     logger.info({ slideId, storyId: slide.storyId, userId }, 'Last slide deleted, story removed');
-    return { deleted: true, storyDeleted: true };
+    invalidateFeedCache();
+    return { deleted: true, storyDeleted: true, storyId: slide.storyId };
   }
 
   // Otherwise just delete the slide and reorder positions
@@ -916,7 +917,7 @@ export async function deleteSlide(slideId: string, userId: string) {
 
   logger.info({ slideId, storyId: slide.storyId, userId }, 'Slide deleted');
   invalidateFeedCache(); // Slide changes affect feed
-  return { deleted: true, storyDeleted: false };
+  return { deleted: true, storyDeleted: false, storyId: slide.storyId };
 }
 
 // ─── Delete Story ───────────────────────────────────────────

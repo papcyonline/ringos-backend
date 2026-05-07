@@ -342,6 +342,15 @@ router.delete(
         });
       }
 
+      // Notify all connected clients so their feed providers can drop
+      // the story from cache without waiting for the 60s polling tick.
+      // We only fire when the whole story is gone — partial slide
+      // deletions don't change the feed shape (the story still appears
+      // with one fewer slide, refreshed via story:new on next poll).
+      if (result.storyDeleted && result.storyId) {
+        getIO().emit('story:deleted', { storyId: result.storyId, userId });
+      }
+
       res.json({ success: true, storyDeleted: result.storyDeleted });
     } catch (error) {
       logger.error({ error }, 'Error deleting slide');
@@ -540,6 +549,12 @@ router.delete(
         const status = result.reason === 'not_found' ? 404 : 403;
         return res.status(status).json({ error: result.reason === 'not_found' ? 'Story not found' : 'Not authorized' });
       }
+
+      // Real-time fan-out so other clients drop the story from their
+      // feed cache immediately. Mirrors the story:new event used on
+      // creation. The user's own client also listens and reacts so a
+      // single event handler keeps every cache in sync.
+      getIO().emit('story:deleted', { storyId, userId });
 
       res.json({ success: true });
     } catch (error) {
