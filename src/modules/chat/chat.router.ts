@@ -1528,7 +1528,13 @@ router.get(
         where = {
           conversationId,
           deletedAt: null,
-          imageUrl: { not: null },
+          // Photos (single + albums via mirrored imageUrl) AND videos.
+          // Album messages set imageUrl to the first image so the OR
+          // already catches them.
+          OR: [
+            { imageUrl: { not: null } },
+            { videoUrl: { not: null } },
+          ],
           // Exclude document uploads that happen to have imageUrl
           NOT: { metadata: { path: ['isDocument'], equals: true } },
         };
@@ -1559,6 +1565,10 @@ router.get(
             senderId: true,
             content: true,
             imageUrl: true,
+            imageUrls: true,
+            videoUrl: true,
+            videoThumbnailUrl: true,
+            videoDuration: true,
             metadata: true,
             createdAt: true,
             sender: { select: { displayName: true, avatarUrl: true } },
