@@ -55,6 +55,22 @@ function videoFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFi
   }
 }
 
+// /video sends two parts: `video` (the .mp4) AND `thumbnail` (a jpg
+// generated client-side because R2 has no auto-thumbnail). videoFilter
+// rejects the jpg, which short-circuits multer.fields() with a 415 even
+// though the video itself is fine. Routing by fieldname keeps each
+// part on the correct allow-list.
+function videoOrThumbnailFilter(
+  _req: unknown,
+  file: Express.Multer.File,
+  cb: multer.FileFilterCallback,
+) {
+  if (file.fieldname === 'thumbnail') {
+    return imageFilter(_req, file, cb);
+  }
+  return videoFilter(_req, file, cb);
+}
+
 // ── Multer middleware (memory storage, validates types + sizes) ──────────
 
 export const avatarUpload = multer({
@@ -82,7 +98,7 @@ export const chatAudioUpload = multer({
 export const chatVideoUpload = multer({
   storage: memoryStorage,
   limits: { fileSize: 60 * 1024 * 1024 },
-  fileFilter: videoFilter,
+  fileFilter: videoOrThumbnailFilter,
 });
 
 function documentFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
