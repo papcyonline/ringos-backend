@@ -140,7 +140,14 @@ vi.mock('../../../shared/upload', () => {
       next();
     },
     fields: () => (req: any, _res: any, next: any) => {
-      req.files = { video: [{ ...fakeFile, mimetype: 'video/mp4' }], thumbnail: [{ ...fakeFile }] };
+      // Populate every field name our routes care about — the same
+      // fakeUpload is reused by chatVideoUpload (`video` + `thumbnail`)
+      // and chatDocumentUpload (`document` + `thumbnail`).
+      req.files = {
+        video: [{ ...fakeFile, mimetype: 'video/mp4' }],
+        document: [{ ...fakeFile, mimetype: 'application/pdf' }],
+        thumbnail: [{ ...fakeFile }],
+      };
       next();
     },
   };

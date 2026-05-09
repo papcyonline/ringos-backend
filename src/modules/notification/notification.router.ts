@@ -79,16 +79,6 @@ router.delete('/all', authenticate, async (req: AuthRequest, res: Response, next
   }
 });
 
-// DELETE /:id - Delete a single notification
-router.delete('/:id', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    await notificationService.deleteNotification(req.user!.userId, req.params.id as string);
-    res.json({ success: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
 // POST /fcm-token - Register FCM token
 router.post('/fcm-token', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -105,6 +95,8 @@ router.post('/fcm-token', authenticate, async (req: AuthRequest, res: Response, 
 });
 
 // DELETE /fcm-token - Remove FCM token
+// Must be registered before DELETE /:id, otherwise Express matches the
+// parameterized route first and treats "fcm-token" as a notification id.
 router.delete('/fcm-token', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { token } = req.body;
@@ -133,6 +125,7 @@ router.post('/voip-token', authenticate, async (req: AuthRequest, res: Response,
 });
 
 // DELETE /voip-token - Remove iOS VoIP push token
+// Must be registered before DELETE /:id (see DELETE /fcm-token).
 router.delete('/voip-token', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { token } = req.body;
@@ -140,6 +133,18 @@ router.delete('/voip-token', authenticate, async (req: AuthRequest, res: Respons
       return res.status(400).json({ error: 'Token is required' });
     }
     await notificationService.removeVoipToken(token);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /:id - Delete a single notification.
+// Registered last so the literal /fcm-token and /voip-token routes
+// above are not shadowed by the :id parameter.
+router.delete('/:id', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    await notificationService.deleteNotification(req.user!.userId, req.params.id as string);
     res.json({ success: true });
   } catch (err) {
     next(err);
