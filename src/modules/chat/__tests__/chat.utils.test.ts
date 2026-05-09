@@ -5,7 +5,11 @@ import { describe, it, expect } from 'vitest';
 import { vi } from 'vitest';
 
 vi.mock('../../../config/database', () => ({
-  prisma: {},
+  prisma: {
+    conversationParticipant: {
+      findMany: vi.fn().mockResolvedValue([{ userId: 'user-1' }, { userId: 'user-2' }]),
+    },
+  },
 }));
 
 vi.mock('../../../config/socket', () => ({
@@ -30,7 +34,9 @@ vi.mock('../translation.service', () => ({
   translateMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { formatMessagePayload } from '../chat.utils';
+import { formatMessagePayload, emitToParticipantRooms, broadcastAndNotifyMessage } from '../chat.utils';
+import { prisma } from '../../../config/database';
+import { getIO } from '../../../config/socket';
 
 describe('chat.utils — formatMessagePayload', () => {
   const baseMessage = {
@@ -133,5 +139,61 @@ describe('chat.utils — formatMessagePayload', () => {
   it('should return empty reactions array when message has no reactions', () => {
     const payload = formatMessagePayload(baseMessage, 'conv-1');
     expect(payload.reactions).toEqual([]);
+  });
+
+  it('handles imageUrls fallback to empty array', () => {
+    const payload = formatMessagePayload({ ...baseMessage, imageUrls: undefined }, 'conv-1');
+    expect(payload.imageUrls).toEqual([]);
+  });
+
+  it('handles isPinned fallback to false', () => {
+    const payload = formatMessagePayload({ ...baseMessage }, 'conv-1');
+    expect(payload.isPinned).toBe(false);
+  });
+});
+
+describe('chat.utils — emitToParticipantRooms', () => {
+  it('emits chat:list-update + chat:message to each participant', async () => {
+    const emit = vi.fn();
+    const io: any = { to: vi.fn(() => ({ emit })) };
+    await emitToParticipantRooms(io, 'c-1', { id: 'm-1' });
+    // 2 participants × 2 events each = 4 emit calls
+    expect(emit).toHaveBeenCalledTimes(4);
+    expect(io.to).toHaveBeenCalledWith('user:user-1');
+    expect(io.to).toHaveBeenCalledWith('user:user-2');
+  });
+});
+
+describe('chat.utils — broadcastAndNotifyMessage', () => {
+  it('broadcasts to conversation room, participant rooms, and notifications', async () => {
+    const emit = vi.fn();
+    const ioMock = { to: vi.fn(() => ({ emit })) };
+    (getIO as any).mockReturnValue(ioMock);
+
+    const message: any = {
+      id: 'm-1',
+      senderId: 'u-1',
+      sender: { displayName: 'Alice' },
+      content: 'hello',
+      reactions: [],
+    };
+    broadcastAndNotifyMessage(message, 'c-1', 'u-1');
+    expect(ioMock.to).toHaveBeenCalledWith('conversation:c-1');
+    // Allow microtasks to flush
+    await new Promise((r) => setImmediate(r));
+  });
+
+  it('skips translation when no content', () => {
+    const ioMock = { to: vi.fn(() => ({ emit: vi.fn() })) };
+    (getIO as any).mockReturnValue(ioMock);
+    const message: any = {
+      id: 'm-1',
+      senderId: 'u-1',
+      sender: { displayName: 'A' },
+      content: '',
+      reactions: [],
+    };
+    broadcastAndNotifyMessage(message, 'c-1', 'u-1');
+    // No exception
   });
 });

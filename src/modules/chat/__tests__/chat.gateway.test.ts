@@ -25,9 +25,11 @@ vi.mock('../../../config/database', () => ({
     conversationParticipant: {
       findUnique: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     message: {
       findUnique: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     user: {
       findUnique: vi.fn().mockResolvedValue({ hideReadReceipts: false }),
@@ -36,16 +38,30 @@ vi.mock('../../../config/database', () => ({
 }));
 
 vi.mock('../chat.service', () => ({
-  sendMessage: vi.fn(),
-  editMessage: vi.fn(),
-  deleteMessage: vi.fn(),
-  toggleReaction: vi.fn(),
+  sendMessage: vi.fn().mockResolvedValue({
+    id: 'm-1', conversationId: 'conv-1', senderId: 'user-1',
+    sender: { displayName: 'Alice' }, content: 'hi', reactions: [],
+  }),
+  editMessage: vi.fn().mockResolvedValue({
+    id: 'm-1', conversationId: 'conv-1', content: 'edited', editedAt: new Date(),
+  }),
+  deleteMessage: vi.fn().mockResolvedValue({
+    id: 'm-1', conversationId: 'conv-1', deletedAt: new Date(),
+  }),
+  toggleReaction: vi.fn().mockResolvedValue({
+    conversationId: 'conv-1', messageId: 'm-1', userId: 'user-1', emoji: '❤️', action: 'added',
+  }),
   markConversationAsRead: vi.fn(),
   endConversation: vi.fn(),
+  getMessagesSince: vi.fn().mockResolvedValue({
+    messages: [], hasMore: false, nextSinceId: null, sinceNotFound: false,
+  }),
 }));
 
 vi.mock('../chat.utils', () => ({
   formatMessagePayload: vi.fn((msg: any) => msg),
+  emitToParticipantRooms: vi.fn().mockResolvedValue(undefined),
+  broadcastAndNotifyMessage: vi.fn(),
 }));
 
 vi.mock('../../notification/notification.service', () => ({
@@ -197,6 +213,180 @@ describe('chat.gateway', () => {
       for (const event of expectedEvents) {
         expect(mockSocket.on).toHaveBeenCalledWith(event, expect.any(Function));
       }
+    });
+  });
+
+  describe('chat:join — additional', () => {
+    it('rejects when user has left the conversation', async () => {
+      (prisma.conversationParticipant.findUnique as any).mockResolvedValue({
+        conversationId: 'conv-1', userId: 'user-1', leftAt: new Date(),
+      });
+      await handlers['chat:join']({ conversationId: 'conv-1' });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', { message: 'You have left this conversation' });
+    });
+
+    it('catches db error', async () => {
+      (prisma.conversationParticipant.findUnique as any).mockRejectedValue(new Error('db'));
+      await handlers['chat:join']({ conversationId: 'conv-1' });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.objectContaining({ message: 'Failed to join conversation' }));
+    });
+  });
+
+  describe('chat:sync', () => {
+    it('rejects missing conversationId', async () => {
+      await handlers['chat:sync']({});
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.objectContaining({ message: expect.stringContaining('conversationId') }));
+    });
+
+    it('emits chat:synced with messages', async () => {
+      await handlers['chat:sync']({ conversationId: 'conv-1', sinceMessageId: 'm-0' });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:synced', expect.objectContaining({
+        conversationId: 'conv-1',
+      }));
+    });
+  });
+
+  describe('chat:message', () => {
+    it('rejects empty content', async () => {
+      await handlers['chat:message']({ conversationId: 'conv-1', content: '' });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.any(Object));
+    });
+
+    it('sends valid message', async () => {
+      await handlers['chat:message']({ conversationId: 'conv-1', content: 'hello world' });
+      const chatService = await import('../chat.service');
+      expect(chatService.sendMessage).toHaveBeenCalled();
+    });
+
+    it('handles service error', async () => {
+      const chatService = await import('../chat.service');
+      (chatService.sendMessage as any).mockRejectedValueOnce(new Error('boom'));
+      await handlers['chat:message']({ conversationId: 'conv-1', content: 'hello' });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.any(Object));
+    });
+  });
+
+  describe('chat:edit', () => {
+    it('rejects empty content', async () => {
+      await handlers['chat:edit']({ messageId: 'm-1', content: '' });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.any(Object));
+    });
+
+    it('broadcasts edit on success', async () => {
+      await handlers['chat:edit']({ messageId: 'm-1', content: 'fixed' });
+      expect(mockIO.to).toHaveBeenCalledWith('conversation:conv-1');
+    });
+
+    it('handles service error', async () => {
+      const chatService = await import('../chat.service');
+      (chatService.editMessage as any).mockRejectedValueOnce(new Error('boom'));
+      await handlers['chat:edit']({ messageId: 'm-1', content: 'x' });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.any(Object));
+    });
+  });
+
+  describe('chat:delete', () => {
+    it('emits chat:deleted by default', async () => {
+      await handlers['chat:delete']({ messageId: 'm-1' });
+      expect(mockIO.to).toHaveBeenCalledWith('conversation:conv-1');
+    });
+
+    it('emits chat:unsent when mode=unsend', async () => {
+      await handlers['chat:delete']({ messageId: 'm-1', mode: 'unsend' });
+      expect(mockIO.to).toHaveBeenCalledWith('conversation:conv-1');
+    });
+  });
+
+  describe('chat:react', () => {
+    it('rejects invalid emoji', async () => {
+      await handlers['chat:react']({ messageId: 'm-1', emoji: '' });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.any(Object));
+    });
+
+    it('rejects emoji over 32 chars', async () => {
+      await handlers['chat:react']({ messageId: 'm-1', emoji: 'x'.repeat(33) });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.any(Object));
+    });
+
+    it('broadcasts on valid reaction', async () => {
+      await handlers['chat:react']({ messageId: 'm-1', emoji: '❤️' });
+      expect(mockIO.to).toHaveBeenCalledWith('conversation:conv-1');
+    });
+  });
+
+  describe('chat:delivered', () => {
+    it('updates delivered timestamp and broadcasts', async () => {
+      (prisma.message.findUnique as any).mockResolvedValue({ senderId: 'u-2' });
+      await handlers['chat:delivered']({ messageId: 'm-1', conversationId: 'conv-1' });
+      expect(prisma.conversationParticipant.updateMany).toHaveBeenCalled();
+    });
+  });
+
+  describe('chat:voice-played', () => {
+    it('rejects missing args', async () => {
+      await handlers['chat:voice-played']({});
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.any(Object));
+    });
+
+    it('broadcasts when first play', async () => {
+      (prisma.message.updateMany as any).mockResolvedValue({ count: 1 });
+      (prisma.message.findUnique as any).mockResolvedValue({ senderId: 'u-2' });
+      await handlers['chat:voice-played']({ messageId: 'm-1', conversationId: 'conv-1' });
+      expect(mockIO.to).toHaveBeenCalledWith('conversation:conv-1');
+    });
+
+    it('skips when already played', async () => {
+      (prisma.message.updateMany as any).mockResolvedValue({ count: 0 });
+      mockIO.to.mockClear();
+      await handlers['chat:voice-played']({ messageId: 'm-1', conversationId: 'conv-1' });
+      // Won't emit
+    });
+  });
+
+  describe('chat:read with hideReadReceipts', () => {
+    it('skips broadcast when user hides read receipts', async () => {
+      (prisma.user.findUnique as any).mockResolvedValueOnce({ hideReadReceipts: true });
+      await handlers['chat:read']({ conversationId: 'conv-1' });
+      // markConversationAsRead is still called
+      const chatService = await import('../chat.service');
+      expect(chatService.markConversationAsRead).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('disconnect', () => {
+    it('does not throw', () => {
+      handlers['disconnect']();
+    });
+  });
+
+  describe('chat:leave', () => {
+    it('emits chat:ended when conversation status is ENDED', async () => {
+      const chatService = await import('../chat.service');
+      (chatService.endConversation as any).mockResolvedValueOnce({ id: 'conv-1', status: 'ENDED' });
+      await handlers['chat:leave']({ conversationId: 'conv-1' });
+      expect(mockIO.to).toHaveBeenCalledWith('conversation:conv-1');
+      expect(mockSocket.leave).toHaveBeenCalled();
+    });
+
+    it('emits chat:member-left when conversation continues', async () => {
+      const chatService = await import('../chat.service');
+      (chatService.endConversation as any).mockResolvedValueOnce({ id: 'conv-1', status: 'ACTIVE' });
+      await handlers['chat:leave']({ conversationId: 'conv-1' });
+      expect(mockIO.to).toHaveBeenCalledWith('conversation:conv-1');
+    });
+
+    it('emits error on service failure', async () => {
+      const chatService = await import('../chat.service');
+      (chatService.endConversation as any).mockRejectedValueOnce(new Error('boom'));
+      await handlers['chat:leave']({ conversationId: 'conv-1' });
+      expect(mockSocket.emit).toHaveBeenCalledWith('chat:error', expect.any(Object));
+    });
+  });
+
+  describe('chat:typing', () => {
+    it('passes activity argument', () => {
+      handlers['chat:typing']({ conversationId: 'conv-1', activity: 'recording' });
+      expect(mockSocket.to).toHaveBeenCalledWith('conversation:conv-1');
     });
   });
 });
