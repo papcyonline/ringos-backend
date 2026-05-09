@@ -709,21 +709,42 @@ router.post(
 );
 
 // POST /conversations/:conversationId/document - Send a document message
+//
+// Multipart with one required file (`document`) and one optional file
+// (`thumbnail`). For PDFs the client renders page 1 to a PNG and uploads
+// it alongside; the URL is persisted in metadata.documentThumbnailUrl so
+// the bubble can show a WhatsApp-style preview instead of a generic
+// red icon. Thumbnail is best-effort — if the client doesn't send one
+// (older client, encrypted PDF, render failure) the bubble falls back
+// to the file-type icon.
 router.post(
   '/conversations/:conversationId/document',
   authenticate,
-  chatDocumentUpload.single('document'),
+  chatDocumentUpload.fields([
+    { name: 'document', maxCount: 1 },
+    { name: 'thumbnail', maxCount: 1 },
+  ]),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      if (!req.file) {
+      const files = req.files as { [field: string]: Express.Multer.File[] } | undefined;
+      const documentFile = files?.document?.[0];
+      const thumbnailFile = files?.thumbnail?.[0];
+      if (!documentFile) {
         return res.status(400).json({ error: 'No document uploaded' });
       }
-      const documentUrl = await fileToChatDocumentUrl(req.file, (req.params.conversationId as string));
+      const conversationId = req.params.conversationId as string;
+      // Upload both in parallel — independent PUTs, no ordering.
+      const [documentUrl, documentThumbnailUrl] = await Promise.all([
+        fileToChatDocumentUrl(documentFile, conversationId),
+        thumbnailFile
+          ? fileToChatVideoThumbnailUrl(thumbnailFile, conversationId)
+          : Promise.resolve<string | undefined>(undefined),
+      ]);
       const caption = (req.body.caption as string) || '';
       const replyToId = req.body.replyToId as string | undefined;
 
       const message = await chatService.sendMessage(
-        (req.params.conversationId as string),
+        conversationId,
         req.user!.userId,
         caption,
         {
@@ -731,18 +752,19 @@ router.post(
           imageUrl: documentUrl,
           metadata: {
             isDocument: true,
-            fileName: req.file.originalname,
-            fileSize: req.file.size,
-            mimeType: req.file.mimetype,
+            fileName: documentFile.originalname,
+            fileSize: documentFile.size,
+            mimeType: documentFile.mimetype,
+            ...(documentThumbnailUrl ? { documentThumbnailUrl } : {}),
           },
         },
       );
 
-      broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
+      broadcastAndNotifyMessage(message, conversationId, req.user!.userId);
 
       // Auto-translate caption in background
       if (message.content) {
-        translateMessage(message.id, (req.params.conversationId as string), message.content).catch(() => {});
+        translateMessage(message.id, conversationId, message.content).catch(() => {});
       }
 
       res.status(201).json(message);
