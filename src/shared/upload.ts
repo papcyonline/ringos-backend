@@ -1,10 +1,17 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
 import * as cloudinaryService from './cloudinary.service';
 import { isDriveConfigured, uploadToDrive } from './gdrive.service';
-import { isR2Configured, uploadImageToR2, uploadVideoToR2 } from './r2.service';
+import {
+  isR2Configured,
+  uploadImageToR2,
+  uploadVideoToR2,
+  uploadToR2WithKey,
+  uploadToR2WithCustomKey,
+} from './r2.service';
 
 // Use memory storage — files live in buffer until uploaded to Cloudinary
 const memoryStorage = multer.memoryStorage();
@@ -135,6 +142,26 @@ export const chatDocumentUpload = multer({
 // ── Upload helpers — Cloudinary with local disk fallback ────────────────
 
 export async function fileToAvatarUrl(file: Express.Multer.File, userId: string): Promise<string> {
+  // 1. Try R2 with stable per-user key — overwrites the previous avatar
+  // so we don't leak old objects on every change. sharp resizes to the
+  // same 800x800 jpg Cloudinary used to produce, so the visual contract
+  // for downstream consumers is unchanged.
+  if (isR2Configured) {
+    try {
+      const resized = await sharp(file.buffer)
+        .rotate()
+        .resize(800, 800, { fit: 'cover' })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+      const result = await uploadToR2WithCustomKey(
+        resized,
+        `avatars/${userId}.jpg`,
+        'image/jpeg',
+      );
+      return result.url;
+    } catch (err) { /* R2/sharp failed, fall back */ }
+  }
+  // 2. Fallback to Cloudinary (kept so existing prod behavior survives if R2 trips)
   if (cloudinaryService.isCloudinaryConfigured) {
     const result = await cloudinaryService.uploadAvatar(file.buffer, userId);
     if (result) return result.secureUrl;
@@ -263,6 +290,26 @@ export async function fileToStoryImageUrl(
   file: Express.Multer.File,
   userId: string
 ): Promise<{ secureUrl: string; publicId: string }> {
+  // 1. Try R2. publicId here is the R2 key — story.service.ts cleanup
+  // discriminates by the `yomeet/` vs `stories/` prefix to route deletes
+  // to the right backend (lazy migration: old slides stay on Cloudinary).
+  if (isR2Configured) {
+    try {
+      const resized = await sharp(file.buffer)
+        .rotate()
+        .resize(1080, 1920, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+      const result = await uploadToR2WithKey(
+        resized,
+        `stories/${userId}`,
+        'image.jpg',
+        'image/jpeg',
+      );
+      return { secureUrl: result.url, publicId: result.key };
+    } catch (err) { /* R2/sharp failed, fall back */ }
+  }
+  // 2. Fallback to Cloudinary
   if (cloudinaryService.isCloudinaryConfigured) {
     const result = await cloudinaryService.uploadBuffer(file.buffer, {
       folder: `yomeet/stories/${userId}`,
@@ -283,6 +330,20 @@ export async function fileToStoryVideoUrl(
   file: Express.Multer.File,
   userId: string
 ): Promise<{ secureUrl: string; publicId: string; thumbnailUrl: string | null }> {
+  // 1. Try R2. No transcode (Render CPU can't handle ffmpeg cheaply) and no
+  // server-side thumbnail — frontend renders the first frame as poster.
+  if (isR2Configured) {
+    try {
+      const result = await uploadToR2WithKey(
+        file.buffer,
+        `stories/${userId}`,
+        file.originalname || 'video.mp4',
+        file.mimetype || 'video/mp4',
+      );
+      return { secureUrl: result.url, publicId: result.key, thumbnailUrl: null };
+    } catch (err) { /* R2 failed, fall back */ }
+  }
+  // 2. Fallback to Cloudinary
   if (cloudinaryService.isCloudinaryConfigured) {
     const result = await cloudinaryService.uploadBuffer(file.buffer, {
       folder: `yomeet/stories/${userId}`,

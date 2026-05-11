@@ -5,8 +5,26 @@ import { getBlockedUserIds } from '../spotlight/spotlight.service';
 import { isPro } from '../../shared/usage.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
+import { deleteFromR2 } from '../../shared/r2.service';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
 import { notifyFollowersOfNewStory, notifyStoryOwnerOfView } from './story.notify';
+
+/**
+ * Delete a story slide's underlying media from whichever storage backend
+ * actually holds it. The `cloudinaryId` column predates the R2 migration
+ * and now stores either:
+ *   - a Cloudinary publicId (legacy slides), prefixed `yomeet/`
+ *   - an R2 object key (new slides), prefixed `stories/`
+ * The prefix is the discriminator. Fire-and-forget, like the calls it
+ * replaced — failures shouldn't block the user-facing delete.
+ */
+function deleteSlideMedia(cloudinaryId: string, type: 'IMAGE' | 'VIDEO' | 'TEXT'): Promise<unknown> {
+  if (cloudinaryId.startsWith('stories/')) {
+    return deleteFromR2(cloudinaryId);
+  }
+  const resourceType = type === 'VIDEO' ? 'video' : 'image';
+  return cloudinaryService.deleteFile(cloudinaryId, resourceType);
+}
 
 export const ALLOWED_REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '👏'] as const;
 const ALLOWED_REACTION_SET = new Set<string>(ALLOWED_REACTION_EMOJIS);
@@ -883,11 +901,9 @@ export async function deleteSlide(slideId: string, userId: string) {
   // (and 500 on cloudinary slowness / outage), which was likely the cause
   // of the "Failed to delete" toast users were hitting.
   if (slide.cloudinaryId) {
-    const resourceType = slide.type === 'VIDEO' ? 'video' : 'image';
-    cloudinaryService
-      .deleteFile(slide.cloudinaryId, resourceType)
+    deleteSlideMedia(slide.cloudinaryId, slide.type as 'IMAGE' | 'VIDEO' | 'TEXT')
       .catch((err) =>
-        logger.warn({ err, publicId: slide.cloudinaryId }, 'Cloudinary slide delete failed (background)'),
+        logger.warn({ err, mediaId: slide.cloudinaryId }, 'Slide media delete failed (background)'),
       );
   }
 
@@ -934,11 +950,10 @@ export async function deleteStory(storyId: string, userId: string) {
   // Delete from DB first, then clean up cloudinary (fire-and-forget)
   await prisma.story.delete({ where: { id: storyId } });
 
-  // Clean up cloudinary assets — don't block on failures
+  // Clean up media assets (R2 or Cloudinary) — don't block on failures
   for (const slide of story.slides) {
     if (slide.cloudinaryId) {
-      const resourceType = slide.type === 'VIDEO' ? 'video' : 'image';
-      cloudinaryService.deleteFile(slide.cloudinaryId, resourceType).catch(() => {});
+      deleteSlideMedia(slide.cloudinaryId, slide.type as 'IMAGE' | 'VIDEO' | 'TEXT').catch(() => {});
     }
   }
   logger.info({ storyId, userId }, 'Story deleted');
@@ -960,15 +975,14 @@ export async function cleanupExpiredStories(): Promise<number> {
 
   if (expired.length === 0) return 0;
 
-  // Delete cloudinary assets — fire concurrently per story to avoid serial N+1
+  // Delete media assets (R2 or Cloudinary) — fire concurrently per story to avoid serial N+1
   await Promise.allSettled(
     expired.flatMap((story) =>
       story.slides
         .filter((slide) => slide.cloudinaryId)
-        .map((slide) => {
-          const resourceType = slide.type === 'VIDEO' ? 'video' : 'image';
-          return cloudinaryService.deleteFile(slide.cloudinaryId!, resourceType);
-        }),
+        .map((slide) =>
+          deleteSlideMedia(slide.cloudinaryId!, slide.type as 'IMAGE' | 'VIDEO' | 'TEXT'),
+        ),
     ),
   );
 

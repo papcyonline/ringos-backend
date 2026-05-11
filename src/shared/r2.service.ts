@@ -114,6 +114,31 @@ export async function uploadToR2WithKey(
 }
 
 /**
+ * Upload to R2 at a caller-specified key (no UUID). Use when you need
+ * upsert-by-key semantics — avatar uploads, for example, overwrite
+ * `avatars/<userId>.jpg` so the user only ever has one avatar object
+ * in storage instead of leaking a new one on every change.
+ */
+export async function uploadToR2WithCustomKey(
+  buffer: Buffer,
+  key: string,
+  contentType: string,
+): Promise<{ url: string; key: string }> {
+  const client = getClient();
+  await client.send(new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  }));
+
+  const url = publicUrl
+    ? `${publicUrl}/${key}`
+    : `https://${bucketName}.${accountId}.r2.dev/${key}`;
+  return { url, key };
+}
+
+/**
  * Delete an object from R2 by key. Best-effort — caller can ignore errors.
  */
 export async function deleteFromR2(key: string): Promise<void> {
