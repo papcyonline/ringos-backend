@@ -525,12 +525,23 @@ export async function sendCallPush(
 export async function sendCallCancelPush(
   userId: string,
   callId: string,
+  options: { excludeToken?: string } = {},
 ) {
   // Match sendCallPush: only target the most recent token so a cancel
   // can't fan out to stale tokens and trigger extra dedup-throwaway
   // CallKit flashes.
+  //
+  // `excludeToken` skips the answering device's own token. Without this,
+  // CallKit on the answering device receives a cancel push immediately
+  // after slide-to-answer, runs the iOS-required show+end dedup dance,
+  // and displays the call as "Declined" even though the call actually
+  // connected fine — receiver hears the caller after unlock. Excluding
+  // the answerer's token closes that loop.
   const voipTokens = await prisma.voipToken.findMany({
-    where: { userId },
+    where: {
+      userId,
+      ...(options.excludeToken ? { token: { not: options.excludeToken } } : {}),
+    },
     orderBy: { createdAt: 'desc' },
     take: 1,
     select: { token: true },

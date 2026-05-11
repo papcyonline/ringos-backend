@@ -268,7 +268,16 @@ router.post(
       const callId = req.params.callId as string;
       if (!callId) return res.status(400).json({ message: 'callId required' });
 
-      const result = await answerCall(getIO(), userId, callId);
+      // Optional: caller's own VoIP token, so backend's cancel-push to
+      // siblings doesn't loop back to this device. Without this, CallKit
+      // shows "Declined" on the lock screen (the call actually connects,
+      // but the cancel-push triggers a show+end on the answerer's CallKit
+      // which iOS displays as a declined call).
+      const excludeVoipToken = typeof req.body?.voipToken === 'string'
+        ? req.body.voipToken
+        : undefined;
+
+      const result = await answerCall(getIO(), userId, callId, { excludeVoipToken });
       if (!result.ok) {
         const status = result.code === 'CALL_NOT_FOUND' ? 404
                      : result.code === 'ALREADY_ANSWERED' ? 409

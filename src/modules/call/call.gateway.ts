@@ -233,6 +233,7 @@ export async function answerCall(
   io: Server,
   userId: string,
   callId: string,
+  options: { excludeVoipToken?: string } = {},
 ): Promise<{ ok: true; livekitToken: string; livekitUrl: string } | { ok: false; code: string; message: string }> {
   const call = await callState.getCall(callId);
   if (!call || !call.participantIds.has(userId)) {
@@ -260,9 +261,10 @@ export async function answerCall(
     callId,
     reason: 'answered_elsewhere',
   });
-  sendCallCancelPush(userId, callId).catch((err) => {
-    logger.error({ err, userId, callId }, 'Failed to send VoIP cancel push to answerer siblings');
-  });
+  sendCallCancelPush(userId, callId, { excludeToken: options.excludeVoipToken })
+    .catch((err) => {
+      logger.error({ err, userId, callId }, 'Failed to send VoIP cancel push to answerer siblings');
+    });
 
   // CallLog → COMPLETED (write-behind).
   callLogWriter.enqueue(callId, () =>
