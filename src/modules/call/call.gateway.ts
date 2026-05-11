@@ -213,6 +213,101 @@ export async function createDirectCall(params: {
   return callId;
 }
 
+/**
+ * Shared accept-call logic used by BOTH the `call:answer` socket handler
+ * and the `POST /api/call/:callId/answer` REST endpoint.
+ *
+ * The REST endpoint exists to give cold-launch slide-to-answer a path
+ * that doesn't depend on the socket being connected. On iOS, when the
+ * user slides to answer from a locked + killed state, the Flutter
+ * socket can take 3-8s to handshake; meanwhile the call:answer emit
+ * fires before `_socket` is non-null and is silently dropped — backend
+ * never knows the user answered, both sides see "declined". HTTP from
+ * a cold app can be issued the moment the access token is in memory,
+ * with no socket dependency.
+ *
+ * Both call paths arrive here. First-answer-wins lock makes duplicate
+ * deliveries safe.
+ */
+export async function answerCall(
+  io: Server,
+  userId: string,
+  callId: string,
+): Promise<{ ok: true; livekitToken: string; livekitUrl: string } | { ok: false; code: string; message: string }> {
+  const call = await callState.getCall(callId);
+  if (!call || !call.participantIds.has(userId)) {
+    return { ok: false, code: 'CALL_NOT_FOUND', message: 'Call not found' };
+  }
+
+  const firstAnswer = await callState.markAnswered(callId, userId, new Date());
+  if (!call.isGroup && !firstAnswer) {
+    // Not an error from the user's perspective if THIS device answered
+    // first via a different transport (e.g. socket emit landed before
+    // the REST POST). Surface as "already answered" so the client can
+    // stay in the answered state instead of bailing.
+    return { ok: false, code: 'ALREADY_ANSWERED', message: 'Call already answered' };
+  }
+
+  await callState.mapUserToCall(userId, callId);
+  if (firstAnswer) {
+    callState.clearUnansweredTimer(callId);
+    clearPushRetryTimer(callId, userId);
+  }
+  if (firstAnswer && !call.answeredAt) call.answeredAt = new Date();
+
+  // Cancel siblings (same user, other devices).
+  io.to(`user:${userId}`).emit('call:cancel', {
+    callId,
+    reason: 'answered_elsewhere',
+  });
+  sendCallCancelPush(userId, callId).catch((err) => {
+    logger.error({ err, userId, callId }, 'Failed to send VoIP cancel push to answerer siblings');
+  });
+
+  // CallLog → COMPLETED (write-behind).
+  callLogWriter.enqueue(callId, () =>
+    prisma.callLog.update({
+      where: { callId },
+      data: { status: 'COMPLETED' },
+    }),
+  );
+
+  const answerer = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { displayName: true, avatarUrl: true },
+  });
+
+  let livekitToken: string;
+  try {
+    livekitToken = await generateCallToken(userId, callId, answerer?.displayName ?? undefined);
+  } catch (err) {
+    logger.error({ err, callId }, 'Failed to generate LiveKit token for answering participant');
+    return { ok: false, code: 'TOKEN_GENERATION_FAILED', message: 'Failed to generate LiveKit token' };
+  }
+
+  // Notify caller.
+  io.to(`user:${call.initiatorId}`).emit('call:answered', {
+    callId,
+    userId,
+    displayName: answerer?.displayName ?? 'Unknown',
+    avatarUrl: answerer?.avatarUrl ?? null,
+    isLiveKit: true,
+  });
+
+  // Group calls: notify already-joined participants.
+  if (call.isGroup) {
+    io.to(`call:${callId}`).emit('call:participant-joined', {
+      callId,
+      userId,
+      displayName: answerer?.displayName ?? 'Unknown',
+      avatarUrl: answerer?.avatarUrl ?? null,
+    });
+  }
+
+  logger.info({ userId, callId, transport: 'shared' }, 'Call answered');
+  return { ok: true, livekitToken, livekitUrl: LIVEKIT_URL };
+}
+
 export async function registerCallHandlers(io: Server, socket: Socket): Promise<void> {
   const userId: string = (socket as any).userId;
 
@@ -632,99 +727,19 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
    */
   socket.on('call:answer', async (data: { callId: string }) => {
     try {
-      const { callId } = data;
-      const call = await callState.getCall(callId);
-
-      if (!call || !call.participantIds.has(userId)) {
-        socket.emit('call:error', { message: 'Call not found' });
+      const result = await answerCall(io, userId, data.callId);
+      if (!result.ok) {
+        socket.emit('call:error', { message: result.message, code: result.code });
         return;
       }
-
-      // First-answer-wins lock — atomic across backend instances when the
-      // store is Redis-backed. For group calls, later answerers are allowed
-      // to join; markAnswered returns false for them but that's fine.
-      const firstAnswer = await callState.markAnswered(callId, userId, new Date());
-      if (!call.isGroup && !firstAnswer) {
-        socket.emit('call:error', {
-          message: 'Call already answered on another device',
-          code: 'ALREADY_ANSWERED',
-        });
-        return;
-      }
-
-      await callState.mapUserToCall(userId, callId);
-      socket.join(`call:${callId}`);
-      if (firstAnswer) {
-        callState.clearUnansweredTimer(callId);
-        // Belt-and-suspenders: cancel any in-flight push retry. If we were
-        // racing the receiver's call:ringing ack and the user answered
-        // anyway, we don't want a stale retry firing 20s later and waking
-        // CallKit with a dedup-throwaway flash for an already-answered call.
-        clearPushRetryTimer(callId, userId);
-      }
-
-      // Keep the local `call` snapshot consistent for downstream branches.
-      if (firstAnswer && !call.answeredAt) call.answeredAt = new Date();
-
-      // Tell the answerer's other signed-in devices to stop ringing.
-      // socket.to('user:${userId}') automatically excludes this socket.
-      socket.to(`user:${userId}`).emit('call:cancel', {
-        callId,
-        reason: 'answered_elsewhere',
+      // Join the call room so future call:* events scoped to call:<id>
+      // (e.g. participant-joined) reach this socket.
+      socket.join(`call:${data.callId}`);
+      socket.emit('call:livekit-token', {
+        callId: data.callId,
+        token: result.livekitToken,
+        url: result.livekitUrl,
       });
-      // Also send a VoIP cancel push. Sibling devices may have a suspended
-      // socket (iOS backgrounded, CallKit showing) and would otherwise keep
-      // ringing until the server-side timeout. The VoIP push dismisses
-      // CallKit on iOS even when the Flutter app is killed.
-      sendCallCancelPush(userId, callId).catch((err) => {
-        logger.error({ err, userId, callId }, 'Failed to send VoIP cancel push to answerer siblings');
-      });
-
-      // Update CallLog to COMPLETED — write-behind, ordered after the
-      // initial create.
-      callLogWriter.enqueue(callId, () =>
-        prisma.callLog.update({
-          where: { callId },
-          data: { status: 'COMPLETED' },
-        }),
-      );
-
-      // Fetch answerer's display info for event payloads
-      const answerer = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { displayName: true, avatarUrl: true },
-      });
-
-      // Generate LiveKit token for the answering user. ALL calls route
-      // through LiveKit SFU now — no P2P WebRTC branch.
-      try {
-        const token = await generateCallToken(userId, callId, answerer?.displayName ?? undefined);
-        socket.emit('call:livekit-token', { callId, token, url: LIVEKIT_URL });
-        logger.info({ userId, callId }, 'LiveKit token sent to answering participant');
-      } catch (err) {
-        logger.error({ err, callId }, 'Failed to generate LiveKit token for answering participant');
-      }
-
-      // Notify the initiator
-      io.to(`user:${call.initiatorId}`).emit('call:answered', {
-        callId,
-        userId,
-        displayName: answerer?.displayName ?? 'Unknown',
-        avatarUrl: answerer?.avatarUrl ?? null,
-        isLiveKit: true,
-      });
-
-      // For group calls: also notify already-joined participants
-      if (call.isGroup) {
-        socket.to(`call:${callId}`).emit('call:participant-joined', {
-          callId,
-          userId,
-          displayName: answerer?.displayName ?? 'Unknown',
-          avatarUrl: answerer?.avatarUrl ?? null,
-        });
-      }
-
-      logger.info({ userId, callId }, 'Call answered');
     } catch (error) {
       logger.error({ error, userId }, 'Error answering call');
       socket.emit('call:error', { message: 'Failed to answer call' });

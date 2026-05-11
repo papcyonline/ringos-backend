@@ -5,6 +5,8 @@ import { AuthRequest } from '../../shared/types';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
 import { prisma } from '../../config/database';
+import { answerCall } from './call.gateway';
+import { getIO } from '../../config/socket';
 
 const router = Router();
 
@@ -243,6 +245,44 @@ router.post(
     } catch (err) {
       logger.error({ err }, 'Failed to save call quality rating');
       res.status(500).json({ message: 'Failed to save rating' });
+    }
+  }
+);
+
+// ─── Answer call (REST) ──────────────────────────────────────────────────
+//
+// Mirror of the `call:answer` socket handler. Exists because socket-based
+// answer is unreliable on iOS cold-launch slide-to-answer: the Flutter
+// SocketClient's `_socket` is null while keychain-backed `getToken()`
+// resolves (1-4s on a freshly-killed app), and `_socket?.emit(...)` in
+// that window is silently dropped. HTTP doesn't depend on a long-lived
+// socket and has a real status code on failure, so this is the
+// authoritative accept path. Frontend fires this immediately on accept
+// and uses the returned LiveKit token to connect to the room directly.
+router.post(
+  '/:callId/answer',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.userId;
+      const callId = req.params.callId as string;
+      if (!callId) return res.status(400).json({ message: 'callId required' });
+
+      const result = await answerCall(getIO(), userId, callId);
+      if (!result.ok) {
+        const status = result.code === 'CALL_NOT_FOUND' ? 404
+                     : result.code === 'ALREADY_ANSWERED' ? 409
+                     : 500;
+        return res.status(status).json({ code: result.code, message: result.message });
+      }
+      res.json({
+        callId,
+        livekitToken: result.livekitToken,
+        livekitUrl: result.livekitUrl,
+      });
+    } catch (err) {
+      logger.error({ err }, 'Failed to answer call via REST');
+      res.status(500).json({ message: 'Failed to answer call' });
     }
   }
 );
