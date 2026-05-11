@@ -455,10 +455,15 @@ describe('call.gateway — registerCallHandlers', () => {
       });
       mockCallState.markAnswered.mockResolvedValueOnce(true);
       mockPrisma.user.findUnique.mockResolvedValue({ displayName: 'Alice' });
+      const io = makeIO();
       const { socket, handlers } = makeSocket();
-      await registerCallHandlers(makeIO(), socket);
+      await registerCallHandlers(io, socket);
       await handlers['call:answer']({ callId: 'c-1' });
-      expect(socket.to).toHaveBeenCalledWith('call:c-1');
+      // After the REST/socket refactor, participant-joined is emitted via
+      // `io.to(call:<id>)` (so it works for the REST accept path that has
+      // no Socket of its own). The new joiner's socket is added to the
+      // room AFTER the emit, so they don't receive their own message.
+      expect(io.to).toHaveBeenCalledWith('call:c-1');
     });
   });
 
