@@ -7,6 +7,9 @@ const {
   mockIsR2Configured,
   mockUploadImageToR2,
   mockUploadVideoToR2,
+  mockUploadToR2,
+  mockUploadToR2WithKey,
+  mockUploadToR2WithCustomKey,
   mockExistsSync,
   mockMkdirSync,
   mockWriteFileSync,
@@ -23,6 +26,9 @@ const {
   mockIsR2Configured: { value: false },
   mockUploadImageToR2: vi.fn(),
   mockUploadVideoToR2: vi.fn(),
+  mockUploadToR2: vi.fn(),
+  mockUploadToR2WithKey: vi.fn(),
+  mockUploadToR2WithCustomKey: vi.fn(),
   mockExistsSync: vi.fn(() => true),
   mockMkdirSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
@@ -37,7 +43,22 @@ vi.mock('../r2.service', () => ({
   get isR2Configured() { return mockIsR2Configured.value; },
   uploadImageToR2: mockUploadImageToR2,
   uploadVideoToR2: mockUploadVideoToR2,
+  uploadToR2: mockUploadToR2,
+  uploadToR2WithKey: mockUploadToR2WithKey,
+  uploadToR2WithCustomKey: mockUploadToR2WithCustomKey,
 }));
+// Stub sharp — it's only invoked on the R2 path; tests that exercise
+// that path set return values explicitly. The default chain returns the
+// input buffer untouched so non-R2 fallback tests remain deterministic.
+vi.mock('sharp', () => {
+  const chain: any = {
+    rotate: () => chain,
+    resize: () => chain,
+    jpeg: () => chain,
+    toBuffer: async () => Buffer.from('resized'),
+  };
+  return { default: () => chain };
+});
 vi.mock('uuid', () => ({ v4: () => 'uuid-x' }));
 vi.mock('fs', () => ({
   default: {
