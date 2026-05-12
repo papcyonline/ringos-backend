@@ -55,6 +55,7 @@ vi.mock('../../../shared/upload', () => ({
   storyMediaUpload: {
     single: () => (_req: any, _res: any, next: any) => next(),
     array: () => (_req: any, _res: any, next: any) => next(),
+    fields: () => (_req: any, _res: any, next: any) => next(),
   },
 }));
 vi.mock('../../../shared/usage.service', () => ({
