@@ -1015,6 +1015,13 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
       }
 
       socket.to(`call:${callId}`).emit('call:ended', { callId, endedBy: userId });
+      // Belt-and-suspenders: also emit directly to each participant's user room.
+      // Callee may have answered via REST (cold-launch) and never joined call:${callId}.
+      for (const pid of call.participantIds) {
+        if (pid !== userId) {
+          io.to(`user:${pid}`).emit('call:ended', { callId, endedBy: userId });
+        }
+      }
       await finalizeCallEnd(io, callId, call);
       logger.info({ userId, callId }, 'Call ended');
     } catch (error) {
@@ -1098,6 +1105,11 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           return;
         }
         io.to(`call:${callId}`).emit('call:ended', { callId, endedBy: userId });
+        for (const pid of currentCall.participantIds) {
+          if (pid !== userId) {
+            io.to(`user:${pid}`).emit('call:ended', { callId, endedBy: userId });
+          }
+        }
         await finalizeCallEnd(io, callId, currentCall);
         logger.info({ userId, callId }, 'Call ended after disconnect grace period expired');
       }
