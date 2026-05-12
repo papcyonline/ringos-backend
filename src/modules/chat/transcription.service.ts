@@ -7,6 +7,7 @@ import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
 import { downloadFromDrive } from '../../shared/gdrive.service';
 import { checkTranscription, incrementTranscription } from '../../shared/usage.service';
+import { AppError } from '../../shared/errors';
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
@@ -109,7 +110,7 @@ export async function transcribeMessage(
   // Gate non-cached transcriptions behind daily limit
   const txCheck = await checkTranscription(userId);
   if (!txCheck.allowed) {
-    throw Object.assign(new Error('Daily transcription limit reached'), { code: 'TRANSCRIPTION_LIMIT' });
+    throw new AppError(429, 'Daily transcription limit reached', 'TRANSCRIPTION_LIMIT');
   }
 
   // Resolve audio bytes regardless of which storage tier hosts the file
@@ -117,15 +118,35 @@ export async function transcribeMessage(
   const audio = await fetchAudioBytes(message.audioUrl);
   if (!audio) throw new Error('Failed to download audio');
 
-  // Send to Whisper
+  // Send to Whisper with verbose_json so we can inspect per-segment
+  // no_speech_prob to detect audio Whisper cannot make sense of.
   const file = await toFile(audio.buffer, audio.filename, { type: audio.mimeType });
   const result = await openai.audio.transcriptions.create({
     model: 'whisper-1',
     file,
-  });
+    response_format: 'verbose_json',
+  }) as { text: string; segments?: Array<{ no_speech_prob: number }> };
 
-  const transcription = result.text;
+  const transcription = result.text?.trim();
   if (!transcription) throw new Error('Transcription returned empty');
+
+  // Detect unintelligible audio: Whisper assigns high no_speech_prob when
+  // it cannot find actual speech in the segment (noise, silence, or a
+  // language it genuinely cannot decode). Average > 0.7 across all
+  // segments is a reliable signal that nothing meaningful was understood.
+  const segments = result.segments;
+  if (segments && segments.length > 0) {
+    const avgNoSpeech = segments.reduce((sum, s) => sum + s.no_speech_prob, 0) / segments.length;
+    if (avgNoSpeech > 0.7) {
+      throw new AppError(422, 'Language not understood', 'LANGUAGE_NOT_UNDERSTOOD');
+    }
+  }
+
+  // Also catch the common Whisper hallucination pattern where it returns
+  // only punctuation / whitespace for audio it cannot decode.
+  if (/^[\s.,!?…\-–—]+$/.test(transcription)) {
+    throw new AppError(422, 'Language not understood', 'LANGUAGE_NOT_UNDERSTOOD');
+  }
 
   // Track usage after successful transcription
   await incrementTranscription(userId);
