@@ -126,11 +126,12 @@ router.get(
 router.post(
   '/',
   authenticate,
-  storyMediaUpload.array('media', 10),
+  storyMediaUpload.fields([{ name: 'media', maxCount: 10 }, { name: 'thumbnails', maxCount: 10 }]),
   async (req: AuthRequest, res: Response) => {
     try {
       const userId = req.user!.userId;
-      const files = req.files as Express.Multer.File[];
+      const fieldFiles = req.files as Record<string, Express.Multer.File[]> | undefined;
+      const files = fieldFiles?.['media'] ?? [];
 
       if (!files || files.length === 0) {
         return res.status(400).json({ error: 'At least one media file is required' });
@@ -177,10 +178,12 @@ router.post(
       const visibility = (req.body.visibility as string | undefined) === 'PUBLIC'
           ? 'PUBLIC' as const
           : 'FRIENDS' as const;
+      const thumbnailFiles = fieldFiles?.['thumbnails'];
       const story = await createStory(userId, files, slidesMetadata, {
         isPermanent,
         channelId,
         visibility,
+        thumbnailFiles,
       });
 
       // Notify all connected users so their feed refreshes instantly

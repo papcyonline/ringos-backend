@@ -72,6 +72,7 @@ export async function createStory(
     isPermanent?: boolean;
     channelId?: string;
     visibility?: 'FRIENDS' | 'PUBLIC';
+    thumbnailFiles?: Express.Multer.File[];
   },
 ) {
   // If posting as a channel, verify user is admin
@@ -91,6 +92,7 @@ export async function createStory(
     ? new Date('2099-12-31T23:59:59Z')
     : new Date(Date.now() + hoursToExpire * 60 * 60 * 1000);
 
+  let videoCount = 0;
   const uploads = await Promise.all(
     files.map(async (file, index) => {
       const meta = slidesMetadata?.[index];
@@ -107,11 +109,21 @@ export async function createStory(
           Object.keys(metaBlob).length > 0 ? metaBlob : undefined;
       if (slideType === 'VIDEO') {
         const result = await fileToStoryVideoUrl(file, userId);
+        // Use client-provided thumbnail when R2 can't generate one server-side.
+        // thumbnailFiles is indexed by video order (not slide order), so use
+        // a dedicated counter rather than the overall slide index.
+        let thumbnailUrl = result.thumbnailUrl || null;
+        const thumbFile = options?.thumbnailFiles?.[videoCount];
+        videoCount++;
+        if (!thumbnailUrl && thumbFile) {
+          const thumbResult = await fileToStoryImageUrl(thumbFile, userId);
+          thumbnailUrl = thumbResult.secureUrl;
+        }
         return {
           type: 'VIDEO' as const,
           mediaUrl: result.secureUrl,
           cloudinaryId: result.publicId,
-          thumbnailUrl: result.thumbnailUrl || null,
+          thumbnailUrl,
           caption: meta?.caption ?? null,
           duration: meta?.duration ?? null,
           position,
