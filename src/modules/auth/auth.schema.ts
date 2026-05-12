@@ -41,7 +41,7 @@ export const anonymousAuthSchema = z.object({
 });
 
 export const registerSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email('Please enter a valid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters')
     .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
@@ -49,12 +49,12 @@ export const registerSchema = z.object({
 });
 
 export const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email('Please enter a valid email address'),
+  password: z.string().min(1, 'Password is required'),
 });
 
 export const usernameSchema = z.object({
-  username: z.string().min(3).max(12),
+  username: z.string().min(3, 'Username must be at least 3 characters').max(12, 'Username can be at most 12 characters'),
   // Bio min lowered from 10 → 5 to match the frontend nudge for shorter
   // bios. Single-word bios like "hello" now pass. Readability gate is
   // shared with the frontend (see isReadableText above).
@@ -73,7 +73,7 @@ export const usernameSchema = z.object({
   // Location optional — same Apple rejection forced this. Frontend
   // shows the field without an "(optional)" tag as a soft nudge but
   // doesn't gate submission on it.
-  location: z.string().min(2).max(100).optional(),
+  location: z.string().min(2, 'Please enter a valid location').max(100).optional(),
   // Profession and dateOfBirth removed entirely from signup per Apple
   // Guideline 5.1.1(v) (build 136 / 138 rejections). DB columns remain
   // for existing users and for the (separate) profile-edit endpoint to

@@ -12,14 +12,15 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
   }
 
   if (err instanceof ZodError) {
+    const details = err.errors.map((e) => ({
+      path: e.path.join('.'),
+      message: e.message,
+    }));
     return res.status(400).json({
       error: {
-        message: 'Validation error',
+        message: details[0]?.message ?? 'Validation error',
         code: 'VALIDATION_ERROR',
-        details: err.errors.map((e) => ({
-          path: e.path.join('.'),
-          message: e.message,
-        })),
+        details,
       },
     });
   }
