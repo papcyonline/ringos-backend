@@ -557,6 +557,14 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           'Emitting call:incoming to target user room'
         );
 
+        // iOS users (those with VoIP tokens) use PushKit-only architecture:
+        // VoIP push fires immediately so AppDelegate always drives CallKit,
+        // regardless of whether the app is foreground/background/killed.
+        // Android users keep the socket-gate: skip FCM if the app acks via
+        // socket (avoids a duplicate in-app banner + notification).
+        const voipCount = await prisma.voipToken.count({ where: { userId: targetId } });
+        const isIosUser = voipCount > 0;
+
         if (isOnline) {
           io.to(`user:${targetId}`).emit('call:incoming', {
             callId,
@@ -575,17 +583,16 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
               })),
           });
 
-          // Wait for the receiver's `call:ringing` ack. Their app acks
-          // within ~25-100ms when the socket event arrives, so PUSH_GATE_MS
-          // is plenty. If they ack, the in-app overlay handles the UX and
-          // we skip the VoIP push (no CallKit flash on iOS).
-          const acked = await callState.waitForRingingAck(callId, targetId, PUSH_GATE_MS);
-          if (acked) return;
+          if (!isIosUser) {
+            // Android: wait for ringing ack; skip FCM push if the in-app
+            // banner is already showing (avoids duplicate incoming-call UI).
+            const acked = await callState.waitForRingingAck(callId, targetId, PUSH_GATE_MS);
+            if (acked) return;
+          }
+          // iOS: fall through — send VoIP push now regardless of socket ack.
         }
 
-        // Receiver isn't reachable via socket (offline, killed, or socket
-        // alive-but-app-frozen — the latter happens briefly on iOS background).
-        // Wake their device with a VoIP push (iOS) / FCM data push (Android).
+        // Send push: always for iOS (VoIP), fallback for offline Android (FCM).
         const pushPayload = {
           callId,
           conversationId,
@@ -595,16 +602,12 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
           callerAvatar: caller?.avatarUrl,
           isGroup: isGroup ?? false,
         };
-        // Stamp BEFORE the fire-and-forget so a fast cancel path can see
-        // that a push is in flight (used by call:end to suppress a
-        // cancel-only VoIP that would race ahead of the original).
         await callState.markPushEnqueued(callId, targetId, Date.now());
         sendCallPush(targetId, pushPayload).catch((err) => {
           logger.error({ err, targetId, callId }, 'Failed to send call push notification');
         });
-        // Receipt-driven retry: if the recipient still doesn't ack ringing
-        // within PUSH_ACK_WINDOW_MS, resend once. After a second silent
-        // window, emit call:unavailable to the caller.
+        // Receipt-driven retry: resend once if ringing isn't acked within
+        // PUSH_ACK_WINDOW_MS (handles rare APNS delivery delays).
         schedulePushRetry(io, callId, targetId, userId, pushPayload);
       }));
 
