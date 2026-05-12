@@ -41,16 +41,18 @@ const PUSH_ACK_WINDOW_MS = 20_000;
  * CallKit flash that iOS forces every VoIP push to display (Apple won't let
  * us suppress it once the push lands; the only fix is to not send it).
  *
- * 1500ms is generous: the typical RTT + state-machine + Redis poll round-trip
- * sits at ~100-300ms on healthy networks, but cross-region calls on weak
- * cellular or Wi-Fi can reach 500-800ms, and we have to beat that comfortably
- * to make the gate user-visible-zero-flash. Background receivers (genuinely
- * offline) wait at most 1.5s before the VoIP push wakes their device, which
- * is below the threshold of perception against the existing call-ring delay.
- * Mirrors the WebSocket-first / push-fallback pattern used by Telegram,
- * Signal, and Wazo-style platforms.
+ * 3000ms balances foreground-zero-flash against background-wake-latency.
+ * Typical RTT + state-machine + Redis poll round-trip sits at ~100-300ms on
+ * healthy networks, but iOS sockets that just resumed from background, weak
+ * cellular, and Render cold-starts can push the ack past 1.5s — when the
+ * gate expires the server fires a VoIP push and the receiver sees CallKit
+ * flash on top of the in-app banner they already answered (the "duplicate
+ * banner that drops" symptom). 3000ms covers the long tail of foreground-
+ * socket recoveries while still firing the push within perceptual ring
+ * latency for genuinely-offline receivers. Mirrors the WebSocket-first /
+ * push-fallback pattern used by Telegram, Signal, and Wazo-style platforms.
  */
-const PUSH_GATE_MS = 1500;
+const PUSH_GATE_MS = 3000;
 
 /**
  * Per-instance retry-timer registry. Timers can't cross Node processes, but

@@ -277,6 +277,41 @@ router.post(
         ? req.body.voipToken
         : undefined;
 
+      // Refresh / register this voipToken AND prune stale rows for the same
+      // user BEFORE answerCall fires the sibling cancel-push. Two cold-launch
+      // races we close here:
+      //   1. Flutter's auth-provider registers the voipToken async; on a
+      //      slide-to-answer from killed state the /answer POST can land
+      //      before that registration completes. Without an entry in DB,
+      //      the `token: { not: excludeVoipToken }` filter in
+      //      sendCallCancelPush excludes nothing → cancel push goes to the
+      //      most-recent (often stale) token → iOS shows "Declined".
+      //   2. Reinstalls leave behind stale voipToken rows for the same
+      //      physical device. Pruning rows older than 7 days keeps the
+      //      sibling-cancel scope to genuinely-different active devices.
+      // Both run before answerCall so the cancel-push query sees the right
+      // set of tokens. Wrapped in try/catch — token bookkeeping must never
+      // block an answer.
+      if (excludeVoipToken && excludeVoipToken.length > 0) {
+        try {
+          const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+          await prisma.voipToken.upsert({
+            where: { token: excludeVoipToken },
+            create: { userId, token: excludeVoipToken, platform: 'ios' },
+            update: { userId, createdAt: new Date() },
+          });
+          await prisma.voipToken.deleteMany({
+            where: {
+              userId,
+              token: { not: excludeVoipToken },
+              createdAt: { lt: cutoff },
+            },
+          });
+        } catch (err) {
+          logger.error({ err, userId, callId }, 'Failed to refresh voipToken on answer (continuing)');
+        }
+      }
+
       const result = await answerCall(getIO(), userId, callId, { excludeVoipToken });
       if (!result.ok) {
         const status = result.code === 'CALL_NOT_FOUND' ? 404
