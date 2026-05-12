@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { containsExplicitText } from '../../shared/moderation.service';
 
 /**
  * Server-side mirror of the frontend's _isReadableText gate (see
@@ -62,7 +63,8 @@ export const usernameSchema = z.object({
     .string()
     .min(5, 'Bio must be at least 5 characters')
     .max(200)
-    .refine(isReadableText, 'Bio looks like keyboard-mash — please write something readable'),
+    .refine(isReadableText, 'Bio looks like keyboard-mash — please write something readable')
+    .refine((v) => !containsExplicitText(v), 'This content is not allowed'),
   // Gender is optional — Apple Guideline 5.1.1 rejected the previous
   // submission for requiring it. Frontend doesn't collect it; this
   // exists only so legacy / API clients can still pass it.
@@ -79,7 +81,7 @@ export const usernameSchema = z.object({
   // for existing users and for the (separate) profile-edit endpoint to
   // populate, but the username / signup endpoint no longer accepts
   // either field.
-  availabilityNote: z.string().max(120).optional(),
+  availabilityNote: z.string().max(120).refine((v) => !containsExplicitText(v), 'This content is not allowed').optional(),
   language: z
     .string()
     .min(2)

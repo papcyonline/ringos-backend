@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { containsExplicitText } from '../../shared/moderation.service';
 
 const MoodTag = z.enum([
   'HAPPY',
@@ -26,7 +27,7 @@ export const updateAvailabilitySchema = z.object({
   availableFor: z
     .array(z.enum(['text', 'call', 'video']))
     .min(1, 'Must be available for at least one mode'),
-  availabilityNote: z.string().max(200).optional(),
+  availabilityNote: z.string().max(200).refine((v) => !containsExplicitText(v), 'This content is not allowed').optional(),
   status: z.enum(['available', 'busy']).optional(),
   availableUntil: z.string().datetime().optional().nullable(),
 });
@@ -42,8 +43,8 @@ export const updatePrivacySchema = z.object({
 export type UpdatePrivacyInput = z.infer<typeof updatePrivacySchema>;
 
 export const updateProfileSchema = z.object({
-  displayName: z.string().min(1).max(50).optional(),
-  bio: z.string().max(500).optional().nullable(),
+  displayName: z.string().min(1).max(50).refine((v) => !containsExplicitText(v), 'This content is not allowed').optional(),
+  bio: z.string().max(500).refine((v) => !containsExplicitText(v), 'This content is not allowed').optional().nullable(),
   profession: z.string().max(100).optional().nullable(),
   gender: z.enum(['male', 'female', 'MALE', 'FEMALE']).transform(v => v?.toUpperCase() as 'MALE' | 'FEMALE').optional().nullable(),
   location: z.string().max(100).optional().nullable(),
