@@ -63,10 +63,14 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().optional(),
   EMAIL_LOGO_URL: z.string().optional(),
 
-  // Cloudinary (Image Storage)
+  // Cloudinary (Image Storage — legacy, kept for deleting old media only)
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
+
+  // Supabase Storage (avatars + chat media)
+  SUPABASE_URL: z.string().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
 
   // AWS S3 (File Storage)
   AWS_ACCESS_KEY_ID: z.string().optional(),

@@ -12,6 +12,12 @@ import {
   uploadToR2WithKey,
   uploadToR2WithCustomKey,
 } from './r2.service';
+import {
+  isSupabaseConfigured,
+  uploadAvatarToSupabase,
+  uploadChatImageToSupabase,
+  uploadVoiceNoteToSupabase,
+} from './supabase.service';
 
 // Use memory storage — files live in buffer until uploaded to Cloudinary
 const memoryStorage = multer.memoryStorage();
@@ -139,60 +145,60 @@ export const chatDocumentUpload = multer({
   fileFilter: documentFilter,
 });
 
-// ── Upload helpers — Cloudinary with local disk fallback ────────────────
+// ── Upload helpers ──────────────────────────────────────────────────────
 
 export async function fileToAvatarUrl(file: Express.Multer.File, userId: string): Promise<string> {
-  // 1. Try R2 with stable per-user key — overwrites the previous avatar
-  // so we don't leak old objects on every change. sharp resizes to the
-  // same 800x800 jpg Cloudinary used to produce, so the visual contract
-  // for downstream consumers is unchanged.
+  const resized = await sharp(file.buffer)
+    .rotate()
+    .resize(800, 800, { fit: 'cover' })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+
+  // 1. Supabase — stable per-user path, upserts on every change
+  if (isSupabaseConfigured) {
+    try {
+      const result = await uploadAvatarToSupabase(resized, userId);
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  // 2. R2 fallback
   if (isR2Configured) {
     try {
-      const resized = await sharp(file.buffer)
-        .rotate()
-        .resize(800, 800, { fit: 'cover' })
-        .jpeg({ quality: 90 })
-        .toBuffer();
-      const result = await uploadToR2WithCustomKey(
-        resized,
-        `avatars/${userId}.jpg`,
-        'image/jpeg',
-      );
+      const result = await uploadToR2WithCustomKey(resized, `avatars/${userId}.jpg`, 'image/jpeg');
       return result.url;
-    } catch (err) { /* R2/sharp failed, fall back */ }
+    } catch (err) { /* fall through */ }
   }
-  // 2. Fallback to Cloudinary (kept so existing prod behavior survives if R2 trips)
-  if (cloudinaryService.isCloudinaryConfigured) {
-    const result = await cloudinaryService.uploadAvatar(file.buffer, userId);
-    if (result) return result.secureUrl;
-  }
-  return saveToDisk(file.buffer, 'uploads/avatars', '/uploads/avatars', path.extname(file.originalname) || '.jpg');
+  return saveToDisk(resized, 'uploads/avatars', '/uploads/avatars', '.jpg');
 }
 
 export async function fileToChatImageUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
-  // 1. Try Google Drive (free, service-account based)
+  // 1. Supabase
+  if (isSupabaseConfigured) {
+    try {
+      const result = await uploadChatImageToSupabase(file.buffer, conversationId, file.originalname || 'image.jpg');
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  // 2. Google Drive fallback
   if (isDriveConfigured()) {
     const result = await uploadToDrive(file.buffer, file.originalname || 'image.jpg', file.mimetype || 'image/jpeg');
     if (result) return result.url;
-  }
-  // 2. Fallback to Cloudinary
-  if (cloudinaryService.isCloudinaryConfigured) {
-    const result = await cloudinaryService.uploadChatImage(file.buffer, conversationId);
-    if (result) return result.secureUrl;
   }
   return saveToDisk(file.buffer, 'uploads/chat', '/uploads/chat', path.extname(file.originalname) || '.jpg');
 }
 
 export async function fileToChatAudioUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
-  // 1. Try Google Drive
+  // 1. Supabase
+  if (isSupabaseConfigured) {
+    try {
+      const result = await uploadVoiceNoteToSupabase(file.buffer, conversationId, file.originalname || 'audio.m4a');
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  // 2. Google Drive fallback
   if (isDriveConfigured()) {
     const result = await uploadToDrive(file.buffer, file.originalname || 'audio.m4a', file.mimetype || 'audio/mp4');
     if (result) return result.url;
-  }
-  // 2. Fallback to Cloudinary
-  if (cloudinaryService.isCloudinaryConfigured) {
-    const result = await cloudinaryService.uploadVoiceNote(file.buffer, conversationId);
-    if (result) return result.secureUrl;
   }
   return saveToDisk(file.buffer, 'uploads/audio', '/uploads/audio', path.extname(file.originalname) || '.m4a');
 }
