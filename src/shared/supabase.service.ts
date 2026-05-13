@@ -20,7 +20,7 @@ function getClient(): SupabaseClient {
 }
 
 export const BUCKETS = {
-  AVATARS: 'avatars',
+  AVATARS: 'avatar',
   CHAT_MEDIA: 'chat-media',
 } as const;
 
