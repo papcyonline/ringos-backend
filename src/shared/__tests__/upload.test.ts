@@ -111,6 +111,7 @@ beforeEach(() => {
   cloudinaryService.isCloudinaryConfigured = false;
   mockIsDriveConfigured.mockReturnValue(false);
   mockIsR2Configured.value = false;
+  mockIsSupabaseConfigured.value = false;
   mockExistsSync.mockReturnValue(true);
 });
 
@@ -248,16 +249,24 @@ describe('upload — multer instances exist', () => {
 });
 
 describe('fileToAvatarUrl', () => {
-  it('uses Cloudinary when configured', async () => {
-    cloudinaryService.isCloudinaryConfigured = true;
-    cloudinaryService.uploadAvatar.mockResolvedValue({ secureUrl: 'https://cdn/a.jpg' });
+  it('uses Supabase when configured', async () => {
+    mockIsSupabaseConfigured.value = true;
+    mockUploadAvatarToSupabase.mockResolvedValue({ url: 'https://supabase/avatar/u-1.jpg', path: 'u-1.jpg' });
     const url = await fileToAvatarUrl(makeFile(), 'u-1');
-    expect(url).toBe('https://cdn/a.jpg');
+    expect(url).toBe('https://supabase/avatar/u-1.jpg');
   });
 
-  it('falls back to disk when not configured', async () => {
+  it('falls back to R2 when Supabase not configured', async () => {
+    mockIsR2Configured.value = true;
+    mockUploadToR2WithCustomKey.mockResolvedValue({ url: 'https://r2/avatars/u-1.jpg', key: 'avatars/u-1.jpg' });
+    const url = await fileToAvatarUrl(makeFile(), 'u-1');
+    expect(url).toBe('https://r2/avatars/u-1.jpg');
+  });
+
+  it('falls back to disk when nothing configured', async () => {
+    // sharp always outputs .jpg so the saved file is always uuid-x.jpg
     const url = await fileToAvatarUrl(makeFile({ originalname: 'pic.png' }), 'u-1');
-    expect(url).toBe('/uploads/avatars/uuid-x.png');
+    expect(url).toBe('/uploads/avatars/uuid-x.jpg');
     expect(mockWriteFileSync).toHaveBeenCalled();
   });
 
@@ -276,11 +285,11 @@ describe('fileToChatImageUrl', () => {
     expect(url).toBe('/media/gdrive/abc');
   });
 
-  it('falls back to Cloudinary', async () => {
-    cloudinaryService.isCloudinaryConfigured = true;
-    cloudinaryService.uploadChatImage.mockResolvedValue({ secureUrl: 'https://cdn' });
+  it('uses Supabase when configured', async () => {
+    mockIsSupabaseConfigured.value = true;
+    mockUploadChatImageToSupabase.mockResolvedValue({ url: 'https://supabase/chat/img.jpg', path: 'images/c-1/uuid-x.jpg' });
     const url = await fileToChatImageUrl(makeFile(), 'c-1');
-    expect(url).toBe('https://cdn');
+    expect(url).toBe('https://supabase/chat/img.jpg');
   });
 
   it('falls back to disk when neither configured', async () => {
@@ -297,11 +306,11 @@ describe('fileToChatAudioUrl', () => {
     expect(url).toBe('/media/gdrive/aaa');
   });
 
-  it('falls back to Cloudinary then disk', async () => {
-    cloudinaryService.isCloudinaryConfigured = true;
-    cloudinaryService.uploadVoiceNote.mockResolvedValue({ secureUrl: 'https://cdn/v.m4a' });
+  it('uses Supabase when configured', async () => {
+    mockIsSupabaseConfigured.value = true;
+    mockUploadVoiceNoteToSupabase.mockResolvedValue({ url: 'https://supabase/audio/v.m4a', path: 'audio/c-1/uuid-x.m4a' });
     const url = await fileToChatAudioUrl(makeFile({ originalname: 'a.m4a' }), 'c-1');
-    expect(url).toBe('https://cdn/v.m4a');
+    expect(url).toBe('https://supabase/audio/v.m4a');
   });
 
   it('disk fallback', async () => {
