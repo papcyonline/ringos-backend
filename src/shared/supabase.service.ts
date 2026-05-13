@@ -53,8 +53,11 @@ export async function uploadToSupabase(
   }
 
   const { data } = client.storage.from(bucket).getPublicUrl(storagePath);
+  // Append a timestamp so the CDN treats each upload as a new resource.
+  // Without this, the CDN serves the stale cached file even after an upsert.
+  const url = `${data.publicUrl}?t=${Date.now()}`;
   logger.info({ bucket, storagePath }, 'Uploaded to Supabase');
-  return { url: data.publicUrl, path: storagePath };
+  return { url, path: storagePath };
 }
 
 /**
