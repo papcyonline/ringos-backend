@@ -10,6 +10,10 @@ const {
   mockUploadToR2,
   mockUploadToR2WithKey,
   mockUploadToR2WithCustomKey,
+  mockIsSupabaseConfigured,
+  mockUploadAvatarToSupabase,
+  mockUploadChatImageToSupabase,
+  mockUploadVoiceNoteToSupabase,
   mockExistsSync,
   mockMkdirSync,
   mockWriteFileSync,
@@ -29,6 +33,10 @@ const {
   mockUploadToR2: vi.fn(),
   mockUploadToR2WithKey: vi.fn(),
   mockUploadToR2WithCustomKey: vi.fn(),
+  mockIsSupabaseConfigured: { value: false },
+  mockUploadAvatarToSupabase: vi.fn(),
+  mockUploadChatImageToSupabase: vi.fn(),
+  mockUploadVoiceNoteToSupabase: vi.fn(),
   mockExistsSync: vi.fn(() => true),
   mockMkdirSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
@@ -46,6 +54,12 @@ vi.mock('../r2.service', () => ({
   uploadToR2: mockUploadToR2,
   uploadToR2WithKey: mockUploadToR2WithKey,
   uploadToR2WithCustomKey: mockUploadToR2WithCustomKey,
+}));
+vi.mock('../supabase.service', () => ({
+  get isSupabaseConfigured() { return mockIsSupabaseConfigured.value; },
+  uploadAvatarToSupabase: mockUploadAvatarToSupabase,
+  uploadChatImageToSupabase: mockUploadChatImageToSupabase,
+  uploadVoiceNoteToSupabase: mockUploadVoiceNoteToSupabase,
 }));
 // Stub sharp — it's only invoked on the R2 path; tests that exercise
 // that path set return values explicitly. The default chain returns the
