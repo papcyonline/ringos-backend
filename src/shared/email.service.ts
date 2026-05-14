@@ -479,6 +479,8 @@ async function sendEmail({ to, subject, html }: SendEmailOptions): Promise<boole
 
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
+export { sendEmail };
+
 export async function sendWelcomeEmail(to: string, displayName: string): Promise<boolean> {
   return sendEmail({
     to,
