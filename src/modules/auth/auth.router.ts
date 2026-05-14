@@ -154,9 +154,13 @@ router.get(
 router.post(
   '/username/claim',
   authenticate,
+  avatarUpload.single('proof'),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const username = String(req.body?.username ?? '').trim();
+      const name = String(req.body?.name ?? '').trim();
+      const website = String(req.body?.website ?? '').trim();
+      const officialEmail = String(req.body?.officialEmail ?? '').trim();
       const reason = String(req.body?.reason ?? '').trim();
       if (!username) throw new BadRequestError('username is required');
 
@@ -165,22 +169,36 @@ router.post(
         select: { id: true, displayName: true, email: true },
       });
 
-      logger.info({ userId: req.user!.userId, username, reason }, 'Username claim submitted');
+      // Upload proof document to R2 if provided
+      let proofUrl = '';
+      if (req.file) {
+        const { uploadToR2 } = await import('../../shared/r2.service');
+        proofUrl = await uploadToR2(req.file.buffer, 'claims', req.file.originalname, req.file.mimetype);
+      }
 
-      // Notify admin via email
+      logger.info({ userId: req.user!.userId, username, name, website }, 'Username claim submitted');
+
       const { sendEmail } = await import('../../shared/email.service');
       await sendEmail({
         to: 'rhingndah@gmail.com',
         subject: `Username claim request: @${username}`,
         html: `
-          <p><strong>Username claimed:</strong> @${username}</p>
-          <p><strong>Requested by:</strong> ${user?.displayName ?? 'unknown'} (${user?.email ?? 'no email'})</p>
-          <p><strong>User ID:</strong> ${req.user!.userId}</p>
-          <p><strong>Reason:</strong> ${reason || '(none provided)'}</p>
+          <h2>Username Claim: @${username}</h2>
+          <table cellpadding="6">
+            <tr><td><strong>Requested username:</strong></td><td>@${username}</td></tr>
+            <tr><td><strong>Claimant name:</strong></td><td>${name || '—'}</td></tr>
+            <tr><td><strong>Official website:</strong></td><td><a href="${website}">${website || '—'}</a></td></tr>
+            <tr><td><strong>Official email:</strong></td><td>${officialEmail || '—'}</td></tr>
+            <tr><td><strong>Reason:</strong></td><td>${reason || '—'}</td></tr>
+            <tr><td><strong>Proof document:</strong></td><td>${proofUrl ? `<a href="${proofUrl}">View document</a>` : '(none uploaded)'}</td></tr>
+            <tr><td><strong>Account name:</strong></td><td>${user?.displayName ?? 'unknown'}</td></tr>
+            <tr><td><strong>Account email:</strong></td><td>${user?.email ?? '—'}</td></tr>
+            <tr><td><strong>User ID:</strong></td><td>${req.user!.userId}</td></tr>
+          </table>
           <hr/>
-          <p>To assign this username, use the admin endpoint:<br/>
+          <p><strong>To approve:</strong><br/>
           <code>PUT /admin/users/${req.user!.userId}/username</code><br/>
-          with body <code>{"username": "${username}", "verify": true}</code></p>
+          Body: <code>{"username": "${username}", "verify": true}</code></p>
         `,
       });
 
