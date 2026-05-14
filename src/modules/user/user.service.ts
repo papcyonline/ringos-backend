@@ -4,6 +4,7 @@ import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { UpdatePreferenceInput, UpdateAvailabilityInput, UpdatePrivacyInput, UpdateProfileInput } from './user.schema';
 import { isBlocked } from '../safety/safety.service';
 import { getLimits, isPro } from '../../shared/usage.service';
+import { isReservedUsername } from '../../shared/reserved-usernames';
 
 async function findUserOrThrow(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -410,6 +411,9 @@ export async function updateProfile(userId: string, data: UpdateProfileInput) {
       }
     }
 
+    if (isReservedUsername(data.displayName!)) {
+      throw new ForbiddenError('That username is reserved and cannot be used');
+    }
     // Check uniqueness
     const { checkUsernameAvailable } = await import('../auth/auth.service');
     const available = await checkUsernameAvailable(data.displayName!, userId);

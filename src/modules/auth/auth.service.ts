@@ -12,6 +12,7 @@ import { logger } from '../../shared/logger';
 import { UnauthorizedError, BadRequestError, ForbiddenError, NotFoundError } from '../../shared/errors';
 import { checkBanStatus } from '../safety/safety.service';
 import { logSecurityEvent } from '../../shared/audit.service';
+import { isReservedUsername } from '../../shared/reserved-usernames';
 import { trackDeviceAndAlert } from '../../shared/device.service';
 import {
   generateAccessToken,
@@ -592,6 +593,9 @@ export async function setUsername(
   // Validation is handled by Zod schema in the router middleware.
   // Service-level check is only needed for the username uniqueness
   // (which depends on DB state and can't be done in Zod).
+  if (isReservedUsername(username)) {
+    throw new BadRequestError('That username is reserved and cannot be registered');
+  }
   const available = await checkUsernameAvailable(username, userId);
   if (!available) {
     throw new BadRequestError('Username is already taken');
