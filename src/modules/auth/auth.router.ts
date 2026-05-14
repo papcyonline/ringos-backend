@@ -21,6 +21,9 @@ import {
   resendOtpSchema,
 } from './auth.schema';
 import * as authService from './auth.service';
+import { isReservedUsername } from '../../shared/reserved-usernames';
+import { prisma } from '../../config/database';
+import { BadRequestError } from '../../shared/errors';
 
 const router = Router();
 
@@ -132,11 +135,56 @@ router.get(
     try {
       const username = (req.query.username as string || '').trim();
       if (username.length < 3) {
-        res.status(200).json({ available: false });
+        res.status(200).json({ available: false, reserved: false });
+        return;
+      }
+      const reserved = isReservedUsername(username);
+      if (reserved) {
+        res.status(200).json({ available: false, reserved: true });
         return;
       }
       const available = await authService.checkUsernameAvailable(username, req.user!.userId);
-      res.status(200).json({ available });
+      res.status(200).json({ available, reserved: false });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/username/claim',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const username = String(req.body?.username ?? '').trim();
+      const reason = String(req.body?.reason ?? '').trim();
+      if (!username) throw new BadRequestError('username is required');
+
+      const user = await prisma.user.findUnique({
+        where: { id: req.user!.userId },
+        select: { id: true, displayName: true, email: true },
+      });
+
+      logger.info({ userId: req.user!.userId, username, reason }, 'Username claim submitted');
+
+      // Notify admin via email
+      const { sendEmail } = await import('../../shared/email.service');
+      await sendEmail({
+        to: 'rhingndah@gmail.com',
+        subject: `Username claim request: @${username}`,
+        html: `
+          <p><strong>Username claimed:</strong> @${username}</p>
+          <p><strong>Requested by:</strong> ${user?.displayName ?? 'unknown'} (${user?.email ?? 'no email'})</p>
+          <p><strong>User ID:</strong> ${req.user!.userId}</p>
+          <p><strong>Reason:</strong> ${reason || '(none provided)'}</p>
+          <hr/>
+          <p>To assign this username, use the admin endpoint:<br/>
+          <code>PUT /admin/users/${req.user!.userId}/username</code><br/>
+          with body <code>{"username": "${username}", "verify": true}</code></p>
+        `,
+      });
+
+      res.json({ ok: true });
     } catch (err) {
       next(err);
     }
