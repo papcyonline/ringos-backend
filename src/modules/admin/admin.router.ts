@@ -86,7 +86,7 @@ router.put(
   requireAdmin,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const { userId } = req.params;
+      const userId = String(req.params.userId);
       const username = String(req.body?.username ?? '').trim();
       const verify = req.body?.verify === true;
 
