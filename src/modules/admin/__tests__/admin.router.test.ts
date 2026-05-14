@@ -19,6 +19,21 @@ vi.mock('../admin.middleware', () => ({
     next();
   },
 }));
+vi.mock('../../../config/database', () => ({
+  prisma: {
+    user: {
+      findFirst: vi.fn(),
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+  },
+}));
+vi.mock('../../../shared/reserved-usernames', () => ({
+  isReservedUsername: vi.fn().mockReturnValue(false),
+}));
+vi.mock('../../auth/auth.service', () => ({
+  checkUsernameAvailable: vi.fn().mockResolvedValue(true),
+}));
 
 import { adminRouter } from '../admin.router';
 
