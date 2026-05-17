@@ -277,16 +277,20 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
   /**
    * chat:react - Toggle a reaction and broadcast to room.
    */
-  socket.on('chat:react', async (data: { messageId: string; emoji: string }) => {
+  socket.on('chat:react', async (data: { messageId: string; emoji: string; action?: 'add' | 'remove' }) => {
     try {
-      const { messageId, emoji } = data;
+      const { messageId, emoji, action } = data;
 
       if (!emoji || typeof emoji !== 'string' || emoji.length > 32) {
         socket.emit('chat:error', { message: 'Invalid emoji' });
         return;
       }
 
-      const result = await chatService.toggleReaction(messageId, userId, emoji);
+      // Explicit add/remove from new clients = idempotent. Old clients
+      // (no action field) fall back to the legacy toggle for back-compat.
+      const result = action === 'add' || action === 'remove'
+        ? await chatService.setReaction(messageId, userId, emoji, action)
+        : await chatService.toggleReaction(messageId, userId, emoji);
 
       io.to(`conversation:${result.conversationId}`).emit('chat:reacted', {
         messageId: result.messageId,

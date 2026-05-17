@@ -1328,6 +1328,75 @@ export async function toggleReaction(messageId: string, userId: string, emoji: s
 }
 
 /**
+ * Idempotent reaction setter. The client sends the desired final state
+ * ('add' / 'remove') instead of "toggle", so a retried tap after a flaky
+ * network can't silently flip the reaction the wrong way. Returns the
+ * same payload shape as toggleReaction for the broadcast handler.
+ */
+export async function setReaction(
+  messageId: string,
+  userId: string,
+  emoji: string,
+  desired: 'add' | 'remove',
+) {
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!message) throw new NotFoundError('Message not found');
+  if (message.deletedAt) throw new ForbiddenError('Cannot react to a deleted message');
+
+  await verifyParticipant(message.conversationId, userId);
+
+  const existing = await prisma.messageReaction.findUnique({
+    where: { messageId_userId_emoji: { messageId, userId, emoji } },
+  });
+
+  if (desired === 'add') {
+    if (existing) {
+      // Already present — idempotent no-op. Return the current state so
+      // the broadcast still confirms to other clients (cheap, and avoids
+      // the client wondering why nothing changed).
+      const reaction = await prisma.messageReaction.findUnique({
+        where: { id: existing.id },
+        include: { user: { select: { displayName: true } } },
+      });
+      return {
+        action: 'added' as const,
+        emoji,
+        userId,
+        messageId,
+        conversationId: message.conversationId,
+        displayName: reaction?.user.displayName,
+      };
+    }
+    const reaction = await prisma.messageReaction.create({
+      data: { messageId, userId, emoji },
+      include: { user: { select: { displayName: true } } },
+    });
+    logger.debug({ messageId, userId, emoji, action: 'added' }, 'Reaction set');
+    return {
+      action: 'added' as const,
+      emoji,
+      userId,
+      messageId,
+      conversationId: message.conversationId,
+      displayName: reaction.user.displayName,
+    };
+  }
+
+  // desired === 'remove'
+  if (existing) {
+    await prisma.messageReaction.delete({ where: { id: existing.id } });
+  }
+  logger.debug({ messageId, userId, emoji, action: 'removed' }, 'Reaction set');
+  return {
+    action: 'removed' as const,
+    emoji,
+    userId,
+    messageId,
+    conversationId: message.conversationId,
+  };
+}
+
+/**
  * End a conversation.
  */
 export async function endConversation(conversationId: string, userId: string) {
@@ -1894,8 +1963,14 @@ export async function forwardMessage(
   messageId: string,
   targetConversationId: string,
   senderId: string,
+  clientMsgId?: string,
 ) {
-  const [result] = await forwardMessageToMany(messageId, [targetConversationId], senderId);
+  const [result] = await forwardMessageToMany(
+    messageId,
+    [targetConversationId],
+    senderId,
+    clientMsgId ? [clientMsgId] : undefined,
+  );
   return result;
 }
 
@@ -1909,13 +1984,25 @@ export async function forwardMessageToMany(
   messageId: string,
   targetConversationIds: string[],
   senderId: string,
+  /** Optional client-generated UUIDs, parallel to targetConversationIds.
+   *  Lets a retried forward dedup per target so a flaky network can't
+   *  produce duplicate copies in any of the destination chats. */
+  clientMsgIds?: string[],
 ) {
   if (!Array.isArray(targetConversationIds) || targetConversationIds.length === 0) {
     throw new NotFoundError('At least one target conversation is required');
   }
-  // Dedupe and cap.
-  const targets = Array.from(new Set(targetConversationIds));
-  if (targets.length > MAX_FORWARD_TARGETS) {
+  // Dedupe and cap. We dedupe targets but preserve the original index
+  // into clientMsgIds so each surviving target keeps its matching UUID.
+  const seen = new Set<string>();
+  const targetsWithIds: { target: string; clientMsgId: string | undefined }[] = [];
+  for (let i = 0; i < targetConversationIds.length; i++) {
+    const target = targetConversationIds[i];
+    if (seen.has(target)) continue;
+    seen.add(target);
+    targetsWithIds.push({ target, clientMsgId: clientMsgIds?.[i] });
+  }
+  if (targetsWithIds.length > MAX_FORWARD_TARGETS) {
     throw new ForbiddenError(`Cannot forward to more than ${MAX_FORWARD_TARGETS} conversations at once`);
   }
 
@@ -1932,9 +2019,10 @@ export async function forwardMessageToMany(
   await verifyParticipant(original.conversationId, senderId);
 
   const forwarded = [];
-  for (const target of targets) {
+  for (const { target, clientMsgId } of targetsWithIds) {
     await verifyParticipant(target, senderId);
     const msg = await sendMessage(target, senderId, original.content ?? '', {
+      clientMsgId,
       imageUrl: original.imageUrl ?? undefined,
       imageUrls: original.imageUrls.length > 0 ? original.imageUrls : undefined,
       audioUrl: original.audioUrl ?? undefined,
@@ -1944,7 +2032,7 @@ export async function forwardMessageToMany(
     forwarded.push(msg);
   }
 
-  logger.info({ messageId, targetCount: targets.length, senderId }, 'Message forwarded');
+  logger.info({ messageId, targetCount: targetsWithIds.length, senderId }, 'Message forwarded');
   return forwarded;
 }
 

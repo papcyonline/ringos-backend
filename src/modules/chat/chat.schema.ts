@@ -23,11 +23,20 @@ export const editMessageSchema = z.object({
 
 export const reactMessageSchema = z.object({
   emoji: z.string().min(1).max(32),
+  // Explicit desired state replaces the legacy blind toggle. Idempotent:
+  // sending action='add' twice ends with the reaction added (not flipped
+  // off), so a retry after a flaky network can't silently undo a tap.
+  // Omitted by older clients — server falls back to legacy toggle.
+  action: z.enum(['add', 'remove']).optional(),
 });
 
 export const forwardMessageSchema = z.object({
   targetConversationId: z.string().uuid().optional(),
   targetConversationIds: z.array(z.string().uuid()).min(1).max(5).optional(),
+  // One client-generated UUID per forwarded copy, same order as the
+  // targets. Lets the server dedupe a retried forward across N targets
+  // without creating duplicate rows. Optional for backwards compat.
+  clientMsgIds: z.array(z.string().uuid()).min(1).max(5).optional(),
 }).refine(
   (d) => !!d.targetConversationId || !!d.targetConversationIds,
   { message: 'targetConversationId or targetConversationIds is required' },

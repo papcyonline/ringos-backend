@@ -424,11 +424,19 @@ router.post(
   validate(reactMessageSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const result = await chatService.toggleReaction(
-        (req.params.messageId as string),
-        req.user!.userId,
-        req.body.emoji,
-      );
+      const action = req.body.action as 'add' | 'remove' | undefined;
+      const result = action === 'add' || action === 'remove'
+        ? await chatService.setReaction(
+            (req.params.messageId as string),
+            req.user!.userId,
+            req.body.emoji,
+            action,
+          )
+        : await chatService.toggleReaction(
+            (req.params.messageId as string),
+            req.user!.userId,
+            req.body.emoji,
+          );
       res.json(result);
     } catch (err) {
       next(err);
@@ -524,11 +532,12 @@ router.post(
           }
         : undefined;
 
+      const clientMsgId = req.body.clientMsgId as string | undefined;
       const message = await chatService.sendMessage(
         (req.params.conversationId as string),
         req.user!.userId,
         caption,
-        { replyToId, imageUrl, viewOnce, metadata },
+        { replyToId, clientMsgId, imageUrl, viewOnce, metadata },
       );
 
       broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
@@ -564,11 +573,12 @@ router.post(
         imageUrls.push(await fileToChatImageUrl(file, conversationId));
       }
 
+      const clientMsgId = req.body.clientMsgId as string | undefined;
       const message = await chatService.sendMessage(
         conversationId,
         req.user!.userId,
         caption,
-        { replyToId, imageUrls },
+        { replyToId, clientMsgId, imageUrls },
       );
 
       broadcastAndNotifyMessage(message, conversationId, req.user!.userId);
@@ -605,11 +615,12 @@ router.post(
       if (typeof width === 'number' && width > 0) metadata.gifWidth = width;
       if (typeof height === 'number' && height > 0) metadata.gifHeight = height;
 
+      const clientMsgId = req.body.clientMsgId as string | undefined;
       const message = await chatService.sendMessage(
         (req.params.conversationId as string),
         req.user!.userId,
         '',
-        { replyToId, imageUrl: gifUrl, metadata },
+        { replyToId, clientMsgId, imageUrl: gifUrl, metadata },
       );
 
       broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
@@ -635,11 +646,12 @@ router.post(
       const replyToId = req.body.replyToId as string | undefined;
       const viewOnce = req.body.viewOnce === 'true';
 
+      const clientMsgId = req.body.clientMsgId as string | undefined;
       const message = await chatService.sendMessage(
         (req.params.conversationId as string),
         req.user!.userId,
         '',
-        { replyToId, audioUrl, audioDuration: duration, viewOnce },
+        { replyToId, clientMsgId, audioUrl, audioDuration: duration, viewOnce },
       );
 
       broadcastAndNotifyMessage(message, (req.params.conversationId as string), req.user!.userId);
@@ -687,12 +699,14 @@ router.post(
       const replyToId = req.body.replyToId as string | undefined;
       const viewOnce = req.body.viewOnce === 'true';
 
+      const clientMsgId = req.body.clientMsgId as string | undefined;
       const message = await chatService.sendMessage(
         conversationId,
         req.user!.userId,
         caption,
         {
           replyToId,
+          clientMsgId,
           videoUrl,
           videoThumbnailUrl,
           videoDuration,
@@ -744,12 +758,14 @@ router.post(
       const caption = (req.body.caption as string) || '';
       const replyToId = req.body.replyToId as string | undefined;
 
+      const clientMsgId = req.body.clientMsgId as string | undefined;
       const message = await chatService.sendMessage(
         conversationId,
         req.user!.userId,
         caption,
         {
           replyToId,
+          clientMsgId,
           imageUrl: documentUrl,
           metadata: {
             isDocument: true,
@@ -1442,7 +1458,11 @@ router.post(
         return res.status(400).json({ error: 'targetConversationId(s) is required' });
       }
 
-      const messages = await chatService.forwardMessageToMany(messageId, targets, userId);
+      const clientMsgIds: string[] | undefined = Array.isArray(req.body?.clientMsgIds)
+        ? req.body.clientMsgIds
+        : undefined;
+
+      const messages = await chatService.forwardMessageToMany(messageId, targets, userId, clientMsgIds);
 
       for (const msg of messages) {
         broadcastAndNotifyMessage(msg, (msg as any).conversationId, userId);
