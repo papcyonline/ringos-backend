@@ -12,7 +12,7 @@ import * as userService from './user.service';
 import * as followService from './follow.service';
 import * as likeService from './like.service';
 import { createNotification, sendPostPush } from '../notification/notification.service';
-import { getUsageSummary } from '../../shared/usage.service';
+import { getUsageSummary, isPro } from '../../shared/usage.service';
 
 const router = Router();
 
@@ -101,14 +101,26 @@ router.put(
 );
 
 // DELETE /me/availability - Stop availability (reset to defaults)
+// Pro-only: free users can set themselves available but cannot manually
+// hide afterwards. Mirrors the frontend gate in go_live_sheet.dart — kept
+// here so a determined caller can't bypass the UI lock by hitting the
+// endpoint directly.
 router.delete(
   '/me/availability',
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const result = await userService.stopAvailability(req.user!.userId);
+      const userId = req.user!.userId;
+      if (!(await isPro(userId))) {
+        res.status(403).json({
+          error: 'PRO_REQUIRED',
+          message: 'Going offline manually is a Yomeet Pro feature.',
+        });
+        return;
+      }
+      const result = await userService.stopAvailability(userId);
       getIO().emit('user:status-update', {
-        userId: req.user!.userId,
+        userId,
         status: result.status,
         availabilityNote: result.availabilityNote,
         availableFor: result.availableFor,
