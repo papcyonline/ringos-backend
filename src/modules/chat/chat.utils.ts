@@ -47,6 +47,9 @@ export async function emitToParticipantRooms(
 export function formatMessagePayload(message: any, conversationId: string) {
   return {
     id: message.id,
+    // Echoed back so the client can reconcile its temp message by the
+    // UUID it generated at compose time. Older clients ignore it.
+    clientMsgId: message.clientMsgId ?? null,
     conversationId,
     senderId: message.senderId,
     senderName: message.sender.displayName,

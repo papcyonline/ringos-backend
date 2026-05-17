@@ -612,6 +612,11 @@ model ConversationParticipant {
 
 model Message {
   id             String    @id @default(uuid())
+  // Client-generated dedup key. The client generates a UUID at compose
+  // time and sends it with the message; the server uses it as a unique
+  // upsert key so a retried send (e.g. flaky network) doesn't create
+  // a duplicate row. Nullable for backwards-compat with old clients.
+  clientMsgId    String?   @unique
   conversationId String
   senderId       String
   content        String

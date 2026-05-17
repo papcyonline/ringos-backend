@@ -3,6 +3,10 @@ import { z } from 'zod';
 export const sendMessageSchema = z.object({
   content: z.string().max(2000).optional().default(''),
   replyToId: z.string().uuid().optional(),
+  // Client-generated UUID for idempotent send. If the same clientMsgId
+  // arrives twice (retry after flaky network), the server returns the
+  // existing message instead of creating a duplicate.
+  clientMsgId: z.string().uuid().optional(),
   imageUrl: z.string().optional(),
   audioUrl: z.string().optional(),
   audioDuration: z.number().int().min(0).optional(),

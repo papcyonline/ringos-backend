@@ -185,9 +185,9 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
   /**
    * chat:message - Send a message: moderate content, persist, and broadcast to room.
    */
-  socket.on('chat:message', async (data: { conversationId: string; content: string; replyToId?: string; metadata?: Record<string, any> }) => {
+  socket.on('chat:message', async (data: { conversationId: string; content: string; replyToId?: string; clientMsgId?: string; metadata?: Record<string, any> }) => {
     try {
-      const { conversationId, content, replyToId, metadata } = data;
+      const { conversationId, content, replyToId, clientMsgId, metadata } = data;
 
       const validation = validateMessageContent(content);
       if (!validation.valid) {
@@ -197,12 +197,13 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
 
       const cleanedContent = content;
 
-      // Save the message via the service
-      const message = await chatService.sendMessage(conversationId, userId, cleanedContent, { replyToId, metadata });
+      // Save the message via the service. clientMsgId makes the call
+      // idempotent so retried sends don't create duplicates.
+      const message = await chatService.sendMessage(conversationId, userId, cleanedContent, { replyToId, clientMsgId, metadata });
 
       broadcastAndNotifyMessage(message, conversationId, userId);
 
-      logger.debug({ conversationId, userId, messageId: message.id }, 'Message broadcast to room');
+      logger.debug({ conversationId, userId, messageId: message.id, clientMsgId }, 'Message broadcast to room');
     } catch (error: any) {
       logger.error({ error, userId }, 'Error sending message');
       socket.emit('chat:error', { message: extractErrorMessage(error, 'Failed to send message') });

@@ -329,6 +329,7 @@ router.post(
         req.body.content || '',
         {
           replyToId: req.body.replyToId,
+          clientMsgId: req.body.clientMsgId,
           imageUrl: req.body.imageUrl,
           audioUrl: req.body.audioUrl,
           audioDuration: req.body.audioDuration,

@@ -914,6 +914,10 @@ export async function sendMessage(
   content: string,
   options?: {
     replyToId?: string;
+    /** Client-generated UUID for idempotent send. If a message with this
+     *  id already exists from this sender we short-circuit and return it,
+     *  so a retried send (flaky network) doesn't create a duplicate row. */
+    clientMsgId?: string;
     imageUrl?: string;
     /** Album of 2+ images. When set, imageUrl is forced to imageUrls[0] so
      *  pre-album clients still render the first photo. */
@@ -929,6 +933,7 @@ export async function sendMessage(
 ) {
   const {
     replyToId,
+    clientMsgId,
     imageUrl: rawImageUrl,
     imageUrls: rawImageUrls,
     viewOnce,
@@ -939,6 +944,27 @@ export async function sendMessage(
     videoDuration,
     metadata,
   } = options ?? {};
+
+  // Idempotency short-circuit. The client retries on flaky networks
+  // (mid-send drop, app restart, etc.); without this, every retry would
+  // create a duplicate row. We scope by senderId as a belt-and-suspenders
+  // check even though clientMsgId is globally unique.
+  if (clientMsgId) {
+    const existing = await prisma.message.findUnique({
+      where: { clientMsgId },
+      include: messageInclude,
+    });
+    if (existing) {
+      if (existing.senderId !== senderId) {
+        // Same UUID from a different user — astronomically unlikely (it'd
+        // mean a UUID collision or a client bug). Refuse to leak someone
+        // else's message back.
+        throw new ForbiddenError('clientMsgId mismatch');
+      }
+      logger.debug({ clientMsgId, messageId: existing.id }, 'Idempotent send: returning existing message');
+      return existing;
+    }
+  }
 
   // Normalize: an album always carries the array; a single image still
   // populates the legacy imageUrl field. Mirroring imageUrls[0] keeps
@@ -1022,6 +1048,7 @@ export async function sendMessage(
         conversationId,
         senderId,
         content,
+        clientMsgId: clientMsgId || undefined,
         replyToId: replyToId || undefined,
         imageUrl: imageUrl || undefined,
         imageUrls: imageUrls ?? [],
