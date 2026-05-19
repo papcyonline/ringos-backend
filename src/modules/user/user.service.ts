@@ -112,9 +112,12 @@ export async function getUserById(targetId: string, currentUserId: string) {
     }
   }
 
-  const [followRecord, likeRecord] = await Promise.all([
+  const [followRecord, reverseFollowRecord, likeRecord] = await Promise.all([
     prisma.follow.findFirst({
       where: { followerId: currentUserId, followingId: targetId },
+    }),
+    prisma.follow.findFirst({
+      where: { followerId: targetId, followingId: currentUserId },
     }),
     prisma.like.findFirst({
       where: { likerId: currentUserId, likedId: targetId },
@@ -142,6 +145,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
     isProfilePublic: user.isProfilePublic,
     followerCount: user._count.followsReceived,
     isFollowedByMe: !!followRecord,
+    isFollowingMe: !!reverseFollowRecord,
     likeCount: user._count.likesReceived,
     isLikedByMe: !!likeRecord,
     reportCount: user.moderation?.flagCount ?? 0,
@@ -212,11 +216,18 @@ export async function listUsers(currentUserId: string, page = 1, limit = 50) {
     prisma.user.count({ where: userWhere }),
   ]);
 
-  // Get who the current user follows and likes
-  const [following, likes] = await Promise.all([
+  // Get who the current user follows / who follows them / who they like.
+  // `followers` is scoped to the current page of users so we know which
+  // of the visible rows already follow the viewer ("Follow back").
+  const pageUserIds = users.map((u) => u.id);
+  const [following, followers, likes] = await Promise.all([
     prisma.follow.findMany({
       where: { followerId: currentUserId },
       select: { followingId: true },
+    }),
+    prisma.follow.findMany({
+      where: { followerId: { in: pageUserIds }, followingId: currentUserId },
+      select: { followerId: true },
     }),
     prisma.like.findMany({
       where: { likerId: currentUserId },
@@ -224,6 +235,7 @@ export async function listUsers(currentUserId: string, page = 1, limit = 50) {
     }),
   ]);
   const followingSet = new Set(following.map((f) => f.followingId));
+  const followersSet = new Set(followers.map((f) => f.followerId));
   const likedSet = new Set(likes.map((l) => l.likedId));
 
   const data = users.map((user) => {
@@ -249,6 +261,7 @@ export async function listUsers(currentUserId: string, page = 1, limit = 50) {
       language: user.preference?.language ?? 'en',
       followerCount: user._count.followsReceived,
       isFollowedByMe: followingSet.has(user.id),
+      isFollowingMe: followersSet.has(user.id),
       likeCount: user._count.likesReceived,
       isLikedByMe: likedSet.has(user.id),
       reportCount: 0,
