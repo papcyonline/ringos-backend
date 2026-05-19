@@ -377,7 +377,13 @@ export async function updatePreference(userId: string, data: UpdatePreferenceInp
 }
 
 export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
-  await findUserOrThrow(userId);
+  const user = await findUserOrThrow(userId);
+
+  // Only verified users may hide their profile from the directory.
+  // Keeps unverified accounts discoverable and accountable.
+  if (data.isProfilePublic === false && !user.isVerified) {
+    throw new ForbiddenError('Only verified accounts can make their profile private');
+  }
 
   // hideReadReceipts is a Pro-only feature
   if (data.hideReadReceipts === true) {
