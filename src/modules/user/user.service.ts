@@ -38,6 +38,7 @@ export async function getProfile(userId: string) {
       isProfilePublic: true,
       hideOnlineStatus: true,
       hideReadReceipts: true,
+      messagePrivacy: true,
       moderation: {
         select: {
           banStatus: true,
@@ -417,6 +418,18 @@ export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
 }
 
 const NAME_CHANGE_COOLDOWN_DAYS = 20;
+
+export async function updateMessagePrivacy(
+  userId: string,
+  value: 'EVERYONE' | 'FOLLOWING' | 'NOBODY',
+) {
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { messagePrivacy: value },
+    select: { id: true, messagePrivacy: true },
+  });
+  return updated;
+}
 
 export async function updateProfile(userId: string, data: UpdateProfileInput) {
   const user = await findUserOrThrow(userId);

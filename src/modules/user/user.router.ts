@@ -65,6 +65,25 @@ router.put(
   },
 );
 
+// PUT /me/message-privacy - Set who can DM this user
+router.put(
+  '/me/message-privacy',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const value = req.body?.messagePrivacy;
+      if (value !== 'EVERYONE' && value !== 'FOLLOWING' && value !== 'NOBODY') {
+        res.status(400).json({ error: 'messagePrivacy must be EVERYONE, FOLLOWING, or NOBODY' });
+        return;
+      }
+      const updated = await userService.updateMessagePrivacy(req.user!.userId, value);
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // PUT /me/preferences - Update current user's preferences
 router.put(
   '/me/preferences',

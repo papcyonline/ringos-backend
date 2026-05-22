@@ -654,6 +654,19 @@ export async function notifyChatMessage(
     audioDuration?: number;
   },
 ) {
+  // Suppress push for stranger-DM requests. A PENDING conversation is
+  // one the recipient hasn't accepted yet — interrupting them with a
+  // push would defeat the whole point of the queue. The Requests
+  // inbox surfaces it instead.
+  const convo = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { requestStatus: true },
+  });
+  if (convo?.requestStatus === 'PENDING') {
+    logger.debug({ conversationId }, 'notifyChatMessage skipped — conversation is a pending request');
+    return;
+  }
+
   // Get all participants except the sender
   const participants = await prisma.conversationParticipant.findMany({
     where: { conversationId, userId: { not: senderId }, leftAt: null },

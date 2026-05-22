@@ -140,6 +140,42 @@ router.get(
   },
 );
 
+// GET /conversations/requests - Pending message requests for this user
+router.get(
+  '/conversations/requests',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const requests = await chatService.getMessageRequests(req.user!.userId);
+      res.json(requests);
+    } catch (err) { next(err); }
+  },
+);
+
+// POST /conversations/:id/accept - Accept a pending message request
+router.post(
+  '/conversations/:id/accept',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.acceptMessageRequest(req.user!.userId, req.params.id as string);
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
+// POST /conversations/:id/decline - Decline a pending message request
+router.post(
+  '/conversations/:id/decline',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await chatService.declineMessageRequest(req.user!.userId, req.params.id as string);
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
+
 // GET /conversations/channels/recommended - Get recommended channels for user
 router.get(
   '/conversations/channels/recommended',

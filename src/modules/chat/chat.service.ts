@@ -266,6 +266,17 @@ export async function getConversations(userId: string) {
       participants: {
         some: { userId, leftAt: null },
       },
+      // Hide pending + declined message requests from the main inbox.
+      // Requests live in a separate listing (getMessageRequests) so a
+      // bad actor's spam can't push real conversations down the list.
+      OR: [
+        { requestStatus: null },
+        { requestStatus: 'ACCEPTED' },
+        // Sender's view: when *I* sent the pending request I still
+        // see the conversation in my own inbox — they just haven't
+        // accepted yet. The recipient is the one who needs the queue.
+        { requestStatus: 'PENDING', requestedById: userId },
+      ],
     },
     include: {
       participants: {
@@ -529,10 +540,44 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
     return existing;
   }
 
+  // Gate the new conversation against the recipient's privacy + follow
+  // graph. Three outcomes:
+  //   NOBODY            → reject outright.
+  //   FOLLOWING + not-followed → reject outright.
+  //   EVERYONE + not-followed → create as PENDING request (no push).
+  //   Otherwise         → create normally (requestStatus stays NULL).
+  const [target, recipientFollowsSender] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { messagePrivacy: true },
+    }),
+    prisma.follow.findFirst({
+      where: { followerId: targetUserId, followingId: userId },
+      select: { id: true },
+    }),
+  ]);
+  if (!target) {
+    throw new NotFoundError('User not found');
+  }
+  const privacy = target.messagePrivacy;
+  const isFollowedBack = !!recipientFollowsSender;
+
+  if (privacy === 'NOBODY') {
+    throw new ForbiddenError('This user does not accept direct messages');
+  }
+  if (privacy === 'FOLLOWING' && !isFollowedBack) {
+    throw new ForbiddenError('This user only accepts messages from people they follow');
+  }
+
+  const isRequest = privacy === 'EVERYONE' && !isFollowedBack;
+
   const conversation = await prisma.conversation.create({
     data: {
       type: 'HUMAN_MATCHED',
       status: 'ACTIVE',
+      ...(isRequest
+        ? { requestStatus: 'PENDING' as const, requestedById: userId }
+        : {}),
       participants: {
         create: [
           { userId },
@@ -551,8 +596,103 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
     },
   });
 
-  logger.info({ conversationId: conversation.id, userId, targetUserId }, 'Created direct conversation');
+  logger.info(
+    { conversationId: conversation.id, userId, targetUserId, isRequest },
+    isRequest ? 'Created direct conversation as message request' : 'Created direct conversation',
+  );
   return conversation;
+}
+
+/**
+ * Pending message requests addressed to this user (i.e. someone who
+ * doesn't follow them initiated a DM). Mirrors the shape of
+ * getConversations so the frontend can render with the same widgets.
+ */
+export async function getMessageRequests(userId: string) {
+  return prisma.conversation.findMany({
+    where: {
+      status: 'ACTIVE',
+      requestStatus: 'PENDING',
+      // Only return conversations the *recipient* is looking at —
+      // a sender's pending request shows up in their normal inbox.
+      requestedById: { not: userId },
+      participants: { some: { userId, leftAt: null } },
+    },
+    include: {
+      participants: {
+        include: {
+          user: {
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
+          },
+        },
+      },
+      messages: {
+        where: { NOT: { deletedFor: { has: userId } } },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: {
+          id: true,
+          content: true,
+          senderId: true,
+          createdAt: true,
+          isSystem: true,
+          deletedAt: true,
+          imageUrl: true,
+          audioUrl: true,
+        },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+}
+
+/**
+ * Accept a pending message request. Flips the conversation to a
+ * normal accepted state so future messages push, and the conversation
+ * appears in the main inbox.
+ */
+export async function acceptMessageRequest(userId: string, conversationId: string) {
+  const convo = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, requestStatus: true, requestedById: true, participants: { select: { userId: true } } },
+  });
+  if (!convo) throw new NotFoundError('Conversation not found');
+  // Only the *recipient* (not the sender of the original request) can accept.
+  const isParticipant = convo.participants.some((p) => p.userId === userId);
+  if (!isParticipant || convo.requestedById === userId) {
+    throw new ForbiddenError('You cannot accept this request');
+  }
+  if (convo.requestStatus !== 'PENDING') {
+    throw new ForbiddenError('This conversation is not a pending request');
+  }
+  return prisma.conversation.update({
+    where: { id: conversationId },
+    data: { requestStatus: 'ACCEPTED', acceptedAt: new Date() },
+  });
+}
+
+/**
+ * Decline a pending message request. The conversation is hidden from
+ * the recipient's inbox; the sender still sees it in theirs but can't
+ * promote it without the recipient accepting.
+ */
+export async function declineMessageRequest(userId: string, conversationId: string) {
+  const convo = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, requestStatus: true, requestedById: true, participants: { select: { userId: true } } },
+  });
+  if (!convo) throw new NotFoundError('Conversation not found');
+  const isParticipant = convo.participants.some((p) => p.userId === userId);
+  if (!isParticipant || convo.requestedById === userId) {
+    throw new ForbiddenError('You cannot decline this request');
+  }
+  if (convo.requestStatus !== 'PENDING') {
+    throw new ForbiddenError('This conversation is not a pending request');
+  }
+  return prisma.conversation.update({
+    where: { id: conversationId },
+    data: { requestStatus: 'DECLINED', declinedAt: new Date() },
+  });
 }
 
 /**

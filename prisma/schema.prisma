@@ -73,6 +73,29 @@ enum ConversationStatus {
   ENDED
 }
 
+// Per-user inbox gating. Controls whether a stranger (someone the
+// recipient does not follow) can land a direct message at all, and
+// whether their first message gets queued for review.
+//   EVERYONE  — anyone can DM. Strangers' first message is queued in
+//               Requests (no push) until the recipient accepts.
+//   FOLLOWING — only people the recipient follows can DM. Others get
+//               a polite rejection at send time (no queue).
+//   NOBODY    — DMs are off entirely.
+enum MessagePrivacy {
+  EVERYONE
+  FOLLOWING
+  NOBODY
+}
+
+// Lifecycle of a "message request" — a direct conversation initiated
+// by someone the recipient doesn't follow. NULL on the Conversation
+// row means "not a request" (existing convos, groups, mutuals).
+enum ConversationRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
 enum AiSessionStatus {
   ACTIVE
   ENDED
@@ -185,6 +208,8 @@ model User {
   dateOfBirth   DateTime?
   status        String    @default("available")
   availabilityNote String?
+  // Who can DM this user. See MessagePrivacy enum for semantics.
+  messagePrivacy MessagePrivacy @default(EVERYONE)
   isAnonymous   Boolean   @default(true)
   isOnline      Boolean   @default(false)
   lastSeenAt    DateTime?
@@ -454,6 +479,13 @@ model Conversation {
   adminsOnlyMessages Boolean    @default(false)
   adminsOnlyEditInfo Boolean    @default(false)
   adminsOnlyAddMembers Boolean  @default(false)
+  // Request flow for stranger DMs. requestStatus stays NULL for
+  // existing conversations and group chats; only direct conversations
+  // initiated by a non-follower flip to PENDING.
+  requestStatus  ConversationRequestStatus?
+  requestedById  String?
+  acceptedAt     DateTime?
+  declinedAt     DateTime?
   metadata  Json?
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
