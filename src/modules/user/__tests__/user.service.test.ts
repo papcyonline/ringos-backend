@@ -362,7 +362,9 @@ describe('updatePrivacy', () => {
   });
 
   it('only writes fields that were provided', async () => {
-    mockPrisma.user.findUnique.mockResolvedValue(baseUser());
+    // isProfilePublic=false requires a verified account (privacy guard
+    // added in feat(privacy)); seed the mock user with isVerified=true.
+    mockPrisma.user.findUnique.mockResolvedValue(baseUser({ isVerified: true }));
     mockPrisma.user.update.mockResolvedValue({});
 
     await updatePrivacy('user-1', { isProfilePublic: false } as any);

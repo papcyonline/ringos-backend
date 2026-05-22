@@ -33,6 +33,9 @@ const { mockPrisma } = vi.hoisted(() => {
     user: {
       findUnique: vi.fn(),
     },
+    follow: {
+      findFirst: vi.fn(),
+    },
     $transaction: tx,
   };
   return { mockPrisma };
@@ -154,6 +157,12 @@ describe('getOrCreateDirectConversation', () => {
   it('creates new direct conversation when none exists', async () => {
     mockPrisma.conversation.findFirst.mockResolvedValue(null);
     mockPrisma.conversation.create.mockResolvedValue({ id: 'new-conv', participants: [] });
+    // Privacy gate added in the message-requests feature: target must
+    // exist for the conversation to be created. Default to EVERYONE +
+    // recipient follows the sender so the convo is created normally
+    // (not as a pending request).
+    mockPrisma.user.findUnique.mockResolvedValue({ messagePrivacy: 'EVERYONE' });
+    mockPrisma.follow.findFirst.mockResolvedValue({ id: 'f-1' });
 
     await getOrCreateDirectConversation('user-1', 'user-2');
 

@@ -18,6 +18,12 @@ const { mockPrisma, mockIO, mockSocketRoom } = vi.hoisted(() => {
       count: vi.fn(),
       updateMany: vi.fn(),
     },
+    // Message-requests feature reads requestStatus before sending the
+    // push — default to a non-request conversation so existing tests
+    // keep their original behavior.
+    conversation: {
+      findUnique: vi.fn().mockResolvedValue({ requestStatus: null }),
+    },
     conversationParticipant: {
       findMany: vi.fn(),
     },

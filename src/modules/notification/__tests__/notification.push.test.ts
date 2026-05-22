@@ -34,6 +34,12 @@ const { mockPrisma, mockIO, mockSocketRoom, mockSendEachForMulticast, mockSendVo
     notification: {
       create: vi.fn().mockResolvedValue({ id: 'notif-1' }),
     },
+    // Message-requests feature reads requestStatus before sending the
+    // push — default to a non-request conversation so existing tests
+    // keep their original behavior.
+    conversation: {
+      findUnique: vi.fn().mockResolvedValue({ requestStatus: null }),
+    },
     conversationParticipant: {
       findMany: vi.fn(),
     },
