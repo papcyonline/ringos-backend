@@ -622,7 +622,7 @@ export async function getMessageRequests(userId: string) {
       participants: {
         include: {
           user: {
-            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, lastSeenAt: true },
+            select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true, verifiedRole: true, location: true, lastSeenAt: true },
           },
         },
       },
@@ -638,7 +638,9 @@ export async function getMessageRequests(userId: string) {
           isSystem: true,
           deletedAt: true,
           imageUrl: true,
+          imageUrls: true,
           audioUrl: true,
+          videoUrl: true,
         },
       },
     },
