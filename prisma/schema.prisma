@@ -151,6 +151,14 @@ enum TransactionType {
   TIP
 }
 
+enum ReEngagementHook {
+  UNREAD_DM
+  NEW_FOLLOWER
+  FOLLOWED_STORY
+  NEW_JOINS
+  GENERIC
+}
+
 // ─── Models ─────────────────────────────────────────────
 
 model User {
@@ -247,6 +255,7 @@ model User {
   chatFolders      ChatFolder[]
   polls            Poll[]
   pollVotes        PollVote[]
+  reEngagementPushes ReEngagementPush[]
 
   @@index([isOnline, lastSeenAt])
 }
@@ -1227,4 +1236,22 @@ model AdminUser {
   updatedAt    DateTime  @updatedAt
 
   @@index([role, isActive])
+}
+
+// Log of re-engagement pushes sent to dormant users so the campaign
+// cron can dedupe per cadence step. Unique on (userId, cadenceDay)
+// guarantees each step (3 / 7 / 14 / 30 days inactive) fires at most
+// once per user, ever — clean enough for MVP without needing a
+// "dormant spell" concept yet.
+model ReEngagementPush {
+  id         String           @id @default(uuid())
+  userId     String
+  cadenceDay Int
+  hookType   ReEngagementHook
+  sentAt     DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cadenceDay])
+  @@index([sentAt])
 }

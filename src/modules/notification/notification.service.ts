@@ -359,7 +359,7 @@ export async function sendDataPushToUser(userId: string, data: Record<string, st
  * Send a push notification via FCM to all devices registered for a user.
  * This version includes a notification payload for backwards compatibility.
  */
-async function sendPushToUser(userId: string, payload: {
+export async function sendPushToUser(userId: string, payload: {
   title: string;
   body: string;
   imageUrl?: string;
