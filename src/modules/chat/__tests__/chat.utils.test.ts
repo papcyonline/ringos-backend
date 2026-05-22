@@ -9,6 +9,12 @@ vi.mock('../../../config/database', () => ({
     conversationParticipant: {
       findMany: vi.fn().mockResolvedValue([{ userId: 'user-1' }, { userId: 'user-2' }]),
     },
+    // emitToParticipantRooms now also reads requestStatus + requestedById
+    // to suppress real-time delivery to the recipient of a PENDING request.
+    // Default to a non-request conversation so existing assertions stand.
+    conversation: {
+      findUnique: vi.fn().mockResolvedValue({ requestStatus: null, requestedById: null }),
+    },
   },
 }));
 

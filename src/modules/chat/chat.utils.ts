@@ -19,12 +19,33 @@ export async function emitToParticipantRooms(
   conversationId: string,
   payload: any,
 ): Promise<void> {
-  const participants = await prisma.conversationParticipant.findMany({
-    where: { conversationId, leftAt: null },
-    select: { userId: true },
-  });
-  logger.info({ conversationId, participantCount: participants.length }, 'Emitting chat:list-update + chat:message to participant rooms');
+  // Pull participants AND the conversation's request state in parallel
+  // so we can suppress real-time delivery to the recipient of a
+  // PENDING request — they shouldn't see a banner or a chat-list row
+  // until they explicitly accept.
+  const [participants, convo] = await Promise.all([
+    prisma.conversationParticipant.findMany({
+      where: { conversationId, leftAt: null },
+      select: { userId: true },
+    }),
+    prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { requestStatus: true, requestedById: true },
+    }),
+  ]);
+  const isPending = convo?.requestStatus === 'PENDING';
+  const senderUserId = convo?.requestedById ?? null;
+  logger.info(
+    { conversationId, participantCount: participants.length, isPending },
+    'Emitting chat:list-update + chat:message to participant rooms',
+  );
   for (const p of participants) {
+    // For PENDING requests, only emit to the sender. The recipient
+    // sees the conversation only via the explicit Message Requests
+    // inbox query — never via realtime push, banner, or list update.
+    if (isPending && p.userId !== senderUserId) {
+      continue;
+    }
     // chat:list-update drives the chats-list lastMessage UI.
     io.to(`user:${p.userId}`).emit('chat:list-update', payload);
     // chat:message is also emitted to the participant's personal user room
