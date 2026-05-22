@@ -21,7 +21,9 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response, next: Next
   try {
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 50));
-    const result = await userService.listUsers(req.user!.userId, page, limit);
+    const rawQ = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
+    const q = rawQ.length > 0 ? rawQ : undefined;
+    const result = await userService.listUsers(req.user!.userId, page, limit, q);
     res.json(result);
   } catch (err) {
     next(err);

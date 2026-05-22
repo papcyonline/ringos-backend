@@ -153,7 +153,12 @@ export async function getUserById(targetId: string, currentUserId: string) {
   };
 }
 
-export async function listUsers(currentUserId: string, page = 1, limit = 50) {
+export async function listUsers(
+  currentUserId: string,
+  page = 1,
+  limit = 50,
+  q?: string,
+) {
   const blocks = await prisma.block.findMany({
     where: {
       OR: [{ blockerId: currentUserId }, { blockedId: currentUserId }],
@@ -175,12 +180,19 @@ export async function listUsers(currentUserId: string, page = 1, limit = 50) {
   // surface as a ghost user. The bio check covers both NULL and ''
   // for the nullable column; displayName is non-null in the schema
   // so only the empty-string check matters there.
-  const userWhere = {
+  const trimmedQ = q?.trim() ?? '';
+  const userWhere: any = {
     id: { notIn: [currentUserId, ...blockedIds] },
     isAnonymous: false,
     displayName: { not: '' },
     bio: { not: null, notIn: [''] },
   };
+  if (trimmedQ.length > 0) {
+    userWhere.OR = [
+      { displayName: { contains: trimmedQ, mode: 'insensitive' } },
+      { bio: { contains: trimmedQ, mode: 'insensitive' } },
+    ];
+  }
 
   const [users, total] = await Promise.all([
     prisma.user.findMany({
