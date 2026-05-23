@@ -86,6 +86,73 @@ export interface ModerationResult {
 }
 
 /**
+ * Check an image buffer against Sightengine's moderation API by
+ * posting the raw bytes (multipart/form-data).
+ *
+ * Prefer this over [moderateImageUrl] when the image isn't yet in
+ * publicly addressable storage — avatar uploads overwrite the user's
+ * canonical URL, so checking AFTER upload would leave an unsafe file
+ * at that URL even if we then reject. With buffer moderation we can
+ * decide BEFORE the bytes ever land in storage.
+ *
+ * Returns { safe: true } if no API key is configured (fail open).
+ */
+export async function moderateImageBuffer(
+  buffer: Buffer,
+  filename: string = 'upload.jpg',
+): Promise<ModerationResult> {
+  if (!isModerationConfigured) return { safe: true };
+
+  try {
+    const form = new FormData();
+    form.append('media', new Blob([buffer]), filename);
+    form.append('models', 'nudity-2.1,offensive,weapon,recreational_drug');
+    form.append('api_user', SIGHTENGINE_USER!);
+    form.append('api_secret', SIGHTENGINE_SECRET!);
+
+    const response = await fetch('https://api.sightengine.com/1.0/check.json', {
+      method: 'POST',
+      body: form,
+    });
+    if (!response.ok) {
+      logger.warn({ status: response.status }, 'Sightengine API error (buffer)');
+      return { safe: true };
+    }
+
+    const data = await response.json() as any;
+    if (data.status !== 'success') {
+      logger.warn({ data }, 'Sightengine returned non-success status (buffer)');
+      return { safe: true };
+    }
+
+    const nudity = data.nudity || {};
+    const nudityScore = Math.max(
+      nudity.sexual_activity || 0,
+      nudity.sexual_display || 0,
+      nudity.erotica || 0,
+    );
+    const offensive = data.offensive?.prob || 0;
+    const weapon = data.weapon || 0;
+    const drugs = data.recreational_drug?.prob || 0;
+    const scores = { nudity: nudityScore, offensive, weapon, drugs };
+
+    if (nudityScore > NUDITY_THRESHOLD) {
+      return { safe: false, reason: 'Content contains nudity or sexual content', scores };
+    }
+    if (offensive > OFFENSIVE_THRESHOLD) {
+      return { safe: false, reason: 'Content contains offensive material', scores };
+    }
+    if (weapon > 0.8) {
+      return { safe: false, reason: 'Content contains weapons', scores };
+    }
+    return { safe: true, scores };
+  } catch (err) {
+    logger.error({ err }, 'Buffer moderation check failed');
+    return { safe: true };
+  }
+}
+
+/**
  * Check an image URL against Sightengine's moderation API.
  * Returns { safe: true } if no API key is configured (fail open).
  */

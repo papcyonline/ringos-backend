@@ -18,6 +18,9 @@ import {
   uploadChatImageToSupabase,
   uploadVoiceNoteToSupabase,
 } from './supabase.service';
+import { moderateImageBuffer } from './moderation.service';
+import { ForbiddenError } from './errors';
+import { logger } from './logger';
 
 // Use memory storage — files live in buffer until uploaded to Cloudinary
 const memoryStorage = multer.memoryStorage();
@@ -153,6 +156,23 @@ export async function fileToAvatarUrl(file: Express.Multer.File, userId: string)
     .resize(800, 800, { fit: 'cover' })
     .jpeg({ quality: 90 })
     .toBuffer();
+
+  // Block NSFW / disallowed avatars BEFORE upload. Doing this after
+  // upload would leave an unsafe file at the user's canonical avatar
+  // URL (uploadAvatarToSupabase / R2 use a stable per-user key, so
+  // each upload overwrites the previous one) — even if we later
+  // throw, the file is publicly fetchable. Buffer-based check
+  // sidesteps that window.
+  const verdict = await moderateImageBuffer(resized, `avatar-${userId}.jpg`);
+  if (!verdict.safe) {
+    logger.warn(
+      { userId, reason: verdict.reason, scores: verdict.scores },
+      'Avatar upload rejected by moderation',
+    );
+    throw new ForbiddenError(
+      verdict.reason ?? 'This image was rejected by our content policy',
+    );
+  }
 
   // 1. Supabase — stable per-user path, upserts on every change
   if (isSupabaseConfigured) {
