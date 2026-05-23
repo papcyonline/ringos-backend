@@ -113,7 +113,7 @@ export async function deleteAllNotifications(userId: string) {
 
 export async function createNotification(data: {
   userId: string;
-  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'STORY_VIEWED' | 'STORY_MILESTONE' | 'MISSED_CALL' | 'SYSTEM' | 'POST_LIKED' | 'POST_COMMENTED' | 'POST_MENTION' | 'NEW_POST' | 'NEW_STORY';
+  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'STORY_VIEWED' | 'STORY_MILESTONE' | 'MISSED_CALL' | 'SYSTEM' | 'POST_LIKED' | 'POST_COMMENTED' | 'POST_MENTION' | 'NEW_POST' | 'NEW_STORY' | 'MESSAGE_REQUESTS_DIGEST' | 'NEW_FOLLOWERS_DIGEST';
   title: string;
   body: string;
   imageUrl?: string;

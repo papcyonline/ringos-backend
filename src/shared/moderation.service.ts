@@ -86,6 +86,42 @@ export interface ModerationResult {
 }
 
 /**
+ * Translate a Sightengine `check.json` response body into our
+ * ModerationResult. Centralised so the URL and buffer entry points
+ * apply the exact same scoring rules + thresholds — and so a future
+ * third entry point (e.g. video frames) doesn't have to copy them
+ * again.
+ *
+ * Sightengine's nudity-2.1 model returns granular sub-scores;
+ * sexual_activity / sexual_display / erotica are the explicit ones
+ * we treat as nudity. very_suggestive is intentionally NOT included
+ * because it false-positives heavily on selfies.
+ */
+function verdictFromSightengineResponse(data: any): ModerationResult {
+  const nudity = data.nudity || {};
+  const nudityScore = Math.max(
+    nudity.sexual_activity || 0,
+    nudity.sexual_display || 0,
+    nudity.erotica || 0,
+  );
+  const offensive = data.offensive?.prob || 0;
+  const weapon = data.weapon || 0;
+  const drugs = data.recreational_drug?.prob || 0;
+  const scores = { nudity: nudityScore, offensive, weapon, drugs };
+
+  if (nudityScore > NUDITY_THRESHOLD) {
+    return { safe: false, reason: 'Content contains nudity or sexual content', scores };
+  }
+  if (offensive > OFFENSIVE_THRESHOLD) {
+    return { safe: false, reason: 'Content contains offensive material', scores };
+  }
+  if (weapon > 0.8) {
+    return { safe: false, reason: 'Content contains weapons', scores };
+  }
+  return { safe: true, scores };
+}
+
+/**
  * Check an image buffer against Sightengine's moderation API by
  * posting the raw bytes (multipart/form-data).
  *
@@ -125,27 +161,7 @@ export async function moderateImageBuffer(
       return { safe: true };
     }
 
-    const nudity = data.nudity || {};
-    const nudityScore = Math.max(
-      nudity.sexual_activity || 0,
-      nudity.sexual_display || 0,
-      nudity.erotica || 0,
-    );
-    const offensive = data.offensive?.prob || 0;
-    const weapon = data.weapon || 0;
-    const drugs = data.recreational_drug?.prob || 0;
-    const scores = { nudity: nudityScore, offensive, weapon, drugs };
-
-    if (nudityScore > NUDITY_THRESHOLD) {
-      return { safe: false, reason: 'Content contains nudity or sexual content', scores };
-    }
-    if (offensive > OFFENSIVE_THRESHOLD) {
-      return { safe: false, reason: 'Content contains offensive material', scores };
-    }
-    if (weapon > 0.8) {
-      return { safe: false, reason: 'Content contains weapons', scores };
-    }
-    return { safe: true, scores };
+    return verdictFromSightengineResponse(data);
   } catch (err) {
     logger.error({ err }, 'Buffer moderation check failed');
     return { safe: true };
@@ -170,7 +186,7 @@ export async function moderateImageUrl(imageUrl: string): Promise<ModerationResu
     const response = await fetch(`https://api.sightengine.com/1.0/check.json?${params}`);
     if (!response.ok) {
       logger.warn({ status: response.status }, 'Sightengine API error');
-      return { safe: true }; // fail open on API errors
+      return { safe: true };
     }
 
     const data = await response.json() as any;
@@ -179,34 +195,10 @@ export async function moderateImageUrl(imageUrl: string): Promise<ModerationResu
       return { safe: true };
     }
 
-    // Sightengine nudity-2.1: sexual_activity, sexual_display, erotica, very_suggestive
-    const nudity = data.nudity || {};
-    const nudityScore = Math.max(
-      nudity.sexual_activity || 0,
-      nudity.sexual_display || 0,
-      nudity.erotica || 0,
-    );
-
-    const offensive = data.offensive?.prob || 0;
-    const weapon = data.weapon || 0;
-    const drugs = data.recreational_drug?.prob || 0;
-
-    const scores = { nudity: nudityScore, offensive, weapon, drugs };
-
-    if (nudityScore > NUDITY_THRESHOLD) {
-      return { safe: false, reason: 'Content contains nudity or sexual content', scores };
-    }
-    if (offensive > OFFENSIVE_THRESHOLD) {
-      return { safe: false, reason: 'Content contains offensive material', scores };
-    }
-    if (weapon > 0.8) {
-      return { safe: false, reason: 'Content contains weapons', scores };
-    }
-
-    return { safe: true, scores };
+    return verdictFromSightengineResponse(data);
   } catch (err) {
     logger.error({ err, imageUrl }, 'Moderation check failed');
-    return { safe: true }; // fail open
+    return { safe: true };
   }
 }
 

@@ -167,6 +167,8 @@ enum NotificationType {
   POST_MENTION
   NEW_POST
   NEW_STORY
+  MESSAGE_REQUESTS_DIGEST
+  NEW_FOLLOWERS_DIGEST
 }
 
 enum TransactionType {
