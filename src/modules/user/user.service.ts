@@ -277,7 +277,7 @@ export async function listUsers(
       isFollowingMe: followersSet.has(user.id),
       likeCount: user._count.likesReceived,
       isLikedByMe: likedSet.has(user.id),
-      reportCount: 0,
+      reportCount: user.moderation?.flagCount ?? 0,
     };
   });
 
