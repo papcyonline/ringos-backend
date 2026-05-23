@@ -26,6 +26,7 @@ import {
 } from './story.service';
 import { getStoryGiftStats } from '../coins/coins.service';
 import { createNotification, sendPostPush } from '../notification/notification.service';
+import { checkStoryMilestone } from './story.notify';
 import { prisma } from '../../config/database';
 import { getIO } from '../../config/socket';
 
@@ -290,6 +291,23 @@ router.post(
         }).catch((err) => {
           logger.error({ err, userId: story.userId }, 'Failed to send story-like push');
         });
+
+        // Milestone check: read the denormalized likeCount on Story
+        // (kept in sync by likeStory) and notify the owner if they
+        // just crossed a tier. Fire-and-forget.
+        (async () => {
+          try {
+            const fresh = await prisma.story.findUnique({
+              where: { id: storyId },
+              select: { likeCount: true },
+            });
+            if (fresh?.likeCount != null) {
+              await checkStoryMilestone(storyId, story.userId, 'likes', fresh.likeCount);
+            }
+          } catch (err) {
+            logger.warn({ err, storyId }, 'Failed to evaluate like milestone');
+          }
+        })();
       }
 
       res.json({ success: true });

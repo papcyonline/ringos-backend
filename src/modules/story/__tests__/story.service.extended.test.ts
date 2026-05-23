@@ -24,6 +24,10 @@ const { mockPrisma, mockChatService } = vi.hoisted(() => {
       update: vi.fn(),
       upsert: vi.fn(),
       updateMany: vi.fn(),
+      // Default to 1 (the view we just inserted) so the milestone
+      // check is well below the smallest tier and is a no-op in
+      // tests that don't care about milestones.
+      count: vi.fn().mockResolvedValue(1),
     },
     storyMute: {
       findMany: vi.fn(),
@@ -76,6 +80,7 @@ vi.mock('../../../shared/upload', () => ({
 vi.mock('../story.notify', () => ({
   notifyFollowersOfNewStory: vi.fn().mockResolvedValue(undefined),
   notifyStoryOwnerOfView: vi.fn().mockResolvedValue(undefined),
+  checkStoryMilestone: vi.fn().mockResolvedValue(undefined),
 }));
 
 import {

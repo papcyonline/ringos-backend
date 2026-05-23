@@ -7,7 +7,7 @@ import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { deleteFromR2 } from '../../shared/r2.service';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
-import { notifyFollowersOfNewStory, notifyStoryOwnerOfView } from './story.notify';
+import { notifyFollowersOfNewStory, notifyStoryOwnerOfView, checkStoryMilestone } from './story.notify';
 
 /**
  * Delete a story slide's underlying media from whichever storage backend
@@ -595,6 +595,15 @@ export async function markStoryViewed(storyId: string, viewerId: string, isSteal
     if (story) {
       // Fire-and-forget — don't await, don't block playback on push.
       void notifyStoryOwnerOfView(storyId, story.userId, viewerId);
+      // Milestone check: count non-stealth views and notify the owner
+      // if they just crossed a tier. We only count public views (the
+      // owner already can't see stealth ones in viewer-list, and a
+      // stealth view shouldn't push them into "100 views" copy that
+      // they then read on the wrong premise).
+      const viewCount = await prisma.storyView.count({
+        where: { storyId, isStealth: false },
+      });
+      void checkStoryMilestone(storyId, story.userId, 'views', viewCount);
     }
   }
 }
