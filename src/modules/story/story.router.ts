@@ -168,8 +168,9 @@ router.post(
       for (const file of files) {
         if (file.size > maxBytes) {
           return res.status(413).json({
-            error: `File exceeds ${limits.storyUploadMB}MB limit`,
+            error: `This file is too large — the limit is ${limits.storyUploadMB}MB. Try a shorter or lower-resolution video.`,
             code: 'FILE_TOO_LARGE',
+            limitMB: limits.storyUploadMB,
           });
         }
       }

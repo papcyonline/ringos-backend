@@ -30,7 +30,7 @@ function secondsUntilMidnight(): number {
 // ─── Limits ──────────────────────────────────────────────────────────────────
 
 export const LIMITS = {
-  FREE: { bioLength: 200, storyUploadMB: 50, pinnedChats: 3 },
+  FREE: { bioLength: 200, storyUploadMB: 30, pinnedChats: 3 },
   PRO:  { bioLength: 500, storyUploadMB: 100, pinnedChats: 10 },
 } as const;
 
