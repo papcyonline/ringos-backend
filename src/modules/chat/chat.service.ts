@@ -301,6 +301,7 @@ export async function getConversations(userId: string) {
           deletedAt: true,
           imageUrl: true,
           audioUrl: true,
+          videoUrl: true,
         },
       },
     },
