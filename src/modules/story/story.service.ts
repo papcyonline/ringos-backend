@@ -707,6 +707,27 @@ export async function getStoryViewers(storyId: string, userId: string) {
 
   const userMap = new Map(users.map((u) => [u.id, u]));
 
+  // Which viewers currently have an active (non-expired) story of their own
+  // — used to draw a story ring on their avatar in the viewers list.
+  const now = new Date();
+  const viewersWithStory = await prisma.story.findMany({
+    where: {
+      userId: { in: viewerIds },
+      OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
+    },
+    select: { userId: true },
+    distinct: ['userId'],
+  });
+  const hasStorySet = new Set(viewersWithStory.map((s) => s.userId));
+
+  // Which viewers follow the story owner — powers the "My Followers"
+  // filter in the viewers sheet.
+  const followerRows = await prisma.follow.findMany({
+    where: { followingId: userId, followerId: { in: viewerIds } },
+    select: { followerId: true },
+  });
+  const followerSet = new Set(followerRows.map((r) => r.followerId));
+
   return views.map((v) => {
     const user = userMap.get(v.viewerId);
     return {
@@ -716,6 +737,8 @@ export async function getStoryViewers(storyId: string, userId: string) {
       displayName: user?.displayName ?? 'Unknown',
       avatarUrl: user?.avatarUrl ?? null,
       isVerified: user?.isVerified ?? false,
+      hasActiveStory: hasStorySet.has(v.viewerId),
+      isFollower: followerSet.has(v.viewerId),
     };
   });
 }
