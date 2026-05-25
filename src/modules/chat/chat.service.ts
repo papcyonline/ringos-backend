@@ -618,6 +618,15 @@ export async function getMessageRequests(userId: string) {
       // a sender's pending request shows up in their normal inbox.
       requestedById: { not: userId },
       participants: { some: { userId, leftAt: null } },
+      // Require a real message — a stranger merely *opening* the DM creates
+      // a pending conversation, but it isn't a request until they actually
+      // send something. Excludes ghost/empty requests.
+      messages: {
+        some: {
+          isSystem: false,
+          NOT: { deletedFor: { has: userId } },
+        },
+      },
     },
     include: {
       participants: {
