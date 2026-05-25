@@ -268,6 +268,8 @@ model User {
   storyBoosts      StoryBoost[]
   storyMutesInitiated StoryMute[] @relation("StoryMutesInitiated")
   storyMutesReceived  StoryMute[] @relation("StoryMutesReceived")
+  storyHidesInitiated StoryHide[] @relation("StoryHidesInitiated")
+  storyHidesReceived  StoryHide[] @relation("StoryHidesReceived")
   reels               Reel[]
   reelLikes           ReelLike[]
   reelComments        ReelComment[]
@@ -1170,6 +1172,23 @@ model StoryMute {
   @@unique([muterId, mutedUserId])
   @@index([muterId])
   @@index([mutedUserId])
+}
+
+// A story OWNER hides their stories from a specific viewer (inverse of
+// StoryMute). The owner's stories are excluded from the hidden viewer's
+// feeds. Reversible from the owner's "Hidden from your story" list.
+model StoryHide {
+  id           String   @id @default(uuid())
+  ownerId      String
+  hiddenUserId String
+  createdAt    DateTime @default(now())
+
+  owner      User @relation("StoryHidesInitiated", fields: [ownerId], references: [id], onDelete: Cascade)
+  hiddenUser User @relation("StoryHidesReceived", fields: [hiddenUserId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, hiddenUserId])
+  @@index([ownerId])
+  @@index([hiddenUserId])
 }
 
 // ─── Chat Folders ──────────────────────────────────────

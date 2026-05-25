@@ -34,6 +34,11 @@ const { mockPrisma, mockChatService } = vi.hoisted(() => {
       upsert: vi.fn(),
       deleteMany: vi.fn(),
     },
+    storyHide: {
+      findMany: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn(),
+      deleteMany: vi.fn(),
+    },
     storyReaction: {
       findUnique: vi.fn(),
       upsert: vi.fn(),

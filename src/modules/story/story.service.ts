@@ -181,15 +181,17 @@ export async function getStoryFeed(requesterId: string) {
   }
 
   // Friends section = stories of users WHO FOLLOW ME (incoming followers).
-  const [blockedIds, followerIds, mutedIds] = await Promise.all([
+  const [blockedIds, followerIds, mutedIds, hiddenFromIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getFollowerIds(requesterId),
     getMutedUserIds(requesterId),
+    getHiddenFromOwnerIds(requesterId),
   ]);
 
   const mutedSet = new Set(mutedIds);
+  const hiddenFromSet = new Set(hiddenFromIds);
   const audienceIds = [requesterId, ...followerIds].filter(
-    (id) => !blockedIds.has(id) && !mutedSet.has(id),
+    (id) => !blockedIds.has(id) && !mutedSet.has(id) && !hiddenFromSet.has(id),
   );
   const now = new Date();
 
@@ -393,15 +395,17 @@ function groupStoriesByUser(
 // Stories of users I FOLLOW (regardless of whether they follow me back).
 
 export async function getFollowingFeed(requesterId: string) {
-  const [blockedIds, followingIds, mutedIds] = await Promise.all([
+  const [blockedIds, followingIds, mutedIds, hiddenFromIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getFollowingIds(requesterId),
     getMutedUserIds(requesterId),
+    getHiddenFromOwnerIds(requesterId),
   ]);
 
   const mutedSet = new Set(mutedIds);
+  const hiddenFromSet = new Set(hiddenFromIds);
   const audienceIds = followingIds.filter(
-    (id) => !blockedIds.has(id) && !mutedSet.has(id),
+    (id) => !blockedIds.has(id) && !mutedSet.has(id) && !hiddenFromSet.has(id),
   );
   if (audienceIds.length === 0) return [];
 
@@ -461,11 +465,12 @@ export async function getFollowingFeed(requesterId: string) {
 // Only PUBLIC-visibility stories surface here.
 
 export async function getDiscoverFeed(requesterId: string) {
-  const [blockedIds, followingIds, followerIds, mutedIds] = await Promise.all([
+  const [blockedIds, followingIds, followerIds, mutedIds, hiddenFromIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getFollowingIds(requesterId),
     getFollowerIds(requesterId),
     getMutedUserIds(requesterId),
+    getHiddenFromOwnerIds(requesterId),
   ]);
 
   const excludeIds = new Set<string>([
@@ -473,6 +478,7 @@ export async function getDiscoverFeed(requesterId: string) {
     ...followingIds,
     ...followerIds,
     ...mutedIds,
+    ...hiddenFromIds,
   ]);
   for (const id of blockedIds) {
     excludeIds.add(id);
@@ -556,6 +562,16 @@ async function getMutedUserIds(userId: string): Promise<string[]> {
   return rows.map((r) => r.mutedUserId);
 }
 
+// Owners who have hidden their stories FROM me — their stories are
+// excluded from my feeds. (Inverse of muting.)
+async function getHiddenFromOwnerIds(viewerId: string): Promise<string[]> {
+  const rows = await prisma.storyHide.findMany({
+    where: { hiddenUserId: viewerId },
+    select: { ownerId: true },
+  });
+  return rows.map((r) => r.ownerId);
+}
+
 // ─── Mute / Unmute ──────────────────────────────────────────
 
 export async function muteUserStories(muterId: string, mutedUserId: string) {
@@ -575,6 +591,54 @@ export async function unmuteUserStories(muterId: string, mutedUserId: string) {
     where: { muterId, mutedUserId },
   });
   invalidateFeedCache(muterId);
+}
+
+// ─── Hide / Unhide my story from a viewer ───────────────────
+// ownerId hides their own stories from hiddenUserId. Invalidate the
+// VIEWER's cache (not the owner's) since it's the viewer's feed that
+// changes.
+
+export async function hideStoryFromViewer(ownerId: string, hiddenUserId: string) {
+  if (ownerId === hiddenUserId) {
+    throw new BadRequestError('Cannot hide your story from yourself');
+  }
+  await prisma.storyHide.upsert({
+    where: { ownerId_hiddenUserId: { ownerId, hiddenUserId } },
+    create: { ownerId, hiddenUserId },
+    update: {},
+  });
+  invalidateFeedCache(hiddenUserId);
+}
+
+export async function unhideStoryFromViewer(ownerId: string, hiddenUserId: string) {
+  await prisma.storyHide.deleteMany({
+    where: { ownerId, hiddenUserId },
+  });
+  invalidateFeedCache(hiddenUserId);
+}
+
+// Users the owner has hidden their stories from (for a management list).
+export async function getHiddenViewers(ownerId: string) {
+  const rows = await prisma.storyHide.findMany({
+    where: { ownerId },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      hiddenUser: {
+        select: {
+          id: true,
+          displayName: true,
+          avatarUrl: true,
+          isVerified: true,
+        },
+      },
+    },
+  });
+  return rows.map((r) => ({
+    userId: r.hiddenUser.id,
+    displayName: r.hiddenUser.displayName,
+    avatarUrl: r.hiddenUser.avatarUrl,
+    isVerified: r.hiddenUser.isVerified,
+  }));
 }
 
 // ─── Mark Story Viewed ──────────────────────────────────────

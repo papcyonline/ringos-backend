@@ -17,6 +17,9 @@ import {
   replyToStory,
   muteUserStories,
   unmuteUserStories,
+  hideStoryFromViewer,
+  unhideStoryFromViewer,
+  getHiddenViewers,
   updateSlideCaption,
   deleteStory,
   deleteSlide,
@@ -101,6 +104,61 @@ router.delete(
     } catch (error) {
       logger.error({ error }, 'Error unmuting user stories');
       res.status(500).json({ error: 'Failed to unmute user' });
+    }
+  }
+);
+
+// ─── Hide my story from a viewer ────────────────────────────
+
+// GET /api/stories/hidden — users I've hidden my story from
+router.get(
+  '/hidden',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const ownerId = req.user!.userId;
+      const hidden = await getHiddenViewers(ownerId);
+      res.json({ hidden });
+    } catch (error) {
+      logger.error({ error }, 'Error fetching hidden viewers');
+      res.status(500).json({ error: 'Failed to fetch hidden viewers' });
+    }
+  }
+);
+
+// POST /api/stories/hide/:userId — hide my story from :userId
+router.post(
+  '/hide/:userId',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const ownerId = req.user!.userId;
+      const hiddenUserId = req.params.userId as string;
+      await hideStoryFromViewer(ownerId, hiddenUserId);
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error?.statusCode === 400) {
+        return res.status(400).json({ error: error.message });
+      }
+      logger.error({ error }, 'Error hiding story from user');
+      res.status(500).json({ error: 'Failed to hide story' });
+    }
+  }
+);
+
+// DELETE /api/stories/hide/:userId — unhide (let them see my story again)
+router.delete(
+  '/hide/:userId',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const ownerId = req.user!.userId;
+      const hiddenUserId = req.params.userId as string;
+      await unhideStoryFromViewer(ownerId, hiddenUserId);
+      res.json({ success: true });
+    } catch (error) {
+      logger.error({ error }, 'Error unhiding story from user');
+      res.status(500).json({ error: 'Failed to unhide story' });
     }
   }
 );
