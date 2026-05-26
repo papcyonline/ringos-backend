@@ -264,6 +264,7 @@ model User {
   stories          Story[]
   storyHighlights  StoryHighlight[]
   storyViews       StoryView[]
+  storySlideViews  StorySlideView[]
   storyReactions   StoryReaction[]
   storyBoosts      StoryBoost[]
   storyMutesInitiated StoryMute[] @relation("StoryMutesInitiated")
@@ -978,9 +979,29 @@ model StorySlide {
   metadata     Json?
   createdAt    DateTime       @default(now())
 
-  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  story Story            @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  views StorySlideView[]
 
   @@index([storyId])
+}
+
+/// Per-slide view tracking (Instagram-style): one row per viewer per slide,
+/// so each slide in a story has its own view count and viewer list. This is
+/// separate from StoryView, which stays story-level and continues to power
+/// the unviewed ring, the "viewed your story" notification, and milestones.
+model StorySlideView {
+  id        String   @id @default(uuid())
+  slideId   String
+  viewerId  String
+  isStealth Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  slide  StorySlide @relation(fields: [slideId], references: [id], onDelete: Cascade)
+  viewer User       @relation(fields: [viewerId], references: [id], onDelete: Cascade)
+
+  @@unique([slideId, viewerId])
+  @@index([slideId])
+  @@index([viewerId])
 }
 
 /// A user's permanent collection of saved story slides.

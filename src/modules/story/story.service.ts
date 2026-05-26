@@ -216,6 +216,13 @@ export async function getStoryFeed(requesterId: string) {
           // it, the viewer never gets the music URL/title and the
           // attached track silently doesn't play.
           metadata: true,
+          // Per-slide views: requester's own view row (drives `viewed`)
+          // plus the total view count for this individual slide.
+          views: {
+            where: { viewerId: requesterId },
+            select: { id: true },
+          },
+          _count: { select: { views: true } },
         },
       },
       user: {
@@ -289,17 +296,7 @@ export async function getStoryFeed(requesterId: string) {
       id: s.id,
       createdAt: s.createdAt,
       expiresAt: s.expiresAt,
-      slides: s.slides.map((slide) => ({
-        id: slide.id,
-        type: slide.type,
-        mediaUrl: slide.mediaUrl,
-        thumbnailUrl: slide.thumbnailUrl,
-        caption: slide.caption,
-        duration: slide.duration,
-        position: slide.position,
-        // Pass through the music + videoEdits JSON the viewer needs.
-        metadata: slide.metadata,
-      })),
+      slides: s.slides.map(toFeedSlide),
       viewed: s.views.length > 0,
       myReaction: s.reactions[0]?.emoji ?? null,
       viewCount: s._count.views,
@@ -320,6 +317,27 @@ export async function getStoryFeed(requesterId: string) {
 
   feedCache.set(requesterId, { data: feed, expiresAt: Date.now() + FEED_CACHE_TTL_MS });
   return feed;
+}
+
+// Maps a slide row (with the per-slide views/_count include) to the feed
+// payload shape. Shared by getStoryFeed and groupStoriesByUser so the slide
+// fields — including the Instagram-style per-slide viewCount/viewed — stay
+// defined in one place.
+function toFeedSlide(slide: any) {
+  return {
+    id: slide.id,
+    type: slide.type,
+    mediaUrl: slide.mediaUrl,
+    thumbnailUrl: slide.thumbnailUrl,
+    caption: slide.caption,
+    duration: slide.duration,
+    position: slide.position,
+    // Pass through the music + videoEdits JSON the viewer needs.
+    metadata: slide.metadata,
+    // Per-slide engagement (Instagram-style).
+    viewCount: slide._count.views,
+    viewed: slide.views.length > 0,
+  };
 }
 
 // Shared grouping for getStoryFeed / getFollowingFeed / getDiscoverFeed.
@@ -378,7 +396,7 @@ function groupStoriesByUser(
       id: s.id,
       createdAt: s.createdAt,
       expiresAt: s.expiresAt,
-      slides: s.slides,
+      slides: s.slides.map(toFeedSlide),
       viewed: s.views.length > 0,
       myReaction: s.reactions[0]?.emoji ?? null,
       viewCount: s._count.views,
@@ -431,6 +449,13 @@ export async function getFollowingFeed(requesterId: string) {
           // it, the viewer never gets the music URL/title and the
           // attached track silently doesn't play.
           metadata: true,
+          // Per-slide views: requester's own view row (drives `viewed`)
+          // plus the total view count for this individual slide.
+          views: {
+            where: { viewerId: requesterId },
+            select: { id: true },
+          },
+          _count: { select: { views: true } },
         },
       },
       user: {
@@ -507,6 +532,13 @@ export async function getDiscoverFeed(requesterId: string) {
           // it, the viewer never gets the music URL/title and the
           // attached track silently doesn't play.
           metadata: true,
+          // Per-slide views: requester's own view row (drives `viewed`)
+          // plus the total view count for this individual slide.
+          views: {
+            where: { viewerId: requesterId },
+            select: { id: true },
+          },
+          _count: { select: { views: true } },
         },
       },
       user: {
@@ -672,60 +704,62 @@ export async function markStoryViewed(storyId: string, viewerId: string, isSteal
   }
 }
 
-// ─── Get Story Viewers ──────────────────────────────────────
+// ─── Mark Story Slide Viewed (per-slide, Instagram-style) ───
 
-export async function getStoryViewers(storyId: string, userId: string) {
-  const story = await prisma.story.findUnique({
-    where: { id: storyId },
-    select: { userId: true },
+export async function markStorySlideViewed(slideId: string, viewerId: string, isStealth = false) {
+  // Resolve the slide → its parent story (needed to keep the story-level
+  // StoryView in sync for the unviewed ring / notification / milestones).
+  const slide = await prisma.storySlide.findUnique({
+    where: { id: slideId },
+    select: { storyId: true },
+  });
+  if (!slide) return;
+
+  // Record the per-slide view (idempotent on [slideId, viewerId]).
+  await prisma.storySlideView.createMany({
+    data: [{ slideId, viewerId, isStealth }],
+    skipDuplicates: true,
   });
 
-  if (!story || story.userId !== userId) {
-    return null;
-  }
+  // Keep the story-level view in sync so existing behaviour (ring,
+  // "viewed your story" push, milestone tiers) is unchanged. markStoryViewed
+  // is itself idempotent and only fires the notification on the first insert.
+  await markStoryViewed(slide.storyId, viewerId, isStealth);
+}
 
-  const views = await prisma.storyView.findMany({
-    where: { storyId, isStealth: false },
-    include: {
-      story: false,
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 500,
-  });
+// ─── Viewers list shaping (shared by story- and slide-level) ─
 
-  // Fetch viewer user info
+/// Enriches a list of raw view rows for the viewers sheet: resolves each
+/// viewer's profile, whether they have an active story (avatar ring), and
+/// whether they follow the owner ("My Followers" filter). Used by both
+/// getStoryViewers (story-level) and getStorySlideViewers (per-slide).
+async function enrichViewerRows(
+  views: Array<{ viewerId: string; createdAt: Date; liked: boolean }>,
+  ownerId: string,
+) {
   const viewerIds = views.map((v) => v.viewerId);
-  const users = await prisma.user.findMany({
-    where: { id: { in: viewerIds } },
-    select: {
-      id: true,
-      displayName: true,
-      avatarUrl: true,
-      isVerified: true,
-    },
-  });
+  const now = new Date();
+  const [users, viewersWithStory, followerRows] = await Promise.all([
+    prisma.user.findMany({
+      where: { id: { in: viewerIds } },
+      select: { id: true, displayName: true, avatarUrl: true, isVerified: true },
+    }),
+    prisma.story.findMany({
+      where: {
+        userId: { in: viewerIds },
+        OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
+      },
+      select: { userId: true },
+      distinct: ['userId'],
+    }),
+    prisma.follow.findMany({
+      where: { followingId: ownerId, followerId: { in: viewerIds } },
+      select: { followerId: true },
+    }),
+  ]);
 
   const userMap = new Map(users.map((u) => [u.id, u]));
-
-  // Which viewers currently have an active (non-expired) story of their own
-  // — used to draw a story ring on their avatar in the viewers list.
-  const now = new Date();
-  const viewersWithStory = await prisma.story.findMany({
-    where: {
-      userId: { in: viewerIds },
-      OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
-    },
-    select: { userId: true },
-    distinct: ['userId'],
-  });
   const hasStorySet = new Set(viewersWithStory.map((s) => s.userId));
-
-  // Which viewers follow the story owner — powers the "My Followers"
-  // filter in the viewers sheet.
-  const followerRows = await prisma.follow.findMany({
-    where: { followingId: userId, followerId: { in: viewerIds } },
-    select: { followerId: true },
-  });
   const followerSet = new Set(followerRows.map((r) => r.followerId));
 
   return views.map((v) => {
@@ -741,6 +775,53 @@ export async function getStoryViewers(storyId: string, userId: string) {
       isFollower: followerSet.has(v.viewerId),
     };
   });
+}
+
+// ─── Get Story Slide Viewers (per-slide) ────────────────────
+
+export async function getStorySlideViewers(slideId: string, userId: string) {
+  // Owner check via the slide's parent story.
+  const slide = await prisma.storySlide.findUnique({
+    where: { id: slideId },
+    select: { story: { select: { userId: true } } },
+  });
+  if (!slide || slide.story.userId !== userId) {
+    return null;
+  }
+
+  const views = await prisma.storySlideView.findMany({
+    where: { slideId, isStealth: false },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+  });
+
+  // Per-slide views carry no separate "liked" flag (likes stay a story-level
+  // reaction), so liked is always false in this list.
+  return enrichViewerRows(
+    views.map((v) => ({ viewerId: v.viewerId, createdAt: v.createdAt, liked: false })),
+    userId,
+  );
+}
+
+// ─── Get Story Viewers ──────────────────────────────────────
+
+export async function getStoryViewers(storyId: string, userId: string) {
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: { userId: true },
+  });
+
+  if (!story || story.userId !== userId) {
+    return null;
+  }
+
+  const views = await prisma.storyView.findMany({
+    where: { storyId, isStealth: false },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+  });
+
+  return enrichViewerRows(views, userId);
 }
 
 // ─── Like Story (legacy endpoint, kept for old app builds) ─────

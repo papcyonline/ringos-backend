@@ -10,7 +10,9 @@ import {
   getDiscoverFeed,
   getFollowingFeed,
   markStoryViewed,
+  markStorySlideViewed,
   getStoryViewers,
+  getStorySlideViewers,
   likeStory,
   reactToStory,
   clearStoryReaction,
@@ -299,6 +301,50 @@ router.get(
     } catch (error) {
       logger.error({ error }, 'Error fetching story viewers');
       res.status(500).json({ error: 'Failed to fetch story viewers' });
+    }
+  }
+);
+
+// ─── POST /api/stories/slides/:slideId/view ─────────────────
+// Per-slide view (Instagram-style). Newer app builds call this per slide;
+// older builds still hit POST /:id/view (story-level) above.
+
+router.post(
+  '/slides/:slideId/view',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const viewerId = req.user!.userId;
+      const slideId = req.params.slideId as string;
+      const stealth = req.body.stealth === true && await isPro(viewerId);
+      await markStorySlideViewed(slideId, viewerId, stealth);
+      res.json({ success: true });
+    } catch (error) {
+      logger.error({ error }, 'Error marking story slide viewed');
+      res.status(500).json({ error: 'Failed to mark story slide viewed' });
+    }
+  }
+);
+
+// ─── GET /api/stories/slides/:slideId/viewers ───────────────
+
+router.get(
+  '/slides/:slideId/viewers',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.userId;
+      const slideId = req.params.slideId as string;
+      const viewers = await getStorySlideViewers(slideId, userId);
+
+      if (viewers === null) {
+        return res.status(403).json({ error: 'Not authorized to view slide viewers' });
+      }
+
+      res.json({ viewers });
+    } catch (error) {
+      logger.error({ error }, 'Error fetching story slide viewers');
+      res.status(500).json({ error: 'Failed to fetch story slide viewers' });
     }
   }
 );
