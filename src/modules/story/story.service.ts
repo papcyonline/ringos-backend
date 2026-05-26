@@ -676,6 +676,15 @@ export async function getHiddenViewers(ownerId: string) {
 // ─── Mark Story Viewed ──────────────────────────────────────
 
 export async function markStoryViewed(storyId: string, viewerId: string, isStealth = false) {
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: { userId: true },
+  });
+  if (!story) return;
+  // The owner viewing their own story is not a view — don't record it (so it
+  // never shows in the count/viewer list) and don't self-notify.
+  if (story.userId === viewerId) return;
+
   const result = await prisma.storyView.createMany({
     data: [{ storyId, viewerId, isStealth }],
     skipDuplicates: true,
@@ -684,23 +693,17 @@ export async function markStoryViewed(storyId: string, viewerId: string, isSteal
   // this viewer (createMany.count > 0 means a row was actually inserted)
   // and never for stealth views — those are intentionally invisible.
   if (result.count > 0 && !isStealth) {
-    const story = await prisma.story.findUnique({
-      where: { id: storyId },
-      select: { userId: true },
+    // Fire-and-forget — don't await, don't block playback on push.
+    void notifyStoryOwnerOfView(storyId, story.userId, viewerId);
+    // Milestone check: count non-stealth views and notify the owner
+    // if they just crossed a tier. We only count public views (the
+    // owner already can't see stealth ones in viewer-list, and a
+    // stealth view shouldn't push them into "100 views" copy that
+    // they then read on the wrong premise).
+    const viewCount = await prisma.storyView.count({
+      where: { storyId, isStealth: false },
     });
-    if (story) {
-      // Fire-and-forget — don't await, don't block playback on push.
-      void notifyStoryOwnerOfView(storyId, story.userId, viewerId);
-      // Milestone check: count non-stealth views and notify the owner
-      // if they just crossed a tier. We only count public views (the
-      // owner already can't see stealth ones in viewer-list, and a
-      // stealth view shouldn't push them into "100 views" copy that
-      // they then read on the wrong premise).
-      const viewCount = await prisma.storyView.count({
-        where: { storyId, isStealth: false },
-      });
-      void checkStoryMilestone(storyId, story.userId, 'views', viewCount);
-    }
+    void checkStoryMilestone(storyId, story.userId, 'views', viewCount);
   }
 }
 
@@ -711,9 +714,11 @@ export async function markStorySlideViewed(slideId: string, viewerId: string, is
   // StoryView in sync for the unviewed ring / notification / milestones).
   const slide = await prisma.storySlide.findUnique({
     where: { id: slideId },
-    select: { storyId: true },
+    select: { storyId: true, story: { select: { userId: true } } },
   });
   if (!slide) return;
+  // Owner viewing their own slide isn't a view — skip recording entirely.
+  if (slide.story.userId === viewerId) return;
 
   // Record the per-slide view (idempotent on [slideId, viewerId]).
   await prisma.storySlideView.createMany({
