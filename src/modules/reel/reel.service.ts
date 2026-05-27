@@ -164,7 +164,6 @@ export async function createReel(
 // returns "next batch" because `markReelViewed` shrinks the pool.
 
 const RANKING_CANDIDATE_POOL = 100;
-const RANKING_LOOKBACK_DAYS = 7;
 const VIEWED_LOOKBACK_HOURS = 24;
 const MAX_CONSECUTIVE_SAME_AUTHOR = 1;
 
@@ -207,7 +206,6 @@ export async function getReelFeed(
   }
 
   const now = Date.now();
-  const lookbackStart = new Date(now - RANKING_LOOKBACK_DAYS * 24 * 3600 * 1000);
   const viewedCutoff = new Date(now - VIEWED_LOOKBACK_HOURS * 3600 * 1000);
 
   const [blockedIds, followingIds, viewedReelIds] = await Promise.all([
@@ -281,9 +279,13 @@ export async function getReelFeed(
     return result;
   }
 
-  let candidates = await prisma.reel.findMany({
+  // No recency window: while reel volume is low we surface ALL reels (newest
+  // first, capped at the candidate pool) so the feed is never empty just
+  // because nothing was posted recently. The recency score below still ranks
+  // fresher clips higher. Re-introduce a `createdAt` window here once there's
+  // enough volume to warrant it.
+  const candidates = await prisma.reel.findMany({
     where: {
-      createdAt: { gte: lookbackStart },
       userId: { notIn: Array.from(blockedIds) },
       ...(audience === 'following'
         ? { userId: { in: Array.from(followingIds) } }
@@ -316,45 +318,6 @@ export async function getReelFeed(
     orderBy: { createdAt: 'desc' },
     take: RANKING_CANDIDATE_POOL,
   });
-
-  // Fallback: nothing posted within RANKING_LOOKBACK_DAYS shouldn't leave the
-  // whole feed empty (users were seeing "No reels yet" once all reels aged
-  // past 7 days). Re-run without the recency window — the recency score below
-  // still surfaces the freshest clips first.
-  if (candidates.length === 0) {
-    candidates = await prisma.reel.findMany({
-      where: {
-        userId: { notIn: Array.from(blockedIds) },
-        ...(audience === 'following'
-          ? { userId: { in: Array.from(followingIds) } }
-          : {}),
-        OR: [
-          { id: { notIn: Array.from(viewedReelIds) } },
-          { userId: requesterId },
-        ],
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            displayName: true,
-            avatarUrl: true,
-            isVerified: true,
-          },
-        },
-        likes: {
-          where: { userId: requesterId },
-          select: { id: true },
-        },
-        reposts: {
-          where: { userId: requesterId },
-          select: { id: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: RANKING_CANDIDATE_POOL,
-    });
-  }
 
   // Score each candidate.
   const scored = candidates.map((r) => {
