@@ -281,7 +281,7 @@ export async function getReelFeed(
     return result;
   }
 
-  const candidates = await prisma.reel.findMany({
+  let candidates = await prisma.reel.findMany({
     where: {
       createdAt: { gte: lookbackStart },
       userId: { notIn: Array.from(blockedIds) },
@@ -316,6 +316,45 @@ export async function getReelFeed(
     orderBy: { createdAt: 'desc' },
     take: RANKING_CANDIDATE_POOL,
   });
+
+  // Fallback: nothing posted within RANKING_LOOKBACK_DAYS shouldn't leave the
+  // whole feed empty (users were seeing "No reels yet" once all reels aged
+  // past 7 days). Re-run without the recency window — the recency score below
+  // still surfaces the freshest clips first.
+  if (candidates.length === 0) {
+    candidates = await prisma.reel.findMany({
+      where: {
+        userId: { notIn: Array.from(blockedIds) },
+        ...(audience === 'following'
+          ? { userId: { in: Array.from(followingIds) } }
+          : {}),
+        OR: [
+          { id: { notIn: Array.from(viewedReelIds) } },
+          { userId: requesterId },
+        ],
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            displayName: true,
+            avatarUrl: true,
+            isVerified: true,
+          },
+        },
+        likes: {
+          where: { userId: requesterId },
+          select: { id: true },
+        },
+        reposts: {
+          where: { userId: requesterId },
+          select: { id: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: RANKING_CANDIDATE_POOL,
+    });
+  }
 
   // Score each candidate.
   const scored = candidates.map((r) => {
