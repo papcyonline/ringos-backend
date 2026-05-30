@@ -169,6 +169,8 @@ const messageInclude = {
       imageUrl: true,
       audioUrl: true,
       audioDuration: true,
+      videoUrl: true,
+      videoThumbnailUrl: true,
       viewOnce: true,
       deletedAt: true,
       metadata: true,
