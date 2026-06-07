@@ -8,6 +8,7 @@ import * as cloudinaryService from '../../shared/cloudinary.service';
 import { deleteFromR2 } from '../../shared/r2.service';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
 import { notifyFollowersOfNewStory, notifyStoryOwnerOfView, checkStoryMilestone } from './story.notify';
+import { markStoryNotificationsAsRead } from '../notification/notification.service';
 
 /**
  * Delete a story slide's underlying media from whichever storage backend
@@ -685,6 +686,15 @@ export async function markStoryViewed(storyId: string, viewerId: string, isSteal
   // never shows in the count/viewer list) and don't self-notify.
   if (story.userId === viewerId) return;
 
+  // The viewer has now seen this story, so clear any "posted a new story"
+  // alert it raised in their bell — whether they got here from the push or
+  // just by browsing the feed. Fire-and-forget, idempotent, and independent
+  // of whether this is a fresh or repeat view (a repeat view should still
+  // settle a notification that somehow lingered).
+  void markStoryNotificationsAsRead(viewerId, storyId).catch((err) => {
+    logger.warn({ err, storyId, viewerId }, 'Failed to clear story notification on view');
+  });
+
   const result = await prisma.storyView.createMany({
     data: [{ storyId, viewerId, isStealth }],
     skipDuplicates: true,
@@ -788,7 +798,7 @@ export async function getStorySlideViewers(slideId: string, userId: string) {
   // Owner check via the slide's parent story.
   const slide = await prisma.storySlide.findUnique({
     where: { id: slideId },
-    select: { story: { select: { userId: true } } },
+    select: { story: { select: { id: true, userId: true } } },
   });
   if (!slide || slide.story.userId !== userId) {
     return null;
@@ -800,10 +810,25 @@ export async function getStorySlideViewers(slideId: string, userId: string) {
     take: 500,
   });
 
-  // Per-slide views carry no separate "liked" flag (likes stay a story-level
-  // reaction), so liked is always false in this list.
+  // Likes are a story-level ❤️ reaction (StoryReaction is the source of truth —
+  // same row likeStory/reactToStory write). A slide viewer "liked" if they have
+  // a ❤️ on this slide's parent story, so resolve it per viewer instead of
+  // hardcoding false.
+  const viewerIds = views.map((v) => v.viewerId);
+  const likeRows = viewerIds.length
+    ? await prisma.storyReaction.findMany({
+        where: { storyId: slide.story.id, userId: { in: viewerIds }, emoji: '❤️' },
+        select: { userId: true },
+      })
+    : [];
+  const likedSet = new Set(likeRows.map((r) => r.userId));
+
   return enrichViewerRows(
-    views.map((v) => ({ viewerId: v.viewerId, createdAt: v.createdAt, liked: false })),
+    views.map((v) => ({
+      viewerId: v.viewerId,
+      createdAt: v.createdAt,
+      liked: likedSet.has(v.viewerId),
+    })),
     userId,
   );
 }

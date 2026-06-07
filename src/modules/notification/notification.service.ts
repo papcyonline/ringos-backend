@@ -83,6 +83,26 @@ export async function markConversationNotificationsAsRead(userId: string, conver
 }
 
 /**
+ * Mark the NEW_STORY notification for a specific story as read. Triggered
+ * server-side when the user records a view of that story (see markStoryViewed)
+ * so a story they've now watched stops showing as unread in the bell —
+ * regardless of whether they reached it by tapping the push or by browsing
+ * the stories feed. Matches on data.storyId, mirroring the per-conversation
+ * chat read above.
+ */
+export async function markStoryNotificationsAsRead(userId: string, storyId: string) {
+  await prisma.notification.updateMany({
+    where: {
+      userId,
+      isRead: false,
+      type: 'NEW_STORY',
+      data: { path: ['storyId'], equals: storyId },
+    },
+    data: { isRead: true },
+  });
+}
+
+/**
  * Mark every MISSED_CALL notification for `userId` as read. Triggered by the
  * client when the calls tab is opened — the missed-call list is the user's
  * inbox for these, so seeing the tab counts as seeing the entries.
