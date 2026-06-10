@@ -8,11 +8,9 @@ import {
 } from '../../shared/r2.service';
 import { moderateVideoUrl } from '../../shared/moderation.service';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
-import {
-  isCloudinaryConfigured,
-  uploadUrl as uploadUrlToCloudinary,
-} from '../../shared/cloudinary.service';
+import { faststartRemux } from '../../shared/video.service';
 import * as cache from '../../shared/redis.service';
+import path from 'path';
 
 // ─── Create Reel ───────────────────────────────────────────
 
@@ -48,8 +46,16 @@ export async function createReel(
     throw new BadRequestError('Reels must be 60 seconds or less');
   }
 
-  const upload = await uploadToR2WithKey(
+  // Faststart the MP4 (moov atom to the front) so playback starts on the
+  // first read instead of after downloading most of the file. Fail-open:
+  // on any ffmpeg error this returns the original buffer unchanged.
+  const faststarted = await faststartRemux(
     file.buffer,
+    path.extname(file.originalname || '') || '.mp4',
+  );
+
+  const upload = await uploadToR2WithKey(
+    faststarted,
     `reels/${userId}`,
     file.originalname || 'reel.mp4',
     file.mimetype || 'video/mp4',
@@ -67,37 +73,14 @@ export async function createReel(
     throw err;
   }
 
-  // Send the R2-hosted file through Cloudinary's video pipeline so the
-  // playback URL has (a) the moov atom moved to the front of the file
-  // (faststart) — without this, video_player must download ~the whole MP4
-  // before the first frame renders, which is exactly the multi-second
-  // black screen users were hitting on tab open — and (b) a derived
-  // first-frame thumbnail so the FE has something to show while bytes
-  // arrive. If Cloudinary isn't configured or the upload fails we fall
-  // back to the raw R2 URL with no thumbnail (existing behavior).
-  let videoUrl = upload.url;
-  let thumbnailUrl: string | null = null;
-  if (isCloudinaryConfigured) {
-    try {
-      const cdn = await uploadUrlToCloudinary(upload.url, {
-        folder: `yomeet/reels/${userId}`,
-        resourceType: 'video',
-      });
-      if (cdn?.secureUrl) {
-        videoUrl = cdn.secureUrl;
-        // Cloudinary serves a JPEG of frame 0 by swapping the extension.
-        thumbnailUrl = cdn.secureUrl.replace(
-          /\.(mp4|mov|webm|m4v)(\?.*)?$/i,
-          '.jpg$2',
-        );
-      }
-    } catch (err) {
-      logger.warn(
-        { err, userId },
-        'Cloudinary reel processing failed, falling back to R2 URL',
-      );
-    }
-  }
+  // Reels are served directly from R2 (Cloudinary is no longer used). R2
+  // doesn't derive a first-frame thumbnail, so thumbnailUrl stays null and
+  // the FE shows the first frame / a placeholder while bytes arrive.
+  // NOTE: raw R2 MP4s have no faststart (moov atom at front), so first-frame
+  // latency depends on the file being uploaded already-faststarted by the
+  // client. See follow-up to add server- or client-side faststart.
+  const videoUrl = upload.url;
+  const thumbnailUrl: string | null = null;
 
   const reel = await prisma.reel.create({
     data: {
