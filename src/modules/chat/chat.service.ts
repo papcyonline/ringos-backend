@@ -1195,6 +1195,15 @@ export async function sendMessage(
     ? new Date(Date.now() + disappearSecs * 1000)
     : undefined;
 
+  // A declined request that the *recipient* (the one who declined) now
+  // replies to is an implicit accept — promote it to ACCEPTED so the
+  // conversation reappears in both inboxes (the list query hides DECLINED).
+  // The original requester sending again does NOT un-decline it, so
+  // declined spam can't force its way back in.
+  const promoteDeclined =
+    conversation.requestStatus === 'DECLINED' &&
+    conversation.requestedById !== senderId;
+
   // Create message and update conversation timestamp in parallel
   const [message] = await Promise.all([
     prisma.message.create({
@@ -1219,7 +1228,9 @@ export async function sendMessage(
     }),
     prisma.conversation.update({
       where: { id: conversationId },
-      data: { updatedAt: new Date() },
+      data: promoteDeclined
+        ? { updatedAt: new Date(), requestStatus: 'ACCEPTED', acceptedAt: new Date() }
+        : { updatedAt: new Date() },
     }),
   ]);
 
