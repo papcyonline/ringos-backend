@@ -58,6 +58,10 @@ vi.mock('../../../shared/upload', () => ({
     single: () => (_req: any, _res: any, next: any) => next(),
   },
   fileToAvatarUrl: vi.fn().mockResolvedValue('https://cdn/x.jpg'),
+  coverUpload: {
+    single: () => (_req: any, _res: any, next: any) => next(),
+  },
+  fileToCoverUrl: vi.fn().mockResolvedValue('https://cdn/cover.jpg'),
 }));
 vi.mock('../../../shared/redis.service', () => ({
   checkRateLimit: vi.fn().mockResolvedValue({ allowed: true, remaining: 99, resetAt: Date.now() }),
