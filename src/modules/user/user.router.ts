@@ -4,7 +4,7 @@ import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
-import { avatarUpload, fileToAvatarUrl } from '../../shared/upload';
+import { avatarUpload, fileToAvatarUrl, coverUpload, fileToCoverUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
 import { checkRateLimit } from '../../shared/redis.service';
 import { updatePreferenceSchema, updateAvailabilitySchema, updatePrivacySchema, updateProfileSchema } from './user.schema';
@@ -166,6 +166,25 @@ router.post(
       }
       const avatarUrl = await fileToAvatarUrl(req.file, req.user!.userId);
       const result = await userService.uploadAvatar(req.user!.userId, avatarUrl);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /me/cover - Upload profile cover/banner image
+router.post(
+  '/me/cover',
+  authenticate,
+  coverUpload.single('cover'),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+      const coverUrl = await fileToCoverUrl(req.file, req.user!.userId);
+      const result = await userService.uploadCover(req.user!.userId, coverUrl);
       res.json(result);
     } catch (err) {
       next(err);

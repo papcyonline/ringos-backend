@@ -77,6 +77,23 @@ export async function uploadAvatarToSupabase(
 }
 
 /**
+ * Upload a user cover/banner image. Stored in the avatars bucket under a
+ * stable per-user `covers/<id>.jpg` path so it never collides with the
+ * avatar (`<id>.jpg`) and re-uploads overwrite the previous file.
+ */
+export async function uploadCoverToSupabase(
+  buffer: Buffer,
+  userId: string,
+): Promise<SupabaseUploadResult> {
+  return uploadToSupabase(
+    buffer,
+    BUCKETS.AVATARS,
+    `covers/${userId}.jpg`,
+    'image/jpeg',
+  );
+}
+
+/**
  * Upload a chat image.
  */
 export async function uploadChatImageToSupabase(

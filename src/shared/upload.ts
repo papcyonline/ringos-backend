@@ -15,6 +15,7 @@ import {
 import {
   isSupabaseConfigured,
   uploadAvatarToSupabase,
+  uploadCoverToSupabase,
   uploadChatImageToSupabase,
   uploadVoiceNoteToSupabase,
 } from './supabase.service';
@@ -92,6 +93,13 @@ function videoOrThumbnailFilter(
 export const avatarUpload = multer({
   storage: memoryStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: imageFilter,
+});
+
+// Covers are wider than avatars, so allow a slightly larger source file.
+export const coverUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: imageFilter,
 });
 
@@ -189,6 +197,44 @@ export async function fileToAvatarUrl(file: Express.Multer.File, userId: string)
     } catch (err) { /* fall through */ }
   }
   return saveToDisk(resized, 'uploads/avatars', '/uploads/avatars', '.jpg');
+}
+
+export async function fileToCoverUrl(file: Express.Multer.File, userId: string): Promise<string> {
+  // Wide 16:9 banner. fit:'cover' crops to fill, matching the client crop.
+  const resized = await sharp(file.buffer)
+    .rotate()
+    .resize(1600, 900, { fit: 'cover' })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+
+  // Same pre-upload NSFW gate as avatars — the cover is publicly fetchable
+  // at a stable per-user URL, so reject unsafe images before they land.
+  const verdict = await moderateImageBuffer(resized, `cover-${userId}.jpg`);
+  if (!verdict.safe) {
+    logger.warn(
+      { userId, reason: verdict.reason, scores: verdict.scores },
+      'Cover upload rejected by moderation',
+    );
+    throw new ForbiddenError(
+      verdict.reason ?? 'This image was rejected by our content policy',
+    );
+  }
+
+  // 1. Supabase — stable per-user path, upserts on every change
+  if (isSupabaseConfigured) {
+    try {
+      const result = await uploadCoverToSupabase(resized, userId);
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  // 2. R2 fallback
+  if (isR2Configured) {
+    try {
+      const result = await uploadToR2WithCustomKey(resized, `covers/${userId}.jpg`, 'image/jpeg');
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  return saveToDisk(resized, 'uploads/covers', '/uploads/covers', '.jpg');
 }
 
 export async function fileToChatImageUrl(file: Express.Multer.File, conversationId: string): Promise<string> {

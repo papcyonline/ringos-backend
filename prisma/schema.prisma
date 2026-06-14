@@ -200,6 +200,7 @@ model User {
   displayName       String
   lastNameChangeAt  DateTime?
   avatarUrl     String?
+  coverUrl      String?
   bio           String?
   profession    String?
   gender        Gender?

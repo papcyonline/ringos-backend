@@ -19,6 +19,7 @@ export async function getProfile(userId: string) {
       id: true,
       displayName: true,
       avatarUrl: true,
+      coverUrl: true,
       bio: true,
       profession: true,
       gender: true,
@@ -43,6 +44,7 @@ export async function getProfile(userId: string) {
         select: {
           banStatus: true,
           banExpiresAt: true,
+          flagCount: true,
         },
       },
       createdAt: true,
@@ -69,6 +71,7 @@ export async function getProfile(userId: string) {
     ...user,
     banStatus: user.moderation?.banStatus ?? 'NONE',
     banExpiresAt: user.moderation?.banExpiresAt ?? null,
+    reportCount: user.moderation?.flagCount ?? 0,
     followerCount: user._count.followsReceived,
     followingCount: user._count.followsInitiated,
   };
@@ -81,6 +84,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
       id: true,
       displayName: true,
       avatarUrl: true,
+      coverUrl: true,
       bio: true,
       profession: true,
       gender: true,
@@ -131,6 +135,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
     id: user.id,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
+    coverUrl: user.coverUrl,
     bio: isPrivate ? null : user.bio,
     profession: isPrivate ? null : user.profession,
     gender: user.gender,
@@ -356,6 +361,15 @@ export async function uploadAvatar(userId: string, avatarUrl: string) {
     where: { id: userId },
     data: { avatarUrl },
     select: { id: true, avatarUrl: true },
+  });
+}
+
+export async function uploadCover(userId: string, coverUrl: string) {
+  await findUserOrThrow(userId);
+  return prisma.user.update({
+    where: { id: userId },
+    data: { coverUrl },
+    select: { id: true, coverUrl: true },
   });
 }
 
