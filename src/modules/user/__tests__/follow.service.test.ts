@@ -78,7 +78,7 @@ describe('follow.service', () => {
   describe('getFollowers / getFollowing', () => {
     it('getFollowers queries by followingId', async () => {
       mockPrisma.follow.findMany.mockResolvedValue([]);
-      await getFollowers('u-1');
+      await getFollowers('u-1', 'viewer-1');
       expect(mockPrisma.follow.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { followingId: 'u-1' } }),
       );
@@ -86,7 +86,7 @@ describe('follow.service', () => {
 
     it('getFollowing queries by followerId', async () => {
       mockPrisma.follow.findMany.mockResolvedValue([]);
-      await getFollowing('u-1');
+      await getFollowing('u-1', 'viewer-1');
       expect(mockPrisma.follow.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { followerId: 'u-1' } }),
       );

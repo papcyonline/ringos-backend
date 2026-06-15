@@ -37,42 +37,80 @@ export async function unfollowUser(followerId: string, followingId: string) {
   invalidateFeedCache(followerId);
 }
 
-export async function getFollowers(userId: string) {
-  return prisma.follow.findMany({
+/// Resolves the viewer's relationship to a set of users: which the viewer
+/// follows (isFollowedByMe) and which follow the viewer (isFollowingMe).
+async function viewerRelationships(viewerId: string, userIds: string[]) {
+  if (userIds.length === 0) {
+    return { iFollow: new Set<string>(), followsMe: new Set<string>() };
+  }
+  const [iFollowRows, followsMeRows] = await Promise.all([
+    prisma.follow.findMany({
+      where: { followerId: viewerId, followingId: { in: userIds } },
+      select: { followingId: true },
+    }),
+    prisma.follow.findMany({
+      where: { followingId: viewerId, followerId: { in: userIds } },
+      select: { followerId: true },
+    }),
+  ]);
+  return {
+    iFollow: new Set(iFollowRows.map((f) => f.followingId)),
+    followsMe: new Set(followsMeRows.map((f) => f.followerId)),
+  };
+}
+
+export async function getFollowers(userId: string, viewerId: string) {
+  const rows = await prisma.follow.findMany({
     where: { followingId: userId },
     select: {
       id: true,
       createdAt: true,
       follower: {
-        select: {
-          id: true,
-          displayName: true,
-          avatarUrl: true,
-          isOnline: true,
-        },
+        select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
       },
     },
     orderBy: { createdAt: 'desc' },
   });
+  const { iFollow, followsMe } = await viewerRelationships(
+    viewerId,
+    rows.map((r) => r.follower.id),
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    createdAt: r.createdAt,
+    follower: {
+      ...r.follower,
+      isFollowedByMe: iFollow.has(r.follower.id),
+      isFollowingMe: followsMe.has(r.follower.id),
+    },
+  }));
 }
 
-export async function getFollowing(userId: string) {
-  return prisma.follow.findMany({
+export async function getFollowing(userId: string, viewerId: string) {
+  const rows = await prisma.follow.findMany({
     where: { followerId: userId },
     select: {
       id: true,
       createdAt: true,
       following: {
-        select: {
-          id: true,
-          displayName: true,
-          avatarUrl: true,
-          isOnline: true,
-        },
+        select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
       },
     },
     orderBy: { createdAt: 'desc' },
   });
+  const { iFollow, followsMe } = await viewerRelationships(
+    viewerId,
+    rows.map((r) => r.following.id),
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    createdAt: r.createdAt,
+    following: {
+      ...r.following,
+      isFollowedByMe: iFollow.has(r.following.id),
+      isFollowingMe: followsMe.has(r.following.id),
+    },
+  }));
 }
 
 export async function isFollowing(followerId: string, followingId: string) {
