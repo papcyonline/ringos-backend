@@ -759,18 +759,25 @@ async function enrichViewerRows(
 ) {
   const viewerIds = views.map((v) => v.viewerId);
   const now = new Date();
-  const [users, viewersWithStory, followerRows] = await Promise.all([
+  const [users, viewerSlides, followerRows] = await Promise.all([
     prisma.user.findMany({
       where: { id: { in: viewerIds } },
       select: { id: true, displayName: true, avatarUrl: true, isVerified: true },
     }),
-    prisma.story.findMany({
+    // Each viewer's active slides, with the owner's own view row attached so
+    // we can count how many of that viewer's slides the owner has seen. This
+    // powers the segmented story ring (green = unseen, grey = seen).
+    prisma.storySlide.findMany({
       where: {
-        userId: { in: viewerIds },
-        OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
+        story: {
+          userId: { in: viewerIds },
+          OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
+        },
       },
-      select: { userId: true },
-      distinct: ['userId'],
+      select: {
+        story: { select: { userId: true } },
+        views: { where: { viewerId: ownerId }, select: { id: true } },
+      },
     }),
     prisma.follow.findMany({
       where: { followingId: ownerId, followerId: { in: viewerIds } },
@@ -779,11 +786,23 @@ async function enrichViewerRows(
   ]);
 
   const userMap = new Map(users.map((u) => [u.id, u]));
-  const hasStorySet = new Set(viewersWithStory.map((s) => s.userId));
   const followerSet = new Set(followerRows.map((r) => r.followerId));
+
+  // Per-viewer totals: how many active slides they have, and how many the
+  // owner has already viewed.
+  const storyCountMap = new Map<string, number>();
+  const viewedCountMap = new Map<string, number>();
+  for (const slide of viewerSlides) {
+    const uid = slide.story.userId;
+    storyCountMap.set(uid, (storyCountMap.get(uid) ?? 0) + 1);
+    if (slide.views.length > 0) {
+      viewedCountMap.set(uid, (viewedCountMap.get(uid) ?? 0) + 1);
+    }
+  }
 
   return views.map((v) => {
     const user = userMap.get(v.viewerId);
+    const storyCount = storyCountMap.get(v.viewerId) ?? 0;
     return {
       userId: v.viewerId,
       viewedAt: v.createdAt,
@@ -792,7 +811,9 @@ async function enrichViewerRows(
       displayName: user?.displayName ?? 'Unknown',
       avatarUrl: user?.avatarUrl ?? null,
       isVerified: user?.isVerified ?? false,
-      hasActiveStory: hasStorySet.has(v.viewerId),
+      hasActiveStory: storyCount > 0,
+      storyCount,
+      viewedCount: viewedCountMap.get(v.viewerId) ?? 0,
       isFollower: followerSet.has(v.viewerId),
     };
   });
