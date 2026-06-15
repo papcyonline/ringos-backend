@@ -66,7 +66,7 @@ export async function getFollowers(userId: string, viewerId: string) {
       id: true,
       createdAt: true,
       follower: {
-        select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+        select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
       },
     },
     orderBy: { createdAt: 'desc' },
@@ -93,7 +93,7 @@ export async function getFollowing(userId: string, viewerId: string) {
       id: true,
       createdAt: true,
       following: {
-        select: { id: true, displayName: true, avatarUrl: true, isOnline: true },
+        select: { id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
       },
     },
     orderBy: { createdAt: 'desc' },
