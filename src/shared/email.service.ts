@@ -14,6 +14,8 @@ const LOGO_URL = env.EMAIL_LOGO_URL || 'https://yomeet-backend.onrender.com/publ
 
 const APP_STORE_URL = 'https://apps.apple.com/app/yomeet';
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.yomeet.app';
+// Public Huawei AppGallery listing (derived from app id 117807529).
+const APP_GALLERY_URL = 'https://appgallery.huawei.com/app/C117807529';
 const APP_STORE_BADGE = 'https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83';
 const PLAY_STORE_BADGE = 'https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png';
 
@@ -28,17 +30,18 @@ const SOCIALS = [
 // ─── Design tokens ──────────────────────────────────────────────────────────────
 
 const C = {
-  bg: '#0a0a0b',
-  surface: '#121214',
-  surfaceAlt: '#17171a',
-  border: '#222226',
-  brand: '#0FE061',
+  bg: '#eef1f4',         // page background (soft grey)
+  surface: '#ffffff',    // card
+  surfaceAlt: '#f4f6f8', // inner surfaces (OTP boxes, info panels)
+  border: '#e6e8ec',     // hairlines
+  brand: '#0FE061',      // brand green — used for button fills (pops on white)
+  brandInk: '#0a9d45',   // deeper green for green TEXT/icons on white (readable)
   brandDeep: '#0BB14E',
-  text: '#ffffff',
-  textSubtle: '#a1a1a6',
-  textMuted: '#5c5c63',
-  warning: '#f5a524',
-  danger: '#ff5a4e',
+  text: '#0c0d10',       // near-black headings/body
+  textSubtle: '#525a66', // secondary text
+  textMuted: '#9aa1ac',  // tertiary / footer
+  warning: '#b45309',    // amber (readable on light)
+  danger: '#dc2626',     // red
 };
 
 const FONT = `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif`;
@@ -47,7 +50,7 @@ const MONO = `'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mo
 // ─── Atoms ──────────────────────────────────────────────────────────────────────
 
 function eyebrow(label: string): string {
-  return `<p style="margin: 0 0 12px; font-size: 11px; font-weight: 600; letter-spacing: 2.4px; text-transform: uppercase; color: ${C.brand}; text-align: center; font-family: ${FONT};">${label}</p>`;
+  return `<p style="margin: 0 0 12px; font-size: 11px; font-weight: 700; letter-spacing: 2.4px; text-transform: uppercase; color: ${C.brandInk}; text-align: center; font-family: ${FONT};">${label}</p>`;
 }
 
 function heading(text: string): string {
@@ -64,7 +67,7 @@ function ctaButton(label: string, href: string): string {
       <tr>
         <td align="center">
           <table role="presentation" cellspacing="0" cellpadding="0"><tr>
-            <td align="center" style="background-color: ${C.brand}; background-image: linear-gradient(135deg, ${C.brand}, ${C.brandDeep}); border-radius: 999px; padding: 14px 36px;">
+            <td align="center" style="background-color: ${C.brand}; border-radius: 999px; padding: 15px 38px;">
               <a href="${href}" target="_blank" style="font-size: 15px; font-weight: 700; color: #000000; text-decoration: none; display: inline-block; font-family: ${FONT}; letter-spacing: 0.2px;">${label}</a>
             </td>
           </tr></table>
@@ -93,6 +96,9 @@ function buildSocialLinksHtml(): string {
 }
 
 function buildAppStoreBadgesHtml(): string {
+  // Apple + Google on row 1 (official badge images); Huawei AppGallery on
+  // row 2 (CSS badge — no reliable hotlinkable image). Keeps three badges
+  // from overflowing on narrow screens.
   return `
     <table role="presentation" cellspacing="0" cellpadding="0">
       <tr>
@@ -104,6 +110,18 @@ function buildAppStoreBadgesHtml(): string {
         <td style="padding: 0 6px;">
           <a href="${PLAY_STORE_URL}" target="_blank">
             <img src="${PLAY_STORE_BADGE}" alt="Get it on Google Play" height="58" style="display: block; height: 58px; width: auto; border: 0; outline: 0;">
+          </a>
+        </td>
+      </tr>
+      <tr>
+        <td colspan="2" align="center" style="padding: 12px 6px 0;">
+          <a href="${APP_GALLERY_URL}" target="_blank" style="text-decoration: none;">
+            <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+              <td style="background-color: #000000; border-radius: 8px; padding: 7px 16px;">
+                <span style="font-size: 8px; line-height: 1; color: #ffffff; font-family: ${FONT}; letter-spacing: 0.6px; display: block;">EXPLORE IT ON</span>
+                <span style="font-size: 16px; line-height: 1.35; color: #ffffff; font-family: ${FONT}; font-weight: 700; display: block;">AppGallery</span>
+              </td>
+            </tr></table>
           </a>
         </td>
       </tr>
@@ -127,8 +145,8 @@ function getBaseTemplate({ preheader, content, footerText, showAppBadges }: Base
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="color-scheme" content="dark">
-  <meta name="supported-color-schemes" content="dark">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
   <title>Yomeet</title>
   <!--[if mso]>
   <noscript>
@@ -153,21 +171,16 @@ function getBaseTemplate({ preheader, content, footerText, showAppBadges }: Base
 
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 480px;">
 
-          <!-- Header: logo + hairline divider -->
+          <!-- Header: logo -->
           <tr>
-            <td align="center" style="padding: 0 0 40px;">
-              <img src="${LOGO_URL}" alt="Yomeet" width="44" height="44" style="display: block; border-radius: 12px; margin-bottom: 20px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                <tr>
-                  <td style="height: 1px; line-height: 1px; font-size: 1px; background: linear-gradient(90deg, transparent, ${C.border} 30%, ${C.border} 70%, transparent);">&nbsp;</td>
-                </tr>
-              </table>
+            <td align="center" style="padding: 0 0 22px;">
+              <img src="${LOGO_URL}" alt="Yomeet" width="48" height="48" style="display: block; border-radius: 14px;">
             </td>
           </tr>
 
           <!-- Body card -->
           <tr>
-            <td style="padding: 0 4px 8px;">
+            <td style="background-color: #ffffff; border: 1px solid ${C.border}; border-radius: 20px; padding: 40px 32px;">
               ${content}
             </td>
           </tr>
@@ -226,7 +239,7 @@ function getWelcomeEmailTemplate(displayName: string): string {
     <tr>
       <td style="width: 44px; vertical-align: top; padding: ${i === 0 ? '0' : '20'}px 0 0;">
         <table role="presentation" cellspacing="0" cellpadding="0"><tr>
-          <td style="width: 32px; height: 32px; background: rgba(15,224,97,0.12); border-radius: 999px; text-align: center; vertical-align: middle; font-size: 11px; font-weight: 700; color: ${C.brand}; font-family: ${MONO}; letter-spacing: 0.5px;">
+          <td style="width: 32px; height: 32px; background: rgba(15,224,97,0.14); border-radius: 999px; text-align: center; vertical-align: middle; font-size: 11px; font-weight: 700; color: ${C.brandInk}; font-family: ${MONO}; letter-spacing: 0.5px;">
             ${f.num}
           </td>
         </tr></table>
@@ -280,7 +293,7 @@ function getOtpEmailTemplate(code: string): string {
 
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
       <tr>
-        <td style="background-color: ${C.surface}; border: 1px solid ${C.border}; border-radius: 12px; padding: 16px 18px;">
+        <td style="background-color: ${C.surfaceAlt}; border: 1px solid ${C.border}; border-radius: 12px; padding: 16px 18px;">
           <p style="margin: 0; font-size: 13px; color: ${C.textSubtle}; line-height: 1.55; font-family: ${FONT};">
             Didn't request this? You can safely ignore this email — no account changes will be made without your code.
           </p>
@@ -318,7 +331,7 @@ function getPasswordResetEmailTemplate(code: string): string {
 
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
       <tr>
-        <td style="background-color: ${C.surface}; border: 1px solid ${C.border}; border-radius: 12px; padding: 16px 18px;">
+        <td style="background-color: ${C.surfaceAlt}; border: 1px solid ${C.border}; border-radius: 12px; padding: 16px 18px;">
           <p style="margin: 0; font-size: 13px; color: ${C.textSubtle}; line-height: 1.55; font-family: ${FONT};">
             Didn't request a reset? Your password is unchanged — you can ignore this email. If you keep getting reset codes you didn't ask for, contact support.
           </p>
@@ -350,7 +363,7 @@ function getNewDeviceLoginTemplate(details: { deviceName: string; country: strin
 
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 32px;">
       <tr>
-        <td style="background-color: ${C.surface}; border: 1px solid ${C.border}; border-radius: 14px; padding: 4px 20px;">
+        <td style="background-color: ${C.surfaceAlt}; border: 1px solid ${C.border}; border-radius: 14px; padding: 4px 20px;">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
             ${detailRow('Device', details.deviceName)}
             ${detailRow('Location', details.country)}
@@ -397,7 +410,7 @@ function getGoodbyeEmailTemplate(displayName: string): string {
   const itemRows = items.map(it => `
     <tr>
       <td style="padding: 6px 0; vertical-align: top;">
-        <span style="display: inline-block; width: 16px; color: ${C.brand}; font-weight: 700;">&#x2713;</span>
+        <span style="display: inline-block; width: 16px; color: ${C.brandInk}; font-weight: 700;">&#x2713;</span>
         <span style="font-size: 13px; color: ${C.textSubtle}; font-family: ${FONT};">${it}</span>
       </td>
     </tr>
@@ -410,7 +423,7 @@ function getGoodbyeEmailTemplate(displayName: string): string {
 
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 32px;">
       <tr>
-        <td style="background-color: ${C.surface}; border: 1px solid ${C.border}; border-radius: 14px; padding: 18px 22px;">
+        <td style="background-color: ${C.surfaceAlt}; border: 1px solid ${C.border}; border-radius: 14px; padding: 18px 22px;">
           <p style="margin: 0 0 12px; font-size: 12px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: ${C.textMuted}; font-family: ${FONT};">What was deleted</p>
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
             ${itemRows}
