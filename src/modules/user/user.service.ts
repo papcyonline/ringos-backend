@@ -131,33 +131,42 @@ export async function getUserById(targetId: string, currentUserId: string) {
     }),
   ]);
 
-  const isPrivate = !user.isProfilePublic;
+  // Instagram-style privacy: a private profile is "locked" to viewers who
+  // don't follow them (and isn't the owner). Followers see the full profile;
+  // non-followers get only name/avatar/verified + follower count + the follow
+  // button. Everything else is hidden server-side.
+  const isFollower = !!followRecord;
+  const isSelf = targetId === currentUserId;
+  const locked = !user.isProfilePublic && !isFollower && !isSelf;
   const hideOnline = user.hideOnlineStatus && targetId !== currentUserId;
   return {
     id: user.id,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
     coverUrl: user.coverUrl,
-    bio: isPrivate ? null : user.bio,
-    profession: isPrivate ? null : user.profession,
-    gender: user.gender,
-    location: isPrivate ? null : user.location,
-    status: user.status,
-    availabilityNote: isPrivate ? null : user.availabilityNote,
-    isOnline: hideOnline ? false : user.isOnline,
-    lastSeenAt: hideOnline ? null : user.lastSeenAt,
-    availableFor: user.availableFor,
-    availableUntil: user.availableUntil,
     isVerified: user.isVerified,
     verifiedRole: user.verifiedRole,
     isProfilePublic: user.isProfilePublic,
+    isLocked: locked,
+    // Always visible (Instagram shows these on locked profiles).
     followerCount: user._count.followsReceived,
-    isFollowedByMe: !!followRecord,
+    isFollowedByMe: isFollower,
     isFollowingMe: !!reverseFollowRecord,
-    likeCount: user._count.likesReceived,
-    isLikedByMe: !!likeRecord,
-    reportCount: user.moderation?.flagCount ?? 0,
     createdAt: user.createdAt,
+    // Hidden when locked.
+    bio: locked ? null : user.bio,
+    profession: locked ? null : user.profession,
+    gender: locked ? null : user.gender,
+    location: locked ? null : user.location,
+    status: locked ? null : user.status,
+    availabilityNote: locked ? null : user.availabilityNote,
+    isOnline: locked ? false : (hideOnline ? false : user.isOnline),
+    lastSeenAt: locked ? null : (hideOnline ? null : user.lastSeenAt),
+    availableFor: locked ? [] : user.availableFor,
+    availableUntil: locked ? null : user.availableUntil,
+    likeCount: locked ? 0 : user._count.likesReceived,
+    isLikedByMe: locked ? false : !!likeRecord,
+    reportCount: user.moderation?.flagCount ?? 0,
   };
 }
 
