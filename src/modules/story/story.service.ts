@@ -320,6 +320,83 @@ export async function getStoryFeed(requesterId: string) {
   return feed;
 }
 
+/// Returns a single user's active stories in the same shape as one feed
+/// entry, so the client can open the story viewer for an arbitrary user
+/// (e.g. tapping a viewer's avatar in the viewers sheet). Null when the user
+/// has no active stories or is blocked either way.
+export async function getUserStories(userId: string, requesterId: string) {
+  const blockedIds = await getBlockedUserIds(requesterId);
+  if (blockedIds.has(userId)) return null;
+
+  const now = new Date();
+  const stories = await prisma.story.findMany({
+    where: {
+      userId,
+      channelId: null,
+      OR: [{ expiresAt: { gt: now } }, { isPermanent: true }],
+    },
+    include: {
+      slides: {
+        orderBy: { position: 'asc' },
+        select: {
+          id: true,
+          type: true,
+          mediaUrl: true,
+          thumbnailUrl: true,
+          caption: true,
+          duration: true,
+          position: true,
+          metadata: true,
+          views: { where: { viewerId: requesterId }, select: { id: true } },
+          _count: { select: { views: true } },
+        },
+      },
+      user: {
+        select: {
+          id: true,
+          displayName: true,
+          avatarUrl: true,
+          isVerified: true,
+          verifiedRole: true,
+        },
+      },
+      views: { where: { viewerId: requesterId }, select: { id: true } },
+      reactions: { where: { userId: requesterId }, select: { emoji: true } },
+      _count: { select: { views: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (stories.length === 0) return null;
+
+  const u = stories[0].user;
+  return {
+    userId,
+    displayName: u.displayName,
+    avatarUrl: u.avatarUrl,
+    isVerified: u.isVerified,
+    isOfficial: u.verifiedRole === 'official',
+    isSelf: userId === requesterId,
+    hasUnviewed: stories.some(
+      (s) => s.views.length === 0 && userId !== requesterId,
+    ),
+    stories: stories.map((s) => ({
+      id: s.id,
+      createdAt: s.createdAt,
+      expiresAt: s.expiresAt,
+      slides: s.slides.map(toFeedSlide),
+      viewed: s.views.length > 0,
+      myReaction: s.reactions[0]?.emoji ?? null,
+      viewCount: s._count.views,
+      likeCount: s.likeCount,
+      commentCount: s.commentCount,
+      repostCount: s.repostCount,
+      shareCount: s.shareCount,
+      downloadCount: s.downloadCount,
+    })),
+  };
+}
+
 // Maps a slide row (with the per-slide views/_count include) to the feed
 // payload shape. Shared by getStoryFeed and groupStoriesByUser so the slide
 // fields — including the Instagram-style per-slide viewCount/viewed — stay

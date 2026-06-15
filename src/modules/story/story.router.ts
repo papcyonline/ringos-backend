@@ -7,6 +7,7 @@ import { getLimits, isPro } from '../../shared/usage.service';
 import {
   createStory,
   getStoryFeed,
+  getUserStories,
   getDiscoverFeed,
   getFollowingFeed,
   markStoryViewed,
@@ -50,6 +51,27 @@ router.get(
     } catch (error) {
       logger.error({ error }, 'Error fetching story feed');
       res.status(500).json({ error: 'Failed to fetch story feed' });
+    }
+  }
+);
+
+// ─── GET /api/stories/user/:userId ──────────────────────────
+// One user's active stories (feed-entry shape), so the client can open the
+// story viewer for an arbitrary user (e.g. tapping a viewer's avatar).
+router.get(
+  '/user/:userId',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const story = await getUserStories(
+        req.params.userId as string,
+        req.user!.userId,
+      );
+      if (!story) return res.status(404).json({ error: 'No active stories' });
+      res.json({ story });
+    } catch (error) {
+      logger.error({ error }, 'Error fetching user stories');
+      res.status(500).json({ error: 'Failed to fetch user stories' });
     }
   }
 );

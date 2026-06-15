@@ -6,6 +6,7 @@ const { mockStoryService, mockCoinsService, mockNotifService } = vi.hoisted(() =
   mockStoryService: {
     createStory: vi.fn().mockResolvedValue({ id: 's-1', slides: [] }),
     getStoryFeed: vi.fn().mockResolvedValue([]),
+    getUserStories: vi.fn().mockResolvedValue(null),
     getDiscoverFeed: vi.fn().mockResolvedValue([]),
     getFollowingFeed: vi.fn().mockResolvedValue([]),
     markStoryViewed: vi.fn().mockResolvedValue(undefined),
