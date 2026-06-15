@@ -61,6 +61,7 @@ export async function getProfile(userId: string) {
         select: {
           followsReceived: true,
           followsInitiated: true,
+          likesReceived: true,
         },
       },
     },
@@ -74,6 +75,7 @@ export async function getProfile(userId: string) {
     reportCount: user.moderation?.flagCount ?? 0,
     followerCount: user._count.followsReceived,
     followingCount: user._count.followsInitiated,
+    likeCount: user._count.likesReceived,
   };
 }
 
