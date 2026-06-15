@@ -41,6 +41,7 @@ const { mockPrisma, mockChatService } = vi.hoisted(() => {
     },
     storyReaction: {
       findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
       upsert: vi.fn(),
       deleteMany: vi.fn(),
     },
@@ -404,6 +405,13 @@ describe('getStoryViewers', () => {
     mockPrisma.user.findMany.mockResolvedValue([
       { id: 'v-1', displayName: 'Alice', avatarUrl: null, isVerified: false },
     ]);
+    // `liked` now derives from the StoryReaction ❤️ (source of truth); the
+    // segmented ring needs the viewers' active slides too.
+    mockPrisma.storyReaction.findMany.mockResolvedValue([
+      { userId: 'v-1', emoji: '❤️' },
+    ]);
+    mockPrisma.storySlide.findMany.mockResolvedValue([]);
+    mockPrisma.follow.findMany.mockResolvedValue([]);
 
     const res = await getStoryViewers('s-1', 'user-1');
 
