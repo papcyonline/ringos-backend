@@ -749,7 +749,12 @@ export async function markStorySlideViewed(slideId: string, viewerId: string, is
 /// whether they follow the owner ("My Followers" filter). Used by both
 /// getStoryViewers (story-level) and getStorySlideViewers (per-slide).
 async function enrichViewerRows(
-  views: Array<{ viewerId: string; createdAt: Date; liked: boolean }>,
+  views: Array<{
+    viewerId: string;
+    createdAt: Date;
+    liked: boolean;
+    reaction: string | null;
+  }>,
   ownerId: string,
 ) {
   const viewerIds = views.map((v) => v.viewerId);
@@ -783,6 +788,7 @@ async function enrichViewerRows(
       userId: v.viewerId,
       viewedAt: v.createdAt,
       liked: v.liked,
+      reaction: v.reaction,
       displayName: user?.displayName ?? 'Unknown',
       avatarUrl: user?.avatarUrl ?? null,
       isVerified: user?.isVerified ?? false,
@@ -810,24 +816,24 @@ export async function getStorySlideViewers(slideId: string, userId: string) {
     take: 500,
   });
 
-  // Likes are a story-level ❤️ reaction (StoryReaction is the source of truth —
-  // same row likeStory/reactToStory write). A slide viewer "liked" if they have
-  // a ❤️ on this slide's parent story, so resolve it per viewer instead of
-  // hardcoding false.
+  // Reactions live in StoryReaction (story-level; one emoji per viewer — the
+  // same row likeStory/reactToStory write). Resolve each viewer's emoji so the
+  // viewers sheet can show the exact reaction, not just the ❤️ like.
   const viewerIds = views.map((v) => v.viewerId);
-  const likeRows = viewerIds.length
+  const reactionRows = viewerIds.length
     ? await prisma.storyReaction.findMany({
-        where: { storyId: slide.story.id, userId: { in: viewerIds }, emoji: '❤️' },
-        select: { userId: true },
+        where: { storyId: slide.story.id, userId: { in: viewerIds } },
+        select: { userId: true, emoji: true },
       })
     : [];
-  const likedSet = new Set(likeRows.map((r) => r.userId));
+  const reactionMap = new Map(reactionRows.map((r) => [r.userId, r.emoji]));
 
   return enrichViewerRows(
     views.map((v) => ({
       viewerId: v.viewerId,
       createdAt: v.createdAt,
-      liked: likedSet.has(v.viewerId),
+      reaction: reactionMap.get(v.viewerId) ?? null,
+      liked: reactionMap.get(v.viewerId) === '❤️',
     })),
     userId,
   );
@@ -851,7 +857,25 @@ export async function getStoryViewers(storyId: string, userId: string) {
     take: 500,
   });
 
-  return enrichViewerRows(views, userId);
+  // Resolve each viewer's reaction emoji from StoryReaction (source of truth).
+  const viewerIds = views.map((v) => v.viewerId);
+  const reactionRows = viewerIds.length
+    ? await prisma.storyReaction.findMany({
+        where: { storyId, userId: { in: viewerIds } },
+        select: { userId: true, emoji: true },
+      })
+    : [];
+  const reactionMap = new Map(reactionRows.map((r) => [r.userId, r.emoji]));
+
+  return enrichViewerRows(
+    views.map((v) => ({
+      viewerId: v.viewerId,
+      createdAt: v.createdAt,
+      reaction: reactionMap.get(v.viewerId) ?? null,
+      liked: reactionMap.get(v.viewerId) === '❤️',
+    })),
+    userId,
+  );
 }
 
 // ─── Like Story (legacy endpoint, kept for old app builds) ─────
