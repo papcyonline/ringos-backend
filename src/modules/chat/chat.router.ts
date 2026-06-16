@@ -1610,12 +1610,14 @@ router.get(
           // Photos (single + albums via mirrored imageUrl) AND videos.
           // Album messages set imageUrl to the first image so the OR
           // already catches them.
+          // NOTE: document uploads (metadata.isDocument === true) that also
+          // carry an imageUrl thumbnail are excluded in code below — a Prisma
+          // `NOT: { metadata path equals }` here would drop every normal image
+          // too, because their metadata is SQL NULL and NOT(null) is unknown.
           OR: [
             { imageUrl: { not: null } },
             { videoUrl: { not: null } },
           ],
-          // Exclude document uploads that happen to have imageUrl
-          NOT: { metadata: { path: ['isDocument'], equals: true } },
         };
       } else if (type === 'docs') {
         where = {
@@ -1656,7 +1658,14 @@ router.get(
         prisma.message.count({ where }),
       ]);
 
-      res.json({ items, total, page, limit });
+      // Drop document uploads (which can carry an imageUrl thumbnail) from the
+      // media tab — done in code so null-metadata images aren't lost.
+      const result = type === 'media'
+        ? items.filter(
+            (m) => !((m.metadata as any)?.isDocument === true))
+        : items;
+
+      res.json({ items: result, total, page, limit });
     } catch (err) {
       next(err);
     }
