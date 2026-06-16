@@ -24,6 +24,7 @@ export async function getProfile(userId: string) {
       profession: true,
       gender: true,
       location: true,
+      profileLinks: true,
       status: true,
       availabilityNote: true,
       isAnonymous: true,
@@ -70,6 +71,7 @@ export async function getProfile(userId: string) {
   if (!user) throw new NotFoundError('User not found');
   return {
     ...user,
+    profileLinks: (user as any).profileLinks ?? [],
     banStatus: user.moderation?.banStatus ?? 'NONE',
     banExpiresAt: user.moderation?.banExpiresAt ?? null,
     reportCount: user.moderation?.flagCount ?? 0,
@@ -91,6 +93,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
       profession: true,
       gender: true,
       location: true,
+      profileLinks: true,
       status: true,
       availabilityNote: true,
       isOnline: true,
@@ -155,6 +158,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
     createdAt: user.createdAt,
     // Hidden when locked.
     bio: locked ? null : user.bio,
+    profileLinks: locked ? [] : (user.profileLinks ?? []),
     profession: locked ? null : user.profession,
     gender: locked ? null : user.gender,
     location: locked ? null : user.location,
@@ -496,10 +500,36 @@ export async function updateProfile(userId: string, data: UpdateProfileInput) {
     throw new ForbiddenError('Only verified users can change their location');
   }
 
+  // Sanitize profile links before persisting. Schema already validated
+  // shape/length; here we normalize values and enforce safe URL schemes so
+  // these tappable links can't carry e.g. javascript: payloads to viewers.
+  const { profileLinks, ...rest } = data;
+  let sanitizedLinks: { type: string; label: string; value: string }[] | undefined;
+  if (profileLinks !== undefined) {
+    sanitizedLinks = (profileLinks ?? [])
+      .map((l) => {
+        const label = l.label.trim();
+        let value = l.value.trim();
+        if (!label || !value) return null;
+        if (l.type === 'website') {
+          if (!/^https?:\/\//i.test(value)) {
+            // Reject any other explicit scheme (javascript:, data:, …);
+            // otherwise assume a bare host and default to https.
+            if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return null;
+            value = `https://${value}`;
+          }
+        }
+        return { type: l.type as string, label, value };
+      })
+      .filter((l): l is { type: string; label: string; value: string } => l !== null)
+      .slice(0, 5);
+  }
+
   return prisma.user.update({
     where: { id: userId },
     data: {
-      ...data,
+      ...rest,
+      ...(sanitizedLinks !== undefined && { profileLinks: sanitizedLinks }),
       ...(isChangingName && { lastNameChangeAt: new Date() }),
     },
     select: {
@@ -510,6 +540,7 @@ export async function updateProfile(userId: string, data: UpdateProfileInput) {
       profession: true,
       gender: true,
       location: true,
+      profileLinks: true,
       lastNameChangeAt: true,
     },
   });

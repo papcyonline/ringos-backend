@@ -205,6 +205,11 @@ model User {
   profession    String?
   gender        Gender?
   location      String?
+  // Profile links shown to other users as tappable pill buttons.
+  // Array of { type: 'website'|'email'|'phone'|'instagram'|'x'|'facebook'
+  //            |'linkedin'|'tiktok', label: string, value: string }.
+  // JSONB so the set stays flexible without per-type columns.
+  profileLinks  Json?
   // Required for COPPA / GDPR-K compliance + App Store age-gating.
   // Stored as DateTime so age can be computed precisely; nullable so
   // existing users without DOB don't break (they're prompted on next
