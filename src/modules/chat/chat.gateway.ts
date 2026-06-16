@@ -2,7 +2,7 @@ import { Server, Socket } from 'socket.io';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import * as chatService from './chat.service';
-import { broadcastAndNotifyMessage } from './chat.utils';
+import { broadcastAndNotifyMessage, formatMessagePayload } from './chat.utils';
 import { notifyChatMessage, markConversationNotificationsAsRead } from '../notification/notification.service';
 
 /** Extract a user-facing error message from a caught error. */
@@ -185,13 +185,21 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
   /**
    * chat:message - Send a message: moderate content, persist, and broadcast to room.
    */
-  socket.on('chat:message', async (data: { conversationId: string; content: string; replyToId?: string; clientMsgId?: string; metadata?: Record<string, any> }) => {
+  // `ack` is the optional Socket.IO acknowledgement callback the client
+  // passes via emitWithAck. Returning {ok:true,message} lets the client
+  // confirm delivery instead of fire-and-forget (so it can fall back to REST
+  // on a flaky/zombie socket). Plain emit() callers just won't get an ack.
+  socket.on('chat:message', async (
+    data: { conversationId: string; content: string; replyToId?: string; clientMsgId?: string; metadata?: Record<string, any> },
+    ack?: (response: any) => void,
+  ) => {
     try {
       const { conversationId, content, replyToId, clientMsgId, metadata } = data;
 
       const validation = validateMessageContent(content);
       if (!validation.valid) {
         socket.emit('chat:error', { message: validation.error });
+        if (typeof ack === 'function') ack({ ok: false, error: validation.error });
         return;
       }
 
@@ -204,9 +212,17 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
       broadcastAndNotifyMessage(message, conversationId, userId);
 
       logger.debug({ conversationId, userId, messageId: message.id, clientMsgId }, 'Message broadcast to room');
+
+      // Acknowledge with the persisted message so the sender can reconcile
+      // its optimistic bubble even if it misses the room broadcast.
+      if (typeof ack === 'function') {
+        ack({ ok: true, message: formatMessagePayload(message, conversationId) });
+      }
     } catch (error: any) {
       logger.error({ error, userId }, 'Error sending message');
-      socket.emit('chat:error', { message: extractErrorMessage(error, 'Failed to send message') });
+      const msg = extractErrorMessage(error, 'Failed to send message');
+      socket.emit('chat:error', { message: msg });
+      if (typeof ack === 'function') ack({ ok: false, error: msg });
     }
   });
 
