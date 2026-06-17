@@ -101,10 +101,14 @@ export async function transcribeMessage(
   if (message.conversationId !== conversationId) throw new Error('Message not in conversation');
   if (!message.audioUrl) throw new Error('Not a voice message');
 
-  // Check cache — cached results are always free (no limit consumed)
+  // Check cache — cached results are always free (no limit consumed).
+  // Transcriptions are PER-USER (private to whoever tapped Transcribe): keyed
+  // by userId under metadata.transcriptions, so the other participant never
+  // sees a transcription someone else generated.
   const existing = message.metadata as Record<string, any> | null;
-  if (existing?.transcription) {
-    return { transcription: existing.transcription };
+  const perUser = (existing?.transcriptions ?? {}) as Record<string, string>;
+  if (perUser[userId]) {
+    return { transcription: perUser[userId] };
   }
 
   // Gate non-cached transcriptions behind daily limit
@@ -151,16 +155,21 @@ export async function transcribeMessage(
   // Track usage after successful transcription
   await incrementTranscription(userId);
 
-  // Save to metadata (merge with existing)
-  const merged = { ...(existing || {}), transcription };
+  // Save per-user (merge into metadata.transcriptions) so it stays private
+  // to the requester and the other participant never loads it.
+  const merged = {
+    ...(existing || {}),
+    transcriptions: { ...perUser, [userId]: transcription },
+  };
   await prisma.message.update({
     where: { id: messageId },
     data: { metadata: merged },
   });
 
-  // Broadcast to conversation
+  // Notify ONLY the requester's devices — not the whole conversation room,
+  // so the transcription doesn't appear on the other side.
   const io = getIO();
-  io.to(`conversation:${conversationId}`).emit('chat:transcribed', {
+  io.to(`user:${userId}`).emit('chat:transcribed', {
     messageId,
     transcription,
   });
