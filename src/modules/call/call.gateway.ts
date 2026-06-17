@@ -432,8 +432,11 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         }
       }
 
-      // Block check — 1-on-1 only. On query failure, let the call proceed.
-      if (!(isGroup ?? false) && targetUserIds.length === 1) {
+      // Block check for any single-target call. Do NOT gate this on the
+      // client-supplied `isGroup` flag: a client could send isGroup:true on a
+      // 1-on-1 to skip the block check and force-ring a user who blocked them.
+      // (Matches the busy check below, which keys only on target count.)
+      if (targetUserIds.length === 1) {
         try {
           const [targetId] = targetUserIds;
           const blocked = await isBlocked(userId, targetId);

@@ -295,11 +295,32 @@ router.post(
       if (excludeVoipToken && excludeVoipToken.length > 0) {
         try {
           const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-          await prisma.voipToken.upsert({
+          // Anti-hijack: only create the token if unowned, or refresh it if
+          // it's already ours. NEVER reassign a token registered to a
+          // DIFFERENT user — the old upsert (update: { userId }) let any
+          // authenticated caller POST a victim's token value and steal that
+          // row, hijacking the victim's incoming-call delivery. Genuine
+          // device re-login reassignment is handled by the dedicated
+          // /notifications/voip-token endpoint, not this defensive refresh.
+          const existing = await prisma.voipToken.findUnique({
             where: { token: excludeVoipToken },
-            create: { userId, token: excludeVoipToken, platform: 'ios' },
-            update: { userId, createdAt: new Date() },
+            select: { userId: true },
           });
+          if (!existing) {
+            await prisma.voipToken.create({
+              data: { userId, token: excludeVoipToken, platform: 'ios' },
+            });
+          } else if (existing.userId === userId) {
+            await prisma.voipToken.update({
+              where: { token: excludeVoipToken },
+              data: { createdAt: new Date() },
+            });
+          } else {
+            logger.warn({ userId, callId },
+              'Answer voipToken refresh skipped: token registered to another user');
+          }
+          // Prune only OUR OWN stale tokens (scoped by userId — can't touch
+          // another user's rows).
           await prisma.voipToken.deleteMany({
             where: {
               userId,
