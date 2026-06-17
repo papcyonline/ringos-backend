@@ -373,6 +373,49 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         const staleCall = await callState.getCall(staleCallId);
         if (staleCall) {
           if (!staleCall.answeredAt) {
+            // IDEMPOTENT RETRY: the client resends call:initiate when the
+            // server's ack is slow (slow-network path). If there's already an
+            // unanswered, still-ringing call from this user to the SAME
+            // conversation, this is that retry — DO NOT cleanup-and-recreate.
+            // Doing so minted a new callId and fired a SECOND VoIP push, so
+            // the callee got two CallKit rings (different ids → no dedup) and
+            // the orphaned one lingered as a stuck timer / surfaced as a
+            // "missed call". Reuse the in-flight call: re-ack it and re-send
+            // the caller's LiveKit token, then return. No new call, no second
+            // push to the callee.
+            if (staleCall.conversationId === conversationId) {
+              try {
+                const callerForRetry = await prisma.user.findUnique({
+                  where: { id: userId },
+                  select: { displayName: true },
+                });
+                const retryToken = await generateCallToken(
+                  userId,
+                  staleCallId,
+                  callerForRetry?.displayName ?? undefined,
+                );
+                socket.emit('call:initiated', {
+                  callId: staleCallId,
+                  callType: resolvedCallType,
+                });
+                socket.emit('call:livekit-token', {
+                  callId: staleCallId,
+                  token: retryToken,
+                  url: LIVEKIT_URL,
+                });
+                logger.info(
+                  { userId, callId: staleCallId },
+                  'Re-acked duplicate call:initiate (idempotent retry) — reusing in-flight call',
+                );
+              } catch (err) {
+                logger.error(
+                  { err, userId, callId: staleCallId },
+                  'Failed to re-ack duplicate call:initiate',
+                );
+              }
+              return;
+            }
+            // Different conversation — genuinely stale; clean it up and proceed.
             await callState.cleanup(staleCallId);
           } else {
             socket.emit('call:error', { message: 'You are already in a call' });
