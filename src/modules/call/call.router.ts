@@ -337,6 +337,7 @@ router.post(
       if (!result.ok) {
         const status = result.code === 'CALL_NOT_FOUND' ? 404
                      : result.code === 'ALREADY_ANSWERED' ? 409
+                     : result.code === 'CALL_ENDED' ? 410
                      : 500;
         return res.status(status).json({ code: result.code, message: result.message });
       }

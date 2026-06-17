@@ -242,6 +242,14 @@ export async function answerCall(
     return { ok: false, code: 'CALL_NOT_FOUND', message: 'Call not found' };
   }
 
+  // Refuse to join a call that is already being torn down (caller cancelled
+  // /ended in the same window). Without this the answerer could mint a token
+  // and join a room the caller already left. markAnswered() also re-checks
+  // this to close the narrow window between here and the lock.
+  if (await callState.isTerminating(callId)) {
+    return { ok: false, code: 'CALL_ENDED', message: 'Call has ended' };
+  }
+
   const firstAnswer = await callState.markAnswered(callId, userId, new Date());
   if (!call.isGroup && !firstAnswer) {
     // Not an error from the user's perspective if THIS device answered

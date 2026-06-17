@@ -59,6 +59,9 @@ export interface CallStateStore {
    * CallLog updates) to avoid duplicate cleanup.
    */
   claimTermination(callId: string): Promise<boolean>;
+  /** True if a teardown of this call has already been claimed (used by the
+   * answer path to refuse joining a call that is ending). */
+  isTerminating(callId: string): Promise<boolean>;
   /** Remove all state for a call, including each participant's user→call map. */
   cleanup(callId: string): Promise<void>;
   /** Remove just this participant's user→call mapping (group-call leave). */
@@ -147,6 +150,9 @@ class InMemoryCallStateStore implements CallStateStore {
     const call = this.calls.get(callId);
     if (!call) return false;
     if (call.answeredAt) return false;
+    // Lose to an in-flight termination so an answer racing a caller-cancel
+    // can't mark a call answered that is already being torn down.
+    if (this.terminating.has(callId)) return false;
     call.answeredAt = answeredAt;
     return true;
   }
@@ -156,6 +162,10 @@ class InMemoryCallStateStore implements CallStateStore {
     if (!this.calls.has(callId)) return false;
     this.terminating.add(callId);
     return true;
+  }
+
+  async isTerminating(callId: string): Promise<boolean> {
+    return this.terminating.has(callId);
   }
 
   async cleanup(callId: string): Promise<void> {
@@ -348,6 +358,18 @@ class RedisCallStateStore implements CallStateStore {
     const locked = await this.redis.set(answeredLockKey(callId), userId, 'EX', CALL_KEY_TTL_SECONDS, 'NX');
     if (locked !== 'OK') return false;
 
+    // Lose to an in-flight termination. The answered and terminating locks
+    // are otherwise independent, so without this an answer landing during a
+    // caller-cancel could mark the call answered AND have it torn down,
+    // stranding the answerer in a dead LiveKit room. If termination was
+    // already claimed, release the answered lock and report "not answered"
+    // so the caller bails cleanly. (The reverse order — answer wins, then a
+    // legitimate hangup — is fine: the answerer gets call:ended normally.)
+    if ((await this.redis.exists(terminatingLockKey(callId))) === 1) {
+      await this.redis.del(answeredLockKey(callId));
+      return false;
+    }
+
     // Update the call JSON. Read-modify-write — safe because the lock above
     // guarantees this is the only path setting answeredAt.
     const raw = await this.redis.get(callKey(callId));
@@ -373,6 +395,10 @@ class RedisCallStateStore implements CallStateStore {
       'NX',
     );
     return locked === 'OK';
+  }
+
+  async isTerminating(callId: string): Promise<boolean> {
+    return (await this.redis.exists(terminatingLockKey(callId))) === 1;
   }
 
   async cleanup(callId: string): Promise<void> {
