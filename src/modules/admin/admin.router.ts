@@ -5,6 +5,11 @@ import { requireAdmin } from './admin.middleware';
 import * as adminService from './admin.service';
 import { prisma } from '../../config/database';
 import { checkUsernameAvailable } from '../auth/auth.service';
+import {
+  createAnnouncement,
+  deactivateAnnouncement,
+} from '../announcement/announcement.service';
+import { getIO } from '../../config/socket';
 
 const router = Router();
 
@@ -127,6 +132,80 @@ router.get(
     try {
       const overview = await adminService.getOverview();
       res.json(overview);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ── Announcements ──
+
+/// Publish an app-wide announcement (maintenance notice, outage, etc.).
+/// Persists it (so launching clients fetch it via GET /announcements/active)
+/// AND broadcasts a socket `announcement` event to every connected client for
+/// instant display.
+router.post(
+  '/announcements',
+  requireAdmin,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const title = String(req.body?.title ?? '').trim();
+      const body = String(req.body?.body ?? '').trim();
+      if (!title || !body) {
+        throw new BadRequestError('title and body are required');
+      }
+      const severityRaw = String(req.body?.severity ?? 'INFO').toUpperCase();
+      const severity =
+        severityRaw === 'WARNING' || severityRaw === 'CRITICAL'
+          ? (severityRaw as 'WARNING' | 'CRITICAL')
+          : ('INFO' as const);
+      const parseDate = (v: unknown): Date | null => {
+        if (typeof v !== 'string' || v.trim() === '') return null;
+        const d = new Date(v);
+        return Number.isNaN(d.getTime()) ? null : d;
+      };
+
+      const announcement = await createAnnouncement({
+        title,
+        body,
+        severity,
+        dismissible: req.body?.dismissible !== false,
+        startsAt: parseDate(req.body?.startsAt),
+        endsAt: parseDate(req.body?.endsAt),
+        ctaText:
+          typeof req.body?.ctaText === 'string' ? req.body.ctaText : null,
+        ctaUrl: typeof req.body?.ctaUrl === 'string' ? req.body.ctaUrl : null,
+      });
+
+      // Instant delivery to in-app users. Clients not connected pick it up on
+      // their next launch/foreground fetch.
+      try {
+        getIO().emit('announcement', announcement);
+      } catch (e) {
+        // Socket layer not ready — non-fatal; the fetch path still covers it.
+      }
+
+      res.status(201).json({ announcement });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/// Pull an announcement early.
+router.post(
+  '/announcements/:id/deactivate',
+  requireAdmin,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      await deactivateAnnouncement(String(req.params.id));
+      // Tell clients to clear any showing banner for this id.
+      try {
+        getIO().emit('announcement:clear', { id: String(req.params.id) });
+      } catch (e) {
+        /* non-fatal */
+      }
+      res.json({ ok: true });
     } catch (err) {
       next(err);
     }

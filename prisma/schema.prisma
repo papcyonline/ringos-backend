@@ -1336,3 +1336,30 @@ model ReEngagementPush {
   @@unique([userId, cadenceDay])
   @@index([sentAt])
 }
+
+enum AnnouncementSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+// App-wide announcements (maintenance notices, outages, "update required").
+// The client fetches the single active one within its time window on launch /
+// foreground, and also receives a socket `announcement` event when an admin
+// publishes one for instant display. Dismissals are tracked client-side per id.
+model Announcement {
+  id          String               @id @default(uuid())
+  title       String
+  body        String
+  severity    AnnouncementSeverity @default(INFO)
+  active      Boolean              @default(true)
+  dismissible Boolean              @default(true)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  ctaText     String?
+  ctaUrl      String?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@index([active, startsAt, endsAt])
+}
