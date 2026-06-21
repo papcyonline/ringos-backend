@@ -158,6 +158,8 @@ vi.mock('../../../shared/upload', () => {
     chatDocumentUpload: fakeUpload,
     chatVideoUpload: fakeUpload,
     fileToAvatarUrl: vi.fn().mockResolvedValue('https://cdn/x.jpg'),
+    fileToGroupAvatarUrl: vi.fn().mockResolvedValue('https://cdn/group.jpg'),
+    fileToGroupBannerUrl: vi.fn().mockResolvedValue('https://cdn/group-banner.jpg'),
     fileToChatImageUrl: vi.fn().mockResolvedValue('https://cdn/img.jpg'),
     fileToChatAudioUrl: vi.fn().mockResolvedValue('https://cdn/aud.m4a'),
     fileToChatDocumentUrl: vi.fn().mockResolvedValue('https://cdn/doc.pdf'),

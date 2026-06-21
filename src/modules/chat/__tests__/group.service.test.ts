@@ -41,6 +41,12 @@ vi.mock('../../../shared/logger', () => ({
 vi.mock('../../../shared/usage.service', () => ({
   isPro: vi.fn().mockResolvedValue(false),
 }));
+// group.service imports notifyAddedToGroup from notification.service, which
+// eagerly pulls in config/socket → config/env (loadEnv calls process.exit on
+// missing test env). Mock it so the import chain stays inert in tests.
+vi.mock('../../notification/notification.service', () => ({
+  notifyAddedToGroup: vi.fn().mockResolvedValue(undefined),
+}));
 
 import {
   createGroup,
