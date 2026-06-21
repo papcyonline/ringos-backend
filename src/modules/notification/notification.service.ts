@@ -133,7 +133,7 @@ export async function deleteAllNotifications(userId: string) {
 
 export async function createNotification(data: {
   userId: string;
-  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'STORY_VIEWED' | 'STORY_MILESTONE' | 'MISSED_CALL' | 'SYSTEM' | 'POST_LIKED' | 'POST_COMMENTED' | 'POST_MENTION' | 'NEW_POST' | 'NEW_STORY' | 'MESSAGE_REQUESTS_DIGEST' | 'NEW_FOLLOWERS_DIGEST';
+  type: 'CHAT_MESSAGE' | 'VOICE_NOTE' | 'NEW_FOLLOWER' | 'PROFILE_LIKED' | 'MATCH_FOUND' | 'STORY_GIFT' | 'STORY_LIKED' | 'STORY_VIEWED' | 'STORY_MILESTONE' | 'MISSED_CALL' | 'SYSTEM' | 'POST_LIKED' | 'POST_COMMENTED' | 'POST_MENTION' | 'NEW_POST' | 'NEW_STORY' | 'MESSAGE_REQUESTS_DIGEST' | 'NEW_FOLLOWERS_DIGEST' | 'ADDED_TO_GROUP';
   title: string;
   body: string;
   imageUrl?: string;
@@ -163,6 +163,79 @@ export async function createNotification(data: {
   }
 
   return notification;
+}
+
+/**
+ * Notify users that they were added to a group / channel. Sends BOTH an in-app
+ * notification record (real-time via socket) AND a lock-screen FCM push to each
+ * added user, mirroring the follow/like pattern. The actor (creator/admin) is
+ * never notified about themselves. Fire-and-forget per user — a failed token
+ * never blocks the group operation.
+ */
+export async function notifyAddedToGroup(params: {
+  actorId: string;
+  conversationId: string;
+  groupName: string | null;
+  groupAvatarUrl?: string | null;
+  isChannel?: boolean;
+  addedUserIds: string[];
+}) {
+  const recipients = [
+    ...new Set(params.addedUserIds.filter((id) => id && id !== params.actorId)),
+  ];
+  if (recipients.length === 0) return;
+
+  const actor = await prisma.user.findUnique({
+    where: { id: params.actorId },
+    select: { displayName: true, avatarUrl: true, isVerified: true },
+  });
+  if (!actor) return;
+
+  const noun = params.isChannel ? 'channel' : 'group';
+  const label = params.groupName ? `"${params.groupName}"` : `a ${noun}`;
+  const title = params.groupName ?? (params.isChannel ? 'New channel' : 'New group');
+  const body = `${actor.displayName} added you to ${label}`;
+  // Prefer the group's avatar as the notification image; fall back to the actor.
+  const image = params.groupAvatarUrl ?? actor.avatarUrl ?? undefined;
+
+  for (const userId of recipients) {
+    createNotification({
+      userId,
+      type: 'ADDED_TO_GROUP',
+      title,
+      body,
+      imageUrl: image,
+      data: {
+        conversationId: params.conversationId,
+        groupName: params.groupName ?? '',
+        isChannel: params.isChannel ?? false,
+        // Actor keys so the inbox can enrich/verify and show who added you.
+        senderId: params.actorId,
+        userId: params.actorId,
+        senderName: actor.displayName ?? '',
+        senderAvatar: actor.avatarUrl ?? '',
+        isVerified: actor.isVerified ?? false,
+      },
+    }).catch((err) => {
+      logger.error({ err, userId }, 'Failed to create group-add notification');
+    });
+
+    sendPostPush(userId, {
+      title,
+      body,
+      imageUrl: image,
+      data: {
+        type: 'ADDED_TO_GROUP',
+        conversationId: params.conversationId,
+        groupName: params.groupName ?? '',
+        senderId: params.actorId,
+        senderName: actor.displayName ?? '',
+        senderAvatar: actor.avatarUrl ?? '',
+      },
+    }).catch((err) => {
+      logger.error({ err, userId }, 'Failed to send group-add push');
+    });
+  }
 }
 
 export async function registerFcmToken(

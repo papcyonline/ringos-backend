@@ -3,6 +3,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../shared/errors';
 import { isPro } from '../../shared/usage.service';
+import { notifyAddedToGroup } from '../notification/notification.service';
 
 /**
  * Verify that a user is an admin in a conversation. Throws if not.
@@ -130,6 +131,19 @@ export async function createGroup(
   });
 
   logger.info({ conversationId: conversation.id, creatorId, memberCount: uniqueMembers.length + 1 }, 'Group created');
+
+  // Notify the initial members (not the creator) that they were added.
+  notifyAddedToGroup({
+    actorId: creatorId,
+    conversationId: conversation.id,
+    groupName: conversation.name,
+    groupAvatarUrl: conversation.avatarUrl,
+    isChannel: conversation.isChannel,
+    addedUserIds: uniqueMembers,
+  }).catch((err) => {
+    logger.error({ err, conversationId: conversation.id }, 'Failed to notify group members on create');
+  });
+
   return conversation;
 }
 
@@ -262,6 +276,20 @@ export async function addMembers(
   });
 
   logger.info({ conversationId, adminId, added: newMembers }, 'Members added to group');
+
+  // Notify everyone who was just added (brand-new + rejoining), excluding the
+  // admin who performed the action.
+  notifyAddedToGroup({
+    actorId: adminId,
+    conversationId,
+    groupName: conversation?.name ?? null,
+    groupAvatarUrl: conversation?.avatarUrl,
+    isChannel: conversation?.isChannel,
+    addedUserIds: [...newMembers, ...rejoining],
+  }).catch((err) => {
+    logger.error({ err, conversationId }, 'Failed to notify added group members');
+  });
+
   return conversation;
 }
 

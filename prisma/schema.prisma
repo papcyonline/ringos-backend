@@ -169,6 +169,7 @@ enum NotificationType {
   NEW_STORY
   MESSAGE_REQUESTS_DIGEST
   NEW_FOLLOWERS_DIGEST
+  ADDED_TO_GROUP
 }
 
 enum TransactionType {
