@@ -100,6 +100,14 @@ const envSchema = z.object({
 function loadEnv() {
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
+    // Under test (vitest), don't kill the process on missing/invalid env — the
+    // test runner has no real .env and tests mock the config they actually use.
+    // Exiting here crashes any test that transitively imports config/env (e.g.
+    // via config/socket). Production still hard-fails so a misconfig never
+    // boots silently.
+    if (process.env.VITEST || process.env.NODE_ENV === 'test') {
+      return process.env as unknown as Env;
+    }
     console.error('Invalid environment variables:', parsed.error.flatten().fieldErrors);
     process.exit(1);
   }

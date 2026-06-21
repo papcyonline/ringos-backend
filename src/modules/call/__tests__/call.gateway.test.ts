@@ -47,6 +47,7 @@ const {
     setDisconnectGrace: vi.fn(),
     takeDisconnectGrace: vi.fn().mockReturnValue(undefined),
     markAnswered: vi.fn().mockResolvedValue(true),
+    isTerminating: vi.fn().mockResolvedValue(false),
     clearUnansweredTimer: vi.fn(),
     claimTermination: vi.fn().mockResolvedValue(true),
     shouldSuppressCancelPush: vi.fn().mockResolvedValue(false),

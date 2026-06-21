@@ -90,7 +90,8 @@ describe('transcription.service', () => {
     mockPrisma.conversationParticipant.findFirst.mockResolvedValue({ id: 'p-1' });
     mockPrisma.message.findUnique.mockResolvedValue({
       audioUrl: 'x', conversationId: 'c-1',
-      metadata: { transcription: 'cached' },
+      // Transcriptions are cached PER-USER under metadata.transcriptions[userId].
+      metadata: { transcriptions: { 'u-1': 'cached' } },
     });
     const res = await transcribeMessage('m-1', 'c-1', 'u-1');
     expect(res.transcription).toBe('cached');
