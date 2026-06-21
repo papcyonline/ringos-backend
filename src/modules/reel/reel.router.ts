@@ -6,6 +6,7 @@ import { storyMediaUpload } from '../../shared/upload';
 import {
   createReel,
   getReelFeed,
+  getUserReels,
   likeReel,
   unlikeReel,
   repostReel,
@@ -48,6 +49,22 @@ router.get('/feed', authenticate, async (req: AuthRequest, res: Response) => {
   } catch (error) {
     logger.error({ error }, 'Error fetching reel feed');
     res.status(500).json({ error: 'Failed to fetch reel feed' });
+  }
+});
+
+// ─── GET /api/reels/user/:userId ─────────────────────────────
+// Reels posted by a specific user (profile "Reels" tab), newest first.
+
+router.get('/user/:userId', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const requesterId = req.user!.userId;
+    const targetUserId = req.params.userId as string;
+    const limit = parseInt((req.query.limit as string) || '30', 10);
+    const data = await getUserReels(requesterId, targetUserId, Math.min(Math.max(limit, 1), 60));
+    res.json(data);
+  } catch (error) {
+    logger.error({ error }, 'Error fetching user reels');
+    res.status(500).json({ error: 'Failed to fetch user reels' });
   }
 });
 

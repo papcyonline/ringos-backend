@@ -8,7 +8,7 @@ import {
 } from '../../shared/r2.service';
 import { moderateVideoUrl } from '../../shared/moderation.service';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
-import { faststartRemux } from '../../shared/video.service';
+import { faststartRemux, extractPosterFrame } from '../../shared/video.service';
 import * as cache from '../../shared/redis.service';
 import path from 'path';
 
@@ -73,14 +73,30 @@ export async function createReel(
     throw err;
   }
 
-  // Reels are served directly from R2 (Cloudinary is no longer used). R2
-  // doesn't derive a first-frame thumbnail, so thumbnailUrl stays null and
-  // the FE shows the first frame / a placeholder while bytes arrive.
-  // NOTE: raw R2 MP4s have no faststart (moov atom at front), so first-frame
-  // latency depends on the file being uploaded already-faststarted by the
-  // client. See follow-up to add server- or client-side faststart.
   const videoUrl = upload.url;
-  const thumbnailUrl: string | null = null;
+
+  // Generate a first-frame JPEG poster server-side (ffmpeg) and store it on R2,
+  // so the profile reels grid can show a small still image per tile instead of
+  // decoding video per tile (which OOM-kills iOS). Fail-open: on any error the
+  // thumbnail stays null and the FE falls back to a placeholder.
+  let thumbnailUrl: string | null = null;
+  try {
+    const poster = await extractPosterFrame(
+      faststarted,
+      path.extname(file.originalname || '') || '.mp4',
+    );
+    if (poster && poster.length > 0) {
+      const posterUpload = await uploadToR2WithKey(
+        poster,
+        `reels/${userId}/thumbs`,
+        'poster.jpg',
+        'image/jpeg',
+      );
+      thumbnailUrl = posterUpload.url;
+    }
+  } catch (err) {
+    logger.warn({ err, userId }, 'Reel poster generation failed — thumbnail null');
+  }
 
   const reel = await prisma.reel.create({
     data: {
@@ -167,6 +183,62 @@ function reelFeedCacheKey(
 
 export async function invalidateReelFeedCache(requesterId: string) {
   await cache.delPattern(`reels:feed:${requesterId}:*`);
+}
+
+/**
+ * Reels posted by a specific user, newest first — used by the profile "Reels"
+ * tab (your own profile and other users'). Chronological, no ranking. Blocking
+ * is honoured both ways: a blocked user's reels are hidden. `isLiked`/`isReposted`
+ * reflect the REQUESTER so the viewer's own state is correct.
+ */
+export async function getUserReels(
+  requesterId: string,
+  targetUserId: string,
+  limit = 30,
+) {
+  const blockedIds = await getBlockedUserIds(requesterId);
+  if (blockedIds.has(targetUserId)) {
+    return { reels: [], nextCursor: null };
+  }
+
+  const rows = await prisma.reel.findMany({
+    where: { userId: targetUserId },
+    orderBy: { createdAt: 'desc' },
+    take: Math.min(Math.max(limit, 1), 60),
+    include: {
+      user: {
+        select: { id: true, displayName: true, avatarUrl: true, isVerified: true },
+      },
+      likes: { where: { userId: requesterId }, select: { id: true } },
+      reposts: { where: { userId: requesterId }, select: { id: true } },
+    },
+  });
+
+  return {
+    reels: rows.map((r) => ({
+      id: r.id,
+      videoUrl: r.videoUrl,
+      thumbnailUrl: r.thumbnailUrl,
+      caption: r.caption,
+      musicTitle: r.musicTitle,
+      musicPreviewUrl: r.musicPreviewUrl,
+      musicArtist: r.musicArtist,
+      musicArtwork: r.musicArtwork,
+      videoVolume: r.videoVolume,
+      musicVolume: r.musicVolume,
+      durationSec: r.durationSec,
+      viewCount: r.viewCount,
+      likeCount: r.likeCount,
+      commentCount: r.commentCount,
+      repostCount: r.repostCount,
+      createdAt: r.createdAt,
+      videoEdits: r.videoEdits,
+      isLiked: r.likes.length > 0,
+      isReposted: r.reposts.length > 0,
+      user: r.user,
+    })),
+    nextCursor: null,
+  };
 }
 
 export async function getReelFeed(
