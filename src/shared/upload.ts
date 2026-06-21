@@ -237,6 +237,81 @@ export async function fileToCoverUrl(file: Express.Multer.File, userId: string):
   return saveToDisk(resized, 'uploads/covers', '/uploads/covers', '.jpg');
 }
 
+/**
+ * Group/channel AVATAR upload. MUST be keyed by the group (conversationId) — or
+ * a fresh uuid at create time — NOT by the uploader's userId. Reusing
+ * fileToAvatarUrl here was a data-corruption bug: that helper writes to a stable
+ * per-user key (`<userId>.jpg`), so a group photo overwrote the uploader's own
+ * personal avatar. We store under a `group_`-prefixed key / `group-avatars/`
+ * folder so it can never collide with a user's avatar object.
+ */
+export async function fileToGroupAvatarUrl(file: Express.Multer.File, ownerKey: string): Promise<string> {
+  const resized = await sharp(file.buffer)
+    .rotate()
+    .resize(800, 800, { fit: 'cover' })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+
+  const verdict = await moderateImageBuffer(resized, `group-avatar-${ownerKey}.jpg`);
+  if (!verdict.safe) {
+    logger.warn({ ownerKey, reason: verdict.reason, scores: verdict.scores }, 'Group avatar upload rejected by moderation');
+    throw new ForbiddenError(verdict.reason ?? 'This image was rejected by our content policy');
+  }
+
+  const key = `group_${ownerKey}`;
+  // 1. Supabase (avatars bucket, group-prefixed key — distinct from any user)
+  if (isSupabaseConfigured) {
+    try {
+      const result = await uploadAvatarToSupabase(resized, key);
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  // 2. R2 fallback (separate folder)
+  if (isR2Configured) {
+    try {
+      const result = await uploadToR2WithCustomKey(resized, `group-avatars/${ownerKey}.jpg`, 'image/jpeg');
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  return saveToDisk(resized, 'uploads/group-avatars', '/uploads/group-avatars', '.jpg');
+}
+
+/**
+ * Group/channel BANNER (16:9) upload. Same rationale as fileToGroupAvatarUrl —
+ * keyed by the group, never the uploader's userId (which would clobber the
+ * user's personal cover photo).
+ */
+export async function fileToGroupBannerUrl(file: Express.Multer.File, ownerKey: string): Promise<string> {
+  const resized = await sharp(file.buffer)
+    .rotate()
+    .resize(1600, 900, { fit: 'cover' })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+
+  const verdict = await moderateImageBuffer(resized, `group-banner-${ownerKey}.jpg`);
+  if (!verdict.safe) {
+    logger.warn({ ownerKey, reason: verdict.reason, scores: verdict.scores }, 'Group banner upload rejected by moderation');
+    throw new ForbiddenError(verdict.reason ?? 'This image was rejected by our content policy');
+  }
+
+  const key = `group_${ownerKey}`;
+  // 1. Supabase (covers bucket, group-prefixed key)
+  if (isSupabaseConfigured) {
+    try {
+      const result = await uploadCoverToSupabase(resized, key);
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  // 2. R2 fallback (separate folder)
+  if (isR2Configured) {
+    try {
+      const result = await uploadToR2WithCustomKey(resized, `group-banners/${ownerKey}.jpg`, 'image/jpeg');
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  return saveToDisk(resized, 'uploads/group-banners', '/uploads/group-banners', '.jpg');
+}
+
 export async function fileToChatImageUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
   // 1. Supabase
   if (isSupabaseConfigured) {

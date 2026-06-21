@@ -5,7 +5,8 @@ import { userRateLimit } from '../../middleware/userRateLimit';
 
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
-import { avatarUpload, fileToAvatarUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl, chatDocumentUpload, fileToChatDocumentUrl, chatVideoUpload, fileToChatVideoUrl, fileToChatVideoThumbnailUrl } from '../../shared/upload';
+import crypto from 'crypto';
+import { avatarUpload, fileToGroupAvatarUrl, fileToGroupBannerUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl, chatDocumentUpload, fileToChatDocumentUrl, chatVideoUpload, fileToChatVideoUrl, fileToChatVideoThumbnailUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema, forwardMessageSchema, searchMessagesSchema } from './chat.schema';
 import * as chatService from './chat.service';
@@ -922,7 +923,10 @@ router.post(
           }
         }
       }
-      const avatarUrl = req.file ? await fileToAvatarUrl(req.file, req.user!.userId) : req.body.avatarUrl || undefined;
+      // Group avatar must be stored under a GROUP key, never the uploader's
+      // userId (which is the user's personal-avatar storage key). No
+      // conversationId exists yet at create time, so use a fresh uuid.
+      const avatarUrl = req.file ? await fileToGroupAvatarUrl(req.file, crypto.randomUUID()) : req.body.avatarUrl || undefined;
       // Parse isPublic: accept boolean or string "true"/"false" (from FormData)
       const rawIsPublic = req.body.isPublic;
       const isPublic = rawIsPublic !== undefined
@@ -963,7 +967,9 @@ router.put(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { name, description, category, contactEmail, contactPhone, websiteUrl, location, operatingHours } = req.body;
-      const avatarUrl = req.file ? await fileToAvatarUrl(req.file, req.user!.userId) : req.body.avatarUrl;
+      // Group avatar keyed by the conversation, NOT the uploader's userId
+      // (that bug overwrote the user's personal avatar).
+      const avatarUrl = req.file ? await fileToGroupAvatarUrl(req.file, req.params.conversationId as string) : req.body.avatarUrl;
       const rawIsPublic = req.body.isPublic;
       const isPublic = rawIsPublic !== undefined
         ? (typeof rawIsPublic === 'boolean' ? rawIsPublic : rawIsPublic === 'true')
@@ -996,7 +1002,9 @@ router.put(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'Banner image required' });
-      const bannerUrl = await fileToAvatarUrl(req.file, req.user!.userId);
+      // Group banner keyed by the conversation, NOT the uploader's userId
+      // (that bug overwrote the user's personal avatar/cover).
+      const bannerUrl = await fileToGroupBannerUrl(req.file, req.params.conversationId as string);
       const conversation = await groupService.updateGroup(
         (req.params.conversationId as string),
         req.user!.userId,
