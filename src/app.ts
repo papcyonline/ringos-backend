@@ -59,7 +59,23 @@ app.get('/health', async (_req, res) => {
   try {
     const { prisma } = await import('./config/database');
     await prisma.$queryRaw`SELECT 1`;
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+
+    // Redis cache self-test: write then read back a short-lived key to prove
+    // the cache layer is actually reachable and round-tripping in production.
+    // 'disabled' = REDIS_URL not set (in-memory fallbacks active).
+    let redis: 'connected' | 'disabled' | 'degraded' | 'error' = 'disabled';
+    try {
+      const { getRedis } = await import('./shared/redis.service');
+      const client = getRedis();
+      if (client) {
+        await client.set('health:ping', '1', 'EX', 10);
+        redis = (await client.get('health:ping')) === '1' ? 'connected' : 'degraded';
+      }
+    } catch {
+      redis = 'error';
+    }
+
+    res.json({ status: 'ok', redis, timestamp: new Date().toISOString() });
   } catch {
     res.status(503).json({ status: 'unhealthy', timestamp: new Date().toISOString() });
   }
