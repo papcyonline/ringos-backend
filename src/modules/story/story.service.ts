@@ -9,6 +9,7 @@ import { deleteFromR2 } from '../../shared/r2.service';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
 import { notifyFollowersOfNewStory, notifyStoryOwnerOfView, checkStoryMilestone } from './story.notify';
 import { markStoryNotificationsAsRead } from '../notification/notification.service';
+import * as cache from '../../shared/redis.service';
 
 /**
  * Delete a story slide's underlying media from whichever storage backend
@@ -41,12 +42,24 @@ interface CachedFeed {
 const feedCache = new Map<string, CachedFeed>();
 const FEED_CACHE_TTL_MS = 60_000; // 60 seconds
 
+// Redis-backed caches for the Following / Discover tabs (the main feed above
+// uses the in-memory feedCache). Same 60s window, but shared across instances.
+const FEED_CACHE_TTL_SEC = 60;
+const followingFeedKey = (uid: string) => `stories:following:${uid}`;
+const discoverFeedKey = (uid: string) => `stories:discover:${uid}`;
+
 /** Invalidate all feed caches (call after story create/delete/boost). */
 export function invalidateFeedCache(userId?: string) {
   if (userId) {
     feedCache.delete(userId);
+    // Mirror onto the Redis-backed following/discover feeds. Fire-and-forget:
+    // cache.del already swallows errors and no-ops when Redis is unconfigured.
+    void cache.del(followingFeedKey(userId));
+    void cache.del(discoverFeedKey(userId));
   } else {
     feedCache.clear();
+    void cache.delPattern(followingFeedKey('*'));
+    void cache.delPattern(discoverFeedKey('*'));
   }
 }
 
@@ -491,6 +504,15 @@ function groupStoriesByUser(
 // Stories of users I FOLLOW (regardless of whether they follow me back).
 
 export async function getFollowingFeed(requesterId: string) {
+  const key = followingFeedKey(requesterId);
+  const cached = await cache.get<any[]>(key, true);
+  if (cached) return cached;
+  const data = await computeFollowingFeed(requesterId);
+  await cache.set(key, data, FEED_CACHE_TTL_SEC);
+  return data;
+}
+
+async function computeFollowingFeed(requesterId: string) {
   const [blockedIds, followingIds, mutedIds, hiddenFromIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getFollowingIds(requesterId),
@@ -568,6 +590,15 @@ export async function getFollowingFeed(requesterId: string) {
 // Only PUBLIC-visibility stories surface here.
 
 export async function getDiscoverFeed(requesterId: string) {
+  const key = discoverFeedKey(requesterId);
+  const cached = await cache.get<any[]>(key, true);
+  if (cached) return cached;
+  const data = await computeDiscoverFeed(requesterId);
+  await cache.set(key, data, FEED_CACHE_TTL_SEC);
+  return data;
+}
+
+async function computeDiscoverFeed(requesterId: string) {
   const [blockedIds, followingIds, followerIds, mutedIds, hiddenFromIds] = await Promise.all([
     getBlockedUserIds(requesterId),
     getFollowingIds(requesterId),

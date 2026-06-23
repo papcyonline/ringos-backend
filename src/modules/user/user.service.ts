@@ -5,6 +5,7 @@ import { UpdatePreferenceInput, UpdateAvailabilityInput, UpdatePrivacyInput, Upd
 import { isBlocked } from '../safety/safety.service';
 import { getLimits, isPro } from '../../shared/usage.service';
 import { isReservedUsername } from '../../shared/reserved-usernames';
+import * as cache from '../../shared/redis.service';
 
 async function findUserOrThrow(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -12,7 +13,21 @@ async function findUserOrThrow(userId: string) {
   return user;
 }
 
+// Own-profile cache. Short TTL backstop + explicit invalidation on the common
+// content edits (see invalidateProfileCache) so changes show promptly. Volatile
+// presence fields can lag up to the TTL, which is irrelevant for one's own
+// profile. No-ops when Redis is unconfigured (cache.get returns null).
+const PROFILE_CACHE_TTL_SEC = 60;
+
+async function invalidateProfileCache(userId: string) {
+  await cache.del(cache.cacheKeys.userProfile(userId));
+}
+
 export async function getProfile(userId: string) {
+  const cacheKey = cache.cacheKeys.userProfile(userId);
+  const cachedProfile = await cache.get<Record<string, any>>(cacheKey, true);
+  if (cachedProfile) return cachedProfile;
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -69,7 +84,7 @@ export async function getProfile(userId: string) {
   });
 
   if (!user) throw new NotFoundError('User not found');
-  return {
+  const result = {
     ...user,
     profileLinks: (user as any).profileLinks ?? [],
     banStatus: user.moderation?.banStatus ?? 'NONE',
@@ -79,6 +94,8 @@ export async function getProfile(userId: string) {
     followingCount: user._count.followsInitiated,
     likeCount: user._count.likesReceived,
   };
+  await cache.set(cacheKey, result, PROFILE_CACHE_TTL_SEC);
+  return result;
 }
 
 export async function getUserById(targetId: string, currentUserId: string) {
@@ -174,12 +191,35 @@ export async function getUserById(targetId: string, currentUserId: string) {
   };
 }
 
+// People-list cache — see listUsers. Short TTL because the rows carry
+// presence + follow state; the client also receives live presence over
+// sockets, so a few seconds of staleness in the ordering is harmless.
+const USER_LIST_CACHE_TTL_SEC = 30;
+const userListCacheKey = (viewerId: string, limit: number) =>
+  `users:list:${viewerId}:${limit}`;
+
 export async function listUsers(
   currentUserId: string,
   page = 1,
   limit = 50,
   q?: string,
 ) {
+  // Cache only the hot path: first page, no search query, keyed per viewer.
+  // Self-expiring (30s) so no explicit invalidation is needed, and it no-ops
+  // cleanly when Redis isn't configured (cache.get returns null → cache miss).
+  const trimmedQ = q?.trim() ?? '';
+  const cacheable = page === 1 && trimmedQ.length === 0;
+  const cacheKey = userListCacheKey(currentUserId, limit);
+  if (cacheable) {
+    const cached = await cache.get<{
+      users: any[];
+      total: number;
+      page: number;
+      limit: number;
+    }>(cacheKey, true);
+    if (cached) return cached;
+  }
+
   const blocks = await prisma.block.findMany({
     where: {
       OR: [{ blockerId: currentUserId }, { blockedId: currentUserId }],
@@ -201,7 +241,6 @@ export async function listUsers(
   // surface as a ghost user. The bio check covers both NULL and ''
   // for the nullable column; displayName is non-null in the schema
   // so only the empty-string check matters there.
-  const trimmedQ = q?.trim() ?? '';
   const userWhere: any = {
     id: { notIn: [currentUserId, ...blockedIds] },
     isAnonymous: false,
@@ -301,12 +340,14 @@ export async function listUsers(
     };
   });
 
-  return { users: data, total, page, limit };
+  const result = { users: data, total, page, limit };
+  if (cacheable) await cache.set(cacheKey, result, USER_LIST_CACHE_TTL_SEC);
+  return result;
 }
 
 export async function updateAvailability(userId: string, data: UpdateAvailabilityInput) {
   await findUserOrThrow(userId);
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
     data: {
       availableFor: data.availableFor,
@@ -322,11 +363,13 @@ export async function updateAvailability(userId: string, data: UpdateAvailabilit
       availableUntil: true,
     },
   });
+  await invalidateProfileCache(userId);
+  return updated;
 }
 
 export async function stopAvailability(userId: string) {
   await findUserOrThrow(userId);
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
     data: {
       availableFor: ['text'],
@@ -342,6 +385,8 @@ export async function stopAvailability(userId: string) {
       availableUntil: true,
     },
   });
+  await invalidateProfileCache(userId);
+  return updated;
 }
 
 export async function expireAvailabilities() {
@@ -372,20 +417,24 @@ export async function expireAvailabilities() {
 
 export async function uploadAvatar(userId: string, avatarUrl: string) {
   await findUserOrThrow(userId);
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
     data: { avatarUrl },
     select: { id: true, avatarUrl: true },
   });
+  await invalidateProfileCache(userId);
+  return updated;
 }
 
 export async function uploadCover(userId: string, coverUrl: string) {
   await findUserOrThrow(userId);
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
     data: { coverUrl },
     select: { id: true, coverUrl: true },
   });
+  await invalidateProfileCache(userId);
+  return updated;
 }
 
 export async function setOnline(userId: string) {
@@ -435,7 +484,7 @@ export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
     }
   }
 
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
     data: {
       ...(data.isProfilePublic !== undefined && { isProfilePublic: data.isProfilePublic }),
@@ -444,6 +493,8 @@ export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
     },
     select: { id: true, isProfilePublic: true, hideOnlineStatus: true, hideReadReceipts: true },
   });
+  await invalidateProfileCache(userId);
+  return updated;
 }
 
 const NAME_CHANGE_COOLDOWN_DAYS = 20;
@@ -457,6 +508,7 @@ export async function updateMessagePrivacy(
     data: { messagePrivacy: value },
     select: { id: true, messagePrivacy: true },
   });
+  await invalidateProfileCache(userId);
   return updated;
 }
 
@@ -525,7 +577,7 @@ export async function updateProfile(userId: string, data: UpdateProfileInput) {
       .slice(0, 5);
   }
 
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
     data: {
       ...rest,
@@ -544,6 +596,8 @@ export async function updateProfile(userId: string, data: UpdateProfileInput) {
       lastNameChangeAt: true,
     },
   });
+  await invalidateProfileCache(userId);
+  return updated;
 }
 
 export async function setVerified(userId: string) {
@@ -553,6 +607,7 @@ export async function setVerified(userId: string) {
     data: { isVerified: true, verifiedAt: new Date() },
     select: { id: true, isVerified: true, verifiedAt: true, verifiedRole: true },
   });
+  await invalidateProfileCache(userId);
 
   // Auto-verify all channels where this user is admin
   const adminChannels = await prisma.conversationParticipant.findMany({
@@ -576,6 +631,7 @@ export async function removeVerified(userId: string) {
     data: { isVerified: false, verifiedAt: null },
     select: { id: true, isVerified: true, verifiedAt: true, verifiedRole: true },
   });
+  await invalidateProfileCache(userId);
 
   // Remove verification from channels where this user is admin
   const adminChannels = await prisma.conversationParticipant.findMany({
