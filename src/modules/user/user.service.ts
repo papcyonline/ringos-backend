@@ -20,7 +20,11 @@ async function findUserOrThrow(userId: string) {
 const PROFILE_CACHE_TTL_SEC = 60;
 
 async function invalidateProfileCache(userId: string) {
-  await cache.del(cache.cacheKeys.userProfile(userId));
+  // Both the own-profile view and the shared viewer-independent core.
+  await Promise.all([
+    cache.del(cache.cacheKeys.userProfile(userId)),
+    cache.del(cache.cacheKeys.user(userId)),
+  ]);
 }
 
 export async function getProfile(userId: string) {
@@ -98,7 +102,16 @@ export async function getProfile(userId: string) {
   return result;
 }
 
-export async function getUserById(targetId: string, currentUserId: string) {
+// Viewer-independent core of a user — the heavy findUnique behind getUserById.
+// Cached by id so every viewer of the same profile reuses it; invalidated on
+// that user's content edits via invalidateProfileCache. The per-viewer
+// block/follow/like checks in getUserById always run live below.
+const USER_CORE_TTL_SEC = 60;
+
+async function getUserCore(targetId: string) {
+  const key = cache.cacheKeys.user(targetId);
+  const cached = await cache.get<Record<string, any>>(key, true);
+  if (cached) return cached;
   const user = await prisma.user.findUnique({
     where: { id: targetId },
     select: {
@@ -128,6 +141,12 @@ export async function getUserById(targetId: string, currentUserId: string) {
       _count: { select: { followsReceived: true, likesReceived: true } },
     },
   });
+  if (user) await cache.set(key, user, USER_CORE_TTL_SEC);
+  return user;
+}
+
+export async function getUserById(targetId: string, currentUserId: string) {
+  const user = await getUserCore(targetId);
 
   if (!user) throw new NotFoundError('User not found');
 
