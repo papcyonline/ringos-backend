@@ -1086,17 +1086,33 @@ router.post(
       if (!memberIds || !Array.isArray(memberIds)) {
         return res.status(400).json({ error: 'memberIds array is required' });
       }
+      const conversationId = req.params.conversationId as string;
       const conversation = await groupService.addMembers(
-        (req.params.conversationId as string),
+        conversationId,
         req.user!.userId,
         memberIds,
       );
 
       // Emit socket event for member changes
       const io = getIO();
-      io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:members-changed', {
-        conversationId: (req.params.conversationId as string),
+      io.to(`conversation:${conversationId}`).emit('group:members-changed', {
+        conversationId,
       });
+
+      // Broadcast the "<admin> added <names>" system message so it shows in
+      // the thread for everyone in the group. Spread the raw Prisma message
+      // so isSystem survives (formatMessagePayload strips it).
+      const sysMsg = (conversation as any)?.systemMessage;
+      if (sysMsg) {
+        const sysMsgPayload = { ...sysMsg, conversationId };
+        const participants = await prisma.conversationParticipant.findMany({
+          where: { conversationId, leftAt: null },
+          select: { userId: true },
+        });
+        for (const p of participants) {
+          io.to(`user:${p.userId}`).emit('chat:message', sysMsgPayload);
+        }
+      }
 
       res.json(conversation);
     } catch (err) {

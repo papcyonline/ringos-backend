@@ -203,14 +203,29 @@ describe('addMembers', () => {
     mockPrisma.conversationParticipant.findMany.mockResolvedValue([
       { userId: 'u-2', leftAt: new Date() },
     ]);
-    mockPrisma.conversation.findUnique.mockResolvedValue({ id: 'c1' });
+    mockPrisma.conversation.findUnique.mockResolvedValue({
+      id: 'c1',
+      participants: [
+        { userId: 'admin-1', user: { displayName: 'Admin' } },
+        { userId: 'u-2', user: { displayName: 'Bob' } },
+        { userId: 'u-3', user: { displayName: 'Carol' } },
+      ],
+    });
 
-    await addMembers('c1', 'admin-1', ['u-2', 'u-3']);
+    const result = await addMembers('c1', 'admin-1', ['u-2', 'u-3']);
 
     expect(mockPrisma.conversationParticipant.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { conversationId: 'c1', userId: { in: ['u-2'] } },
       data: expect.objectContaining({ leftAt: null }),
     }));
+    // Posts an in-thread system message listing who was added.
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        content: 'Admin added Carol and Bob',
+        isSystem: true,
+      }),
+    }));
+    expect((result as any).systemMessage).toBeTruthy();
     expect(mockPrisma.conversationParticipant.createMany).toHaveBeenCalledWith({
       data: [{ conversationId: 'c1', userId: 'u-3', role: 'MEMBER' }],
     });

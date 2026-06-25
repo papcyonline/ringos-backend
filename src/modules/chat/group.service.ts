@@ -290,6 +290,33 @@ export async function addMembers(
     logger.error({ err, conversationId }, 'Failed to notify added group members');
   });
 
+  // Post an in-thread system message announcing who was added, mirroring the
+  // leave/remove indicator. Only when someone was actually added (skip no-ops
+  // where every id was already an active member). The router broadcasts it.
+  const addedIds = [...newMembers, ...rejoining];
+  if (addedIds.length > 0 && conversation) {
+    const nameOf = (id: string) =>
+      conversation.participants?.find((p) => p.userId === id)?.user?.displayName ?? 'Someone';
+    const addedNames = addedIds.map(nameOf);
+    const joined =
+      addedNames.length === 1
+        ? addedNames[0]
+        : `${addedNames.slice(0, -1).join(', ')} and ${addedNames[addedNames.length - 1]}`;
+    const systemMessage = await prisma.message.create({
+      data: {
+        conversationId,
+        senderId: adminId,
+        content: `${nameOf(adminId)} added ${joined}`,
+        isSystem: true,
+        metadata: { type: 'members_added', actorId: adminId, addedIds },
+      },
+      include: {
+        sender: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
+      },
+    });
+    (conversation as any).systemMessage = systemMessage;
+  }
+
   return conversation;
 }
 
