@@ -25,6 +25,10 @@ const { mockPrisma } = vi.hoisted(() => {
     },
     user: {
       findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    message: {
+      create: vi.fn().mockResolvedValue({ id: 'sys-msg', isSystem: true }),
     },
     postMedia: {
       findMany: vi.fn(),
@@ -226,26 +230,45 @@ describe('removeMember', () => {
     await expect(removeMember('c1', 'user-1', 'u-2')).rejects.toBeInstanceOf(ForbiddenError);
   });
 
-  it('allows self-leave', async () => {
+  it('allows self-leave and posts a "<name> left" system message', async () => {
     mockPrisma.conversationParticipant.findUnique
       .mockResolvedValueOnce({ role: 'MEMBER' })
       .mockResolvedValueOnce({ id: 'p1', leftAt: null });
+    mockPrisma.user.findMany.mockResolvedValueOnce([{ id: 'user-1', displayName: 'Alice' }]);
 
-    await removeMember('c1', 'user-1', 'user-1');
+    const result = await removeMember('c1', 'user-1', 'user-1');
 
     expect(mockPrisma.conversationParticipant.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ leftAt: expect.any(Date) }),
     }));
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        conversationId: 'c1',
+        content: 'Alice left',
+        isSystem: true,
+      }),
+    }));
+    expect(result.systemMessage).toBeTruthy();
   });
 
-  it('admin can remove another member', async () => {
+  it('admin can remove another member and posts a "<admin> removed <name>" system message', async () => {
     mockPrisma.conversationParticipant.findUnique
       .mockResolvedValueOnce({ role: 'ADMIN' })
       .mockResolvedValueOnce({ id: 'p2', leftAt: null });
+    mockPrisma.user.findMany.mockResolvedValueOnce([
+      { id: 'admin-1', displayName: 'Admin' },
+      { id: 'u-2', displayName: 'Bob' },
+    ]);
 
     await removeMember('c1', 'admin-1', 'u-2');
 
     expect(mockPrisma.conversationParticipant.update).toHaveBeenCalled();
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        content: 'Admin removed Bob',
+        isSystem: true,
+      }),
+    }));
   });
 
   it('throws NotFoundError when target not in group', async () => {

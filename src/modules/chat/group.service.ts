@@ -327,8 +327,39 @@ export async function removeMember(
     data: { leftAt: new Date() },
   });
 
+  // Post an in-thread system message so the conversation shows who left or
+  // was removed. The frontend already renders isSystem messages as a
+  // centered grey pill; the router broadcasts this over chat:message.
+  const isSelfLeave = requesterId === targetUserId;
+  const names = await prisma.user.findMany({
+    where: { id: { in: isSelfLeave ? [targetUserId] : [requesterId, targetUserId] } },
+    select: { id: true, displayName: true },
+  });
+  const nameOf = (id: string) =>
+    names.find((u) => u.id === id)?.displayName ?? 'Someone';
+  const content = isSelfLeave
+    ? `${nameOf(targetUserId)} left`
+    : `${nameOf(requesterId)} removed ${nameOf(targetUserId)}`;
+
+  const systemMessage = await prisma.message.create({
+    data: {
+      conversationId,
+      senderId: requesterId,
+      content,
+      isSystem: true,
+      metadata: {
+        type: isSelfLeave ? 'member_left' : 'member_removed',
+        actorId: requesterId,
+        targetId: targetUserId,
+      },
+    },
+    include: {
+      sender: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
+    },
+  });
+
   logger.info({ conversationId, requesterId, targetUserId }, 'Member removed from group');
-  return { conversationId, removedUserId: targetUserId };
+  return { conversationId, removedUserId: targetUserId, systemMessage };
 }
 
 /**

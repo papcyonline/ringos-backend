@@ -1111,19 +1111,35 @@ router.delete(
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      const conversationId = req.params.conversationId as string;
+      const removedUserId = req.params.userId as string;
       const result = await groupService.removeMember(
-        (req.params.conversationId as string),
+        conversationId,
         req.user!.userId,
-        (req.params.userId as string),
+        removedUserId,
       );
 
       const io = getIO();
-      io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:members-changed', {
-        conversationId: (req.params.conversationId as string),
+      io.to(`conversation:${conversationId}`).emit('group:members-changed', {
+        conversationId,
       });
-      io.to(`user:${(req.params.userId as string)}`).emit('group:removed', {
-        conversationId: (req.params.conversationId as string),
+      io.to(`user:${removedUserId}`).emit('group:removed', {
+        conversationId,
       });
+
+      // Broadcast the leave/remove system message so it appears in the thread
+      // for everyone still in the group. Spread the raw Prisma message so
+      // `isSystem` survives (formatMessagePayload strips it).
+      if (result.systemMessage) {
+        const sysMsgPayload = { ...result.systemMessage, conversationId };
+        const participants = await prisma.conversationParticipant.findMany({
+          where: { conversationId, leftAt: null },
+          select: { userId: true },
+        });
+        for (const p of participants) {
+          io.to(`user:${p.userId}`).emit('chat:message', sysMsgPayload);
+        }
+      }
 
       res.json(result);
     } catch (err) {
