@@ -83,6 +83,8 @@ describe('fcm-payload.builder', () => {
         isVerified: 'false',
         audioUrl: 'https://cdn.example.com/v.m4a',
         audioDuration: '7',
+        // Group context defaults to the string 'false' for a 1-on-1.
+        isGroup: 'false',
       });
       for (const v of Object.values(payload)) {
         expect(typeof v).toBe('string');
@@ -100,6 +102,23 @@ describe('fcm-payload.builder', () => {
         audioDuration: 0,
       });
       expect(payload.isVerified).toBe('true');
+    });
+
+    it('includes group fields when isGroup is true', () => {
+      const payload = buildVoiceNotePayload({
+        messageId: 'm',
+        conversationId: 'c',
+        senderId: 'u',
+        senderName: 'n',
+        audioUrl: 'x',
+        audioDuration: 0,
+        isGroup: true,
+        groupName: 'Trip Crew',
+        groupAvatar: 'https://cdn.example.com/g.jpg',
+      });
+      expect(payload.isGroup).toBe('true');
+      expect(payload.groupName).toBe('Trip Crew');
+      expect(payload.groupAvatar).toBe('https://cdn.example.com/g.jpg');
     });
   });
 
@@ -147,6 +166,32 @@ describe('fcm-payload.builder', () => {
         isVerified: true,
       });
       expect(payload.isVerified).toBe('true');
+    });
+
+    it('defaults isGroup to "false" and omits group fields for a 1-on-1', () => {
+      const payload = buildMessagePayload({
+        conversationId: 'c',
+        senderId: 'u',
+        senderName: 'n',
+        content: 'hi',
+      });
+      expect(payload.isGroup).toBe('false');
+      expect('groupName' in payload).toBe(false);
+    });
+
+    it('includes group fields when isGroup is true', () => {
+      const payload = buildMessagePayload({
+        conversationId: 'c',
+        senderId: 'u',
+        senderName: 'Bob',
+        content: 'hi',
+        isGroup: true,
+        groupName: 'Trip Crew',
+        groupAvatar: 'https://cdn.example.com/g.jpg',
+      });
+      expect(payload.isGroup).toBe('true');
+      expect(payload.groupName).toBe('Trip Crew');
+      expect(payload.groupAvatar).toBe('https://cdn.example.com/g.jpg');
     });
 
     it('marks every payload with the correct type for client routing', () => {

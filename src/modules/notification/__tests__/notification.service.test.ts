@@ -358,6 +358,33 @@ describe('notification.service', () => {
       );
     });
 
+    it('group message: title is the group name and body is "Sender: message"', async () => {
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        type: 'GROUP',
+        name: 'Trip Crew',
+        avatarUrl: 'https://cdn.example.com/g.jpg',
+      });
+      mockPrisma.conversationParticipant.findMany.mockResolvedValue([
+        { userId: 'recipient-1' },
+      ]);
+      mockPrisma.user.findUnique.mockResolvedValue({ avatarUrl: null });
+      mockPrisma.notification.create.mockResolvedValue({ id: 'notif-grp' });
+      mockSocketRoom.fetchSockets.mockResolvedValue([]);
+
+      await notifyChatMessage('conv-g', 'sender-1', 'Bob', 'Hello!');
+
+      expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            title: 'Trip Crew',
+            body: 'Bob: Hello!',
+            imageUrl: 'https://cdn.example.com/g.jpg',
+            data: expect.objectContaining({ isGroup: true, groupName: 'Trip Crew' }),
+          }),
+        }),
+      );
+    });
+
     it('should not create notifications when no participants', async () => {
       mockPrisma.conversationParticipant.findMany.mockResolvedValue([]);
 

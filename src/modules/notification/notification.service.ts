@@ -388,16 +388,24 @@ export async function sendDataPushToUser(userId: string, data: Record<string, st
   );
 
   // Build alert title/body for iOS (APNS) display.
-  const notifTitle = data.senderName || data.callerName || 'Yomeet';
-  let notifBody: string;
+  const isGroupPush = data.isGroup === 'true';
+  const notifTitle = isGroupPush
+    ? (data.groupName || 'Group')
+    : (data.senderName || data.callerName || 'Yomeet');
+  let messageLine: string;
   if (data.audioUrl) {
     const dur = Number.parseInt(data.audioDuration ?? '', 10);
-    notifBody = Number.isFinite(dur) && dur > 0
+    messageLine = Number.isFinite(dur) && dur > 0
       ? `\u{1F3A4} Voice message (${dur}s)`
       : '\u{1F3A4} Voice message';
   } else {
-    notifBody = data.content || 'New message';
+    messageLine = data.content || 'New message';
   }
+  // In a group, prefix the sender so "GroupName \n Sender: message" reads
+  // distinctly from a 1-on-1 (which stays "Sender \n message").
+  const notifBody = isGroupPush && data.senderName
+    ? `${data.senderName}: ${messageLine}`
+    : messageLine;
 
   // For chat / voice-note pushes we collapse on a per-conversation key
   // so a burst of 8 messages from one chat shows as ONE updated entry
@@ -802,6 +810,29 @@ export async function notifyChatMessage(
   const senderAvatarUrl = sender?.avatarUrl ?? undefined;
   const senderIsVerified = sender?.isVerified ?? false;
 
+  // Group context so group notifications read distinctly from 1-on-1s:
+  // title = group name, body = "Sender: message", avatar = group avatar.
+  // DMs are unchanged (title = sender, body = message).
+  let isGroup = false;
+  let groupName: string | undefined;
+  let groupAvatar: string | undefined;
+  try {
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { type: true, name: true, avatarUrl: true },
+    });
+    isGroup = conversation?.type === 'GROUP';
+    if (isGroup) {
+      groupName = conversation?.name ?? 'Group';
+      groupAvatar = conversation?.avatarUrl ?? undefined;
+    }
+  } catch (err) {
+    logger.error({ err, conversationId }, 'Conversation lookup for notification failed — treating as 1-on-1');
+  }
+  const notifTitle = isGroup ? groupName! : senderName;
+  const notifBody = isGroup ? `${senderName}: ${body}` : body;
+  const notifImage = isGroup ? (groupAvatar ?? senderAvatarUrl) : senderAvatarUrl;
+
   for (const participant of participants) {
     const isInRoom = usersInRoom.has(participant.userId);
 
@@ -813,15 +844,18 @@ export async function notifyChatMessage(
     createNotification({
       userId: participant.userId,
       type: isVoiceNote ? 'VOICE_NOTE' : 'CHAT_MESSAGE',
-      title: senderName,
-      body,
-      imageUrl: senderAvatarUrl,
+      title: notifTitle,
+      body: notifBody,
+      imageUrl: notifImage,
       isRead: isInRoom,
       data: {
         conversationId,
         senderId,
+        senderName,
         senderAvatarUrl: senderAvatarUrl ?? null,
         isVerified: senderIsVerified,
+        isGroup,
+        ...(groupName ? { groupName } : {}),
         ...(options?.audioUrl ? { audioUrl: options.audioUrl } : {}),
         ...(options?.audioDuration !== undefined ? { audioDuration: options.audioDuration } : {}),
       },
@@ -848,6 +882,9 @@ export async function notifyChatMessage(
           isVerified: senderIsVerified,
           audioUrl: options.audioUrl,
           audioDuration: options.audioDuration ?? 0,
+          isGroup,
+          groupName,
+          groupAvatar,
         });
         sendDataPushToUser(participant.userId, voiceNotePayload).catch((err) => {
           logger.error({ err, userId: participant.userId }, 'Failed to send voice note push');
@@ -863,6 +900,9 @@ export async function notifyChatMessage(
           isVerified: senderIsVerified,
           content: body,
           imageUrl: options?.imageUrl,
+          isGroup,
+          groupName,
+          groupAvatar,
         });
         sendDataPushToUser(participant.userId, messagePayload).catch((err) => {
           logger.error({ err, userId: participant.userId }, 'Failed to send chat push notification');

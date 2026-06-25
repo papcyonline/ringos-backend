@@ -25,6 +25,11 @@ export interface VoiceNotePayload {
   senderAvatar: string;
   audioUrl: string;
   audioDuration: string;
+  // Group context — 'true'/'false'. When 'true', clients render the group
+  // name as the title and "senderName: message" as the body.
+  isGroup?: string;
+  groupName?: string;
+  groupAvatar?: string;
 }
 
 export interface ChatMessagePayload {
@@ -35,6 +40,10 @@ export interface ChatMessagePayload {
   senderName: string;
   senderAvatar: string;
   content: string;
+  // Group context — see VoiceNotePayload.
+  isGroup?: string;
+  groupName?: string;
+  groupAvatar?: string;
 }
 
 export type FcmDataPayload = CallPayload | VoiceNotePayload | ChatMessagePayload;
@@ -75,8 +84,11 @@ export function buildVoiceNotePayload(data: {
   isVerified?: boolean;
   audioUrl: string;
   audioDuration: number;
+  isGroup?: boolean;
+  groupName?: string | null;
+  groupAvatar?: string | null;
 }): Record<string, string> {
-  return {
+  const payload: Record<string, string> = {
     type: 'voice_note',
     messageId: data.messageId,
     conversationId: data.conversationId,
@@ -87,6 +99,8 @@ export function buildVoiceNotePayload(data: {
     audioUrl: data.audioUrl,
     audioDuration: String(data.audioDuration),
   };
+  applyGroupFields(payload, data);
+  return payload;
 }
 
 /**
@@ -101,6 +115,9 @@ export function buildMessagePayload(data: {
   isVerified?: boolean;
   content: string;
   imageUrl?: string | null;
+  isGroup?: boolean;
+  groupName?: string | null;
+  groupAvatar?: string | null;
 }): Record<string, string> {
   const payload: Record<string, string> = {
     type: 'chat_message',
@@ -117,5 +134,21 @@ export function buildMessagePayload(data: {
     payload.imageUrl = data.imageUrl;
   }
 
+  applyGroupFields(payload, data);
   return payload;
+}
+
+/**
+ * Stamp group context onto a chat/voice-note payload. isGroup is always
+ * present ('true'/'false') so clients can branch; name/avatar only when set.
+ */
+function applyGroupFields(
+  payload: Record<string, string>,
+  data: { isGroup?: boolean; groupName?: string | null; groupAvatar?: string | null },
+): void {
+  payload.isGroup = String(data.isGroup ?? false);
+  if (data.isGroup) {
+    if (data.groupName) payload.groupName = data.groupName;
+    if (data.groupAvatar) payload.groupAvatar = data.groupAvatar;
+  }
 }
