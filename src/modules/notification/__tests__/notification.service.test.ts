@@ -335,6 +335,29 @@ describe('notification.service', () => {
       );
     });
 
+    it('notifies for a PENDING message request (no longer suppressed)', async () => {
+      // Regression guard: stranger-DM requests used to be silently skipped.
+      // They must now notify like any other message so the recipient sees them.
+      mockPrisma.conversation.findUnique.mockResolvedValue({ requestStatus: 'PENDING' });
+      mockPrisma.conversationParticipant.findMany.mockResolvedValue([
+        { userId: 'recipient-1' },
+      ]);
+      mockPrisma.user.findUnique.mockResolvedValue({ avatarUrl: null });
+      mockPrisma.notification.create.mockResolvedValue({ id: 'notif-req' });
+      mockSocketRoom.fetchSockets.mockResolvedValue([]);
+
+      await notifyChatMessage('conv-req', 'sender-1', 'Stranger', 'hey there');
+
+      expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            type: 'CHAT_MESSAGE',
+            data: expect.objectContaining({ conversationId: 'conv-req' }),
+          }),
+        }),
+      );
+    });
+
     it('should not create notifications when no participants', async () => {
       mockPrisma.conversationParticipant.findMany.mockResolvedValue([]);
 

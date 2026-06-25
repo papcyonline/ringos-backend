@@ -747,18 +747,12 @@ export async function notifyChatMessage(
     audioDuration?: number;
   },
 ) {
-  // Suppress push for stranger-DM requests. A PENDING conversation is
-  // one the recipient hasn't accepted yet — interrupting them with a
-  // push would defeat the whole point of the queue. The Requests
-  // inbox surfaces it instead.
-  const convo = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-    select: { requestStatus: true },
-  });
-  if (convo?.requestStatus === 'PENDING') {
-    logger.debug({ conversationId }, 'notifyChatMessage skipped — conversation is a pending request');
-    return;
-  }
+  // Message requests notify the recipient like any other message (push +
+  // in-app bell), so a stranger's DM isn't missed. The request still lives
+  // in the separate Requests inbox (it stays out of the normal chat list via
+  // chat:request-update); this only governs the notification itself. The
+  // earlier "suppress notifications for PENDING requests" behaviour was
+  // reverted intentionally — see message-request notification decision.
 
   // Get all participants except the sender
   const participants = await prisma.conversationParticipant.findMany({
