@@ -40,10 +40,14 @@ export async function emitToParticipantRooms(
     'Emitting chat:list-update + chat:message to participant rooms',
   );
   for (const p of participants) {
-    // For PENDING requests, only emit to the sender. The recipient
-    // sees the conversation only via the explicit Message Requests
-    // inbox query — never via realtime push, banner, or list update.
+    // For PENDING requests the recipient must NOT receive chat:list-update
+    // or chat:message — those would surface a stranger's DM in the normal
+    // inbox and pop a banner. Instead send a dedicated lightweight signal
+    // so the Message Requests list can refresh live, without leaking the
+    // request into the main inbox or firing a notification banner. The
+    // sender still gets the full payload below so their own send echoes.
     if (isPending && p.userId !== senderUserId) {
+      io.to(`user:${p.userId}`).emit('chat:request-update', { conversationId });
       continue;
     }
     // chat:list-update drives the chats-list lastMessage UI.
