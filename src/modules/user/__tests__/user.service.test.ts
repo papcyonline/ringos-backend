@@ -593,6 +593,25 @@ describe('listUsers', () => {
     expect(res.total).toBe(1);
   });
 
+  it('keeps the onboarding gate but does NOT gate visibility on bio', async () => {
+    // Regression guard: a bio requirement used to hide every onboarded user
+    // with a NULL/empty bio. Visibility must depend only on isAnonymous +
+    // a non-empty displayName — never on bio. Unique viewer/limit so the
+    // in-memory list cache can't serve a prior test's result.
+    mockPrisma.block.findMany.mockResolvedValue([]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+    mockPrisma.user.count.mockResolvedValue(0);
+    mockPrisma.follow.findMany.mockResolvedValue([]);
+    mockPrisma.like.findMany.mockResolvedValue([]);
+
+    await listUsers('bio-fix-viewer', 1, 9);
+
+    const whereArg = mockPrisma.user.findMany.mock.calls[0][0].where;
+    expect(whereArg.isAnonymous).toBe(false);
+    expect(whereArg.displayName).toEqual({ not: '' });
+    expect(whereArg.bio).toBeUndefined();
+  });
+
   it('hides bio/profession/location for private profiles', async () => {
     mockPrisma.block.findMany.mockResolvedValue([]);
     mockPrisma.user.findMany.mockResolvedValue([

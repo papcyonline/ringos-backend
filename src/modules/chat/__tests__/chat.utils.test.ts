@@ -168,6 +168,36 @@ describe('chat.utils — emitToParticipantRooms', () => {
     expect(io.to).toHaveBeenCalledWith('user:user-1');
     expect(io.to).toHaveBeenCalledWith('user:user-2');
   });
+
+  it('for a PENDING request, sends only chat:request-update to the recipient and the full events to the sender', async () => {
+    // user-1 = sender (requestedById), user-2 = recipient. Override the
+    // default non-request conversation just for this call.
+    (prisma.conversation.findUnique as any).mockResolvedValueOnce({
+      requestStatus: 'PENDING',
+      requestedById: 'user-1',
+    });
+    const calls: Array<{ room: string; event: string }> = [];
+    const io: any = {
+      to: vi.fn((room: string) => ({
+        emit: (event: string) => calls.push({ room, event }),
+      })),
+    };
+
+    await emitToParticipantRooms(io, 'c-1', { id: 'm-1' });
+
+    // Recipient gets exactly one lightweight signal — no inbox row, no banner.
+    expect(calls.filter((c) => c.room === 'user:user-2')).toEqual([
+      { room: 'user:user-2', event: 'chat:request-update' },
+    ]);
+    // Sender still receives the full payload so their own send echoes back.
+    expect(calls.filter((c) => c.room === 'user:user-1').map((c) => c.event)).toEqual([
+      'chat:list-update',
+      'chat:message',
+    ]);
+    // The recipient must NOT receive the inbox/banner events.
+    expect(calls).not.toContainEqual({ room: 'user:user-2', event: 'chat:list-update' });
+    expect(calls).not.toContainEqual({ room: 'user:user-2', event: 'chat:message' });
+  });
 });
 
 describe('chat.utils — broadcastAndNotifyMessage', () => {
