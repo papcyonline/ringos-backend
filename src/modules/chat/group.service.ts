@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../shared/errors';
@@ -21,6 +22,26 @@ async function verifyAdmin(conversationId: string, userId: string) {
 /**
  * Create a GROUP conversation with the creator as ADMIN.
  */
+/**
+ * Create an in-thread system message (rendered as a centered grey pill on the
+ * client). Shared by every group-lifecycle indicator: created / member
+ * added / left / removed / banned / promoted / renamed / icon changed.
+ * `actorId` is the user who performed the action.
+ */
+async function createSystemMessage(
+  conversationId: string,
+  actorId: string,
+  content: string,
+  metadata: Prisma.InputJsonValue,
+) {
+  return prisma.message.create({
+    data: { conversationId, senderId: actorId, content, isSystem: true, metadata },
+    include: {
+      sender: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
+    },
+  });
+}
+
 export async function createGroup(
   creatorId: string,
   name: string,
@@ -144,6 +165,16 @@ export async function createGroup(
     logger.error({ err, conversationId: conversation.id }, 'Failed to notify group members on create');
   });
 
+  // Opening "<creator> created the group" line at the top of the thread.
+  const creatorName =
+    conversation.participants.find((p) => p.userId === creatorId)?.user?.displayName ?? 'Someone';
+  (conversation as any).systemMessage = await createSystemMessage(
+    conversation.id,
+    creatorId,
+    `${creatorName} created the group`,
+    { type: 'group_created', actorId: creatorId },
+  );
+
   return conversation;
 }
 
@@ -175,7 +206,10 @@ export async function updateGroup(
     }
   }
 
-  const conv = await prisma.conversation.findUnique({ where: { id: conversationId }, select: { status: true } });
+  const conv = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { status: true, name: true, avatarUrl: true },
+  });
   if (!conv || conv.status !== 'ACTIVE') {
     throw new ForbiddenError('This group is no longer active');
   }
@@ -206,6 +240,27 @@ export async function updateGroup(
       },
     },
   });
+
+  // In-thread indicators for the user-visible changes (name + icon). Other
+  // fields (description, business info, etc.) don't post a system message.
+  const actorName =
+    conversation.participants.find((p) => p.userId === userId)?.user?.displayName ?? 'Someone';
+  const systemMessages: any[] = [];
+  if (updates.name !== undefined && updates.name !== conv.name) {
+    systemMessages.push(
+      await createSystemMessage(conversationId, userId,
+        `${actorName} changed the group name to "${updates.name}"`,
+        { type: 'group_renamed', actorId: userId }),
+    );
+  }
+  if (updates.avatarUrl !== undefined && updates.avatarUrl !== conv.avatarUrl) {
+    systemMessages.push(
+      await createSystemMessage(conversationId, userId,
+        `${actorName} changed the group icon`,
+        { type: 'group_icon_changed', actorId: userId }),
+    );
+  }
+  (conversation as any).systemMessages = systemMessages;
 
   logger.info({ conversationId, userId, updates }, 'Group updated');
   return conversation;
@@ -302,18 +357,10 @@ export async function addMembers(
       addedNames.length === 1
         ? addedNames[0]
         : `${addedNames.slice(0, -1).join(', ')} and ${addedNames[addedNames.length - 1]}`;
-    const systemMessage = await prisma.message.create({
-      data: {
-        conversationId,
-        senderId: adminId,
-        content: `${nameOf(adminId)} added ${joined}`,
-        isSystem: true,
-        metadata: { type: 'members_added', actorId: adminId, addedIds },
-      },
-      include: {
-        sender: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
-      },
-    });
+    const systemMessage = await createSystemMessage(
+      conversationId, adminId, `${nameOf(adminId)} added ${joined}`,
+      { type: 'members_added', actorId: adminId, addedIds },
+    );
     (conversation as any).systemMessage = systemMessage;
   }
 
@@ -368,21 +415,10 @@ export async function removeMember(
     ? `${nameOf(targetUserId)} left`
     : `${nameOf(requesterId)} removed ${nameOf(targetUserId)}`;
 
-  const systemMessage = await prisma.message.create({
-    data: {
-      conversationId,
-      senderId: requesterId,
-      content,
-      isSystem: true,
-      metadata: {
-        type: isSelfLeave ? 'member_left' : 'member_removed',
-        actorId: requesterId,
-        targetId: targetUserId,
-      },
-    },
-    include: {
-      sender: { select: { id: true, displayName: true, avatarUrl: true, isVerified: true } },
-    },
+  const systemMessage = await createSystemMessage(conversationId, requesterId, content, {
+    type: isSelfLeave ? 'member_left' : 'member_removed',
+    actorId: requesterId,
+    targetId: targetUserId,
   });
 
   logger.info({ conversationId, requesterId, targetUserId }, 'Member removed from group');
@@ -663,6 +699,13 @@ export async function makeAdmin(
     },
   });
 
+  const promotedName =
+    updated.participants.find((p) => p.userId === targetUserId)?.user?.displayName ?? 'Someone';
+  (updated as any).systemMessage = await createSystemMessage(
+    conversationId, requesterId, `${promotedName} is now an admin`,
+    { type: 'member_promoted', actorId: requesterId, targetId: targetUserId },
+  );
+
   logger.info({ conversationId, requesterId, targetUserId }, 'Member promoted to admin');
   return updated;
 }
@@ -845,8 +888,18 @@ export async function banMember(conversationId: string, adminId: string, targetU
     data: { leftAt: new Date(), bannedAt: new Date() },
   });
 
+  const names = await prisma.user.findMany({
+    where: { id: { in: [adminId, targetUserId] } },
+    select: { id: true, displayName: true },
+  });
+  const nameOf = (id: string) => names.find((u) => u.id === id)?.displayName ?? 'Someone';
+  const systemMessage = await createSystemMessage(
+    conversationId, adminId, `${nameOf(adminId)} removed ${nameOf(targetUserId)}`,
+    { type: 'member_banned', actorId: adminId, targetId: targetUserId },
+  );
+
   logger.info({ conversationId, adminId, targetUserId }, 'Member banned');
-  return { conversationId, bannedUserId: targetUserId };
+  return { conversationId, bannedUserId: targetUserId, systemMessage };
 }
 
 /**

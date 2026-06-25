@@ -107,7 +107,10 @@ describe('createGroup', () => {
     mockPrisma.user.findUnique.mockResolvedValue({ isVerified: true });
     mockPrisma.conversation.count.mockResolvedValue(0);
     mockPrisma.conversation.findFirst.mockResolvedValue(null);
-    mockPrisma.conversation.create.mockResolvedValue({ id: 'g-1' });
+    mockPrisma.conversation.create.mockResolvedValue({
+      id: 'g-1',
+      participants: [{ userId: 'user-1', user: { displayName: 'Alice' } }],
+    });
 
     await createGroup('user-1', 'Squad', ['u-2', 'u-2', 'user-1', 'u-3']);
 
@@ -125,13 +128,40 @@ describe('createGroup', () => {
     }));
   });
 
+  it('posts a "<creator> created the group" system message', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ isVerified: true });
+    mockPrisma.conversation.count.mockResolvedValue(0);
+    mockPrisma.conversation.findFirst.mockResolvedValue(null);
+    mockPrisma.conversation.create.mockResolvedValue({
+      id: 'g-1',
+      name: 'Squad',
+      avatarUrl: null,
+      isChannel: false,
+      participants: [{ userId: 'user-1', user: { displayName: 'Alice' } }],
+    });
+
+    const result = await createGroup('user-1', 'Squad', []);
+
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        conversationId: 'g-1',
+        content: 'Alice created the group',
+        isSystem: true,
+      }),
+    }));
+    expect((result as any).systemMessage).toBeTruthy();
+  });
+
   it('channels default to admins-only-messages and isChannel=true', async () => {
     const usage = await import('../../../shared/usage.service');
     (usage.isPro as any).mockResolvedValueOnce(true);
     mockPrisma.user.findUnique.mockResolvedValue({ isVerified: false });
     mockPrisma.conversation.count.mockResolvedValue(0);
     mockPrisma.conversation.findFirst.mockResolvedValue(null);
-    mockPrisma.conversation.create.mockResolvedValue({ id: 'c-1' });
+    mockPrisma.conversation.create.mockResolvedValue({
+      id: 'c-1',
+      participants: [{ userId: 'user-1', user: { displayName: 'Alice' } }],
+    });
 
     await createGroup('user-1', 'News', [], undefined, undefined, undefined, true);
 
@@ -163,8 +193,11 @@ describe('updateGroup', () => {
     mockPrisma.conversationParticipant.findUnique.mockResolvedValue({ role: 'MEMBER', leftAt: null });
     mockPrisma.conversation.findUnique
       .mockResolvedValueOnce({ adminsOnlyEditInfo: false })
-      .mockResolvedValueOnce({ status: 'ACTIVE' });
-    mockPrisma.conversation.update.mockResolvedValue({ id: 'c1' });
+      .mockResolvedValueOnce({ status: 'ACTIVE', name: 'Old', avatarUrl: null });
+    mockPrisma.conversation.update.mockResolvedValue({
+      id: 'c1',
+      participants: [{ userId: 'user-1', user: { displayName: 'Alice' } }],
+    });
 
     await updateGroup('c1', 'user-1', { name: 'New' });
 
@@ -173,13 +206,68 @@ describe('updateGroup', () => {
 
   it('only writes provided keys (omits undefined)', async () => {
     mockPrisma.conversationParticipant.findUnique.mockResolvedValue({ role: 'ADMIN', leftAt: null });
-    mockPrisma.conversation.findUnique.mockResolvedValue({ status: 'ACTIVE' });
-    mockPrisma.conversation.update.mockResolvedValue({ id: 'c1' });
+    mockPrisma.conversation.findUnique.mockResolvedValue({ status: 'ACTIVE', name: 'Old', avatarUrl: null });
+    mockPrisma.conversation.update.mockResolvedValue({
+      id: 'c1',
+      participants: [{ userId: 'user-1', user: { displayName: 'Alice' } }],
+    });
 
     await updateGroup('c1', 'user-1', { name: 'New' });
 
     const data = (mockPrisma.conversation.update.mock.calls[0][0] as any).data;
     expect(data).toEqual({ name: 'New' });
+  });
+
+  it('posts a rename system message when the name changes', async () => {
+    mockPrisma.conversationParticipant.findUnique.mockResolvedValue({ role: 'ADMIN', leftAt: null });
+    mockPrisma.conversation.findUnique.mockResolvedValue({ status: 'ACTIVE', name: 'Old', avatarUrl: null });
+    mockPrisma.conversation.update.mockResolvedValue({
+      id: 'c1',
+      participants: [{ userId: 'user-1', user: { displayName: 'Alice' } }],
+    });
+
+    const result = await updateGroup('c1', 'user-1', { name: 'New' });
+
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        content: 'Alice changed the group name to "New"',
+        isSystem: true,
+      }),
+    }));
+    expect((result as any).systemMessages).toHaveLength(1);
+  });
+
+  it('posts an icon-changed system message when the avatar changes', async () => {
+    mockPrisma.conversationParticipant.findUnique.mockResolvedValue({ role: 'ADMIN', leftAt: null });
+    mockPrisma.conversation.findUnique.mockResolvedValue({ status: 'ACTIVE', name: 'Old', avatarUrl: null });
+    mockPrisma.conversation.update.mockResolvedValue({
+      id: 'c1',
+      participants: [{ userId: 'user-1', user: { displayName: 'Alice' } }],
+    });
+
+    const result = await updateGroup('c1', 'user-1', { avatarUrl: 'https://x/new.png' });
+
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        content: 'Alice changed the group icon',
+        isSystem: true,
+      }),
+    }));
+    expect((result as any).systemMessages).toHaveLength(1);
+  });
+
+  it('does not post a system message when the name is unchanged', async () => {
+    mockPrisma.conversationParticipant.findUnique.mockResolvedValue({ role: 'ADMIN', leftAt: null });
+    mockPrisma.conversation.findUnique.mockResolvedValue({ status: 'ACTIVE', name: 'Same', avatarUrl: null });
+    mockPrisma.conversation.update.mockResolvedValue({
+      id: 'c1',
+      participants: [{ userId: 'user-1', user: { displayName: 'Alice' } }],
+    });
+
+    const result = await updateGroup('c1', 'user-1', { name: 'Same' });
+
+    expect(mockPrisma.message.create).not.toHaveBeenCalled();
+    expect((result as any).systemMessages).toHaveLength(0);
   });
 });
 
@@ -461,14 +549,25 @@ describe('makeAdmin', () => {
       .mockResolvedValueOnce({ role: 'ADMIN' })
       .mockResolvedValueOnce({ id: 'p2', leftAt: null, role: 'MEMBER' });
     mockPrisma.conversation.findUnique.mockResolvedValue({ id: 'c1', type: 'GROUP' });
-    mockPrisma.conversation.findUniqueOrThrow.mockResolvedValue({ id: 'c1' });
+    mockPrisma.conversation.findUniqueOrThrow.mockResolvedValue({
+      id: 'c1',
+      participants: [{ userId: 'u-2', user: { displayName: 'Bob' } }],
+    });
 
-    await makeAdmin('c1', 'admin-1', 'u-2');
+    const result = await makeAdmin('c1', 'admin-1', 'u-2');
 
     expect(mockPrisma.conversationParticipant.update).toHaveBeenCalledWith({
       where: { id: 'p2' },
       data: { role: 'ADMIN' },
     });
+    // Posts an in-thread "<name> is now an admin" system message.
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        content: 'Bob is now an admin',
+        isSystem: true,
+      }),
+    }));
+    expect((result as any).systemMessage).toBeTruthy();
   });
 });
 
@@ -608,12 +707,16 @@ describe('banMember', () => {
     await expect(banMember('c1', 'admin-1', 'u-2')).rejects.toBeInstanceOf(ForbiddenError);
   });
 
-  it('marks user as banned and sets leftAt', async () => {
+  it('marks user as banned, sets leftAt, and posts a "<admin> removed <name>" system message', async () => {
     mockPrisma.conversationParticipant.findUnique
       .mockResolvedValueOnce({ role: 'ADMIN' })
       .mockResolvedValueOnce({ role: 'MEMBER' });
+    mockPrisma.user.findMany.mockResolvedValueOnce([
+      { id: 'admin-1', displayName: 'Admin' },
+      { id: 'u-2', displayName: 'Bob' },
+    ]);
 
-    await banMember('c1', 'admin-1', 'u-2');
+    const result = await banMember('c1', 'admin-1', 'u-2');
 
     expect(mockPrisma.conversationParticipant.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -621,6 +724,13 @@ describe('banMember', () => {
         leftAt: expect.any(Date),
       }),
     }));
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        content: 'Admin removed Bob',
+        isSystem: true,
+      }),
+    }));
+    expect(result.systemMessage).toBeTruthy();
   });
 });
 

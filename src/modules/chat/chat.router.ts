@@ -12,7 +12,7 @@ import { sendMessageSchema, editMessageSchema, reactMessageSchema, forwardMessag
 import * as chatService from './chat.service';
 import * as groupService from './group.service';
 import * as pollService from './poll.service';
-import { formatMessagePayload, emitToParticipantRooms, broadcastAndNotifyMessage } from './chat.utils';
+import { formatMessagePayload, emitToParticipantRooms, broadcastAndNotifyMessage, broadcastSystemMessage } from './chat.utils';
 import { transcribeMessage } from './transcription.service';
 import { notifyChatMessage, markConversationNotificationsAsRead } from '../notification/notification.service';
 import { prisma } from '../../config/database';
@@ -941,6 +941,10 @@ router.post(
         isPublic,
         isChannel,
       );
+      const createdSysMsg = (conversation as any)?.systemMessage;
+      if (createdSysMsg) {
+        await broadcastSystemMessage(conversation.id, createdSysMsg);
+      }
       res.status(201).json(conversation);
     } catch (err) {
       next(err);
@@ -980,6 +984,11 @@ router.put(
       io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:updated', {
         conversationId: (req.params.conversationId as string),
       });
+
+      // Show "<actor> changed the group name/icon" in the thread.
+      for (const m of ((conversation as any)?.systemMessages ?? [])) {
+        await broadcastSystemMessage(req.params.conversationId as string, m);
+      }
 
       res.json(conversation);
     } catch (err) {
@@ -1099,19 +1108,10 @@ router.post(
         conversationId,
       });
 
-      // Broadcast the "<admin> added <names>" system message so it shows in
-      // the thread for everyone in the group. Spread the raw Prisma message
-      // so isSystem survives (formatMessagePayload strips it).
+      // Show "<admin> added <names>" in the thread.
       const sysMsg = (conversation as any)?.systemMessage;
       if (sysMsg) {
-        const sysMsgPayload = { ...sysMsg, conversationId };
-        const participants = await prisma.conversationParticipant.findMany({
-          where: { conversationId, leftAt: null },
-          select: { userId: true },
-        });
-        for (const p of participants) {
-          io.to(`user:${p.userId}`).emit('chat:message', sysMsgPayload);
-        }
+        await broadcastSystemMessage(conversationId, sysMsg);
       }
 
       res.json(conversation);
@@ -1143,18 +1143,9 @@ router.delete(
         conversationId,
       });
 
-      // Broadcast the leave/remove system message so it appears in the thread
-      // for everyone still in the group. Spread the raw Prisma message so
-      // `isSystem` survives (formatMessagePayload strips it).
+      // Show "<name> left" / "<admin> removed <name>" in the thread.
       if (result.systemMessage) {
-        const sysMsgPayload = { ...result.systemMessage, conversationId };
-        const participants = await prisma.conversationParticipant.findMany({
-          where: { conversationId, leftAt: null },
-          select: { userId: true },
-        });
-        for (const p of participants) {
-          io.to(`user:${p.userId}`).emit('chat:message', sysMsgPayload);
-        }
+        await broadcastSystemMessage(conversationId, result.systemMessage);
       }
 
       res.json(result);
@@ -1180,6 +1171,12 @@ router.put(
       io.to(`conversation:${(req.params.conversationId as string)}`).emit('group:members-changed', {
         conversationId: (req.params.conversationId as string),
       });
+
+      // Show "<name> is now an admin" in the thread.
+      const promoteSysMsg = (result as any)?.systemMessage;
+      if (promoteSysMsg) {
+        await broadcastSystemMessage(req.params.conversationId as string, promoteSysMsg);
+      }
 
       res.json(result);
     } catch (err) {
@@ -1282,6 +1279,10 @@ router.put(
       io.to(`user:${req.params.userId}`).emit('group:removed', {
         conversationId: req.params.conversationId,
       });
+      // Show "<admin> removed <name>" in the thread.
+      if ((result as any)?.systemMessage) {
+        await broadcastSystemMessage(req.params.conversationId as string, (result as any).systemMessage);
+      }
       res.json(result);
     } catch (err) { next(err); }
   },

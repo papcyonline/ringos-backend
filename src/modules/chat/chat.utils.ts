@@ -66,6 +66,32 @@ export async function emitToParticipantRooms(
 }
 
 /**
+ * Broadcast an isSystem message to every ACTIVE participant's personal room.
+ * Spreads the raw Prisma message so `isSystem` (which formatMessagePayload
+ * strips) survives and the client renders it as a centered system pill.
+ * Used for group-lifecycle indicators (join/leave/remove/ban/rename/icon/
+ * promote/created). Best-effort — never throws into the caller.
+ */
+export async function broadcastSystemMessage(
+  conversationId: string,
+  message: any,
+): Promise<void> {
+  try {
+    const io = getIO();
+    const participants = await prisma.conversationParticipant.findMany({
+      where: { conversationId, leftAt: null },
+      select: { userId: true },
+    });
+    const payload = { ...message, conversationId };
+    for (const p of participants) {
+      io.to(`user:${p.userId}`).emit('chat:message', payload);
+    }
+  } catch (err) {
+    logger.warn({ err, conversationId }, 'Failed to broadcast system message');
+  }
+}
+
+/**
  * Format a Prisma message (with includes) into the Socket.IO broadcast payload.
  * Used by both the HTTP routes and the WebSocket gateway to avoid duplication.
  */
