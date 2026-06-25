@@ -71,8 +71,13 @@ export async function initializeSocket(httpServer: HttpServer): Promise<Server> 
       origin: corsOrigin,
       methods: ['GET', 'POST'],
     },
-    pingTimeout: 60000,
-    pingInterval: 25000,
+    // Tightened from 60s/25s so a killed app / dropped network is
+    // detected (disconnect -> setOffline) in ~20-35s instead of ~60-85s,
+    // which is what made People-tab presence feel slow to go offline.
+    // Balanced for mobile: not so tight that flaky signal false-flags
+    // users offline.
+    pingTimeout: 20000,
+    pingInterval: 15000,
   });
 
   // Use Redis adapter for multi-instance support when REDIS_URL is configured

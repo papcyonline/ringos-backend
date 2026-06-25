@@ -213,7 +213,7 @@ export async function getUserById(targetId: string, currentUserId: string) {
 // People-list cache — see listUsers. Short TTL because the rows carry
 // presence + follow state; the client also receives live presence over
 // sockets, so a few seconds of staleness in the ordering is harmless.
-const USER_LIST_CACHE_TTL_SEC = 30;
+const USER_LIST_CACHE_TTL_SEC = 10;
 const userListCacheKey = (viewerId: string, limit: number) =>
   `users:list:${viewerId}:${limit}`;
 
