@@ -446,6 +446,31 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         return;
       }
 
+      // Authoritative call shape, from the conversation TYPE (not the client
+      // `isGroup` flag and not targetUserIds.length). A 2-member GROUP also
+      // has a single target, but it must NOT be treated as a 1-on-1 — the
+      // single-target pre-ring gates below would otherwise abort the whole
+      // group call if that one other member is offline/busy/blocked. Keying
+      // on conversation type also preserves the anti-spoof intent: a client
+      // can't pass isGroup:true to dodge the block check on a real 1-on-1,
+      // because the DM conversation type still says it's a 1-on-1.
+      let convType: string | null = null;
+      try {
+        const convo = await prisma.conversation.findUnique({
+          where: { id: conversationId },
+          select: { type: true },
+        });
+        convType = convo?.type ?? null;
+      } catch (err) {
+        logger.error({ err, conversationId }, 'Conversation-type lookup failed — treating as non-group');
+      }
+      const isGroupCall = convType === 'GROUP';
+      // Genuine 1-on-1: not a group AND exactly one target.
+      const isOneOnOne = !isGroupCall && targetUserIds.length === 1;
+      // Which availability mode this call requires, for the per-member
+      // "skip people who disabled this call type" filter in the ring loop.
+      const requiredAvailability = resolvedCallType === 'VIDEO' ? 'video' : 'call';
+
       // ── Pre-ring checks ───────────────────────────────────────────────
       // Every check below is defensive: on any query error we LOG and
       // continue, never block a legitimate call. Each check runs
@@ -483,11 +508,12 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
         }
       }
 
-      // Block check for any single-target call. Do NOT gate this on the
-      // client-supplied `isGroup` flag: a client could send isGroup:true on a
-      // 1-on-1 to skip the block check and force-ring a user who blocked them.
-      // (Matches the busy check below, which keys only on target count.)
-      if (targetUserIds.length === 1) {
+      // Block check for genuine 1-on-1 calls. Keyed on the authoritative
+      // conversation type (isOneOnOne), NOT the client `isGroup` flag — a
+      // client could send isGroup:true on a 1-on-1 to skip this and force-ring
+      // a user who blocked them, but the DM conversation type gives it away.
+      // A real 2-member GROUP is intentionally excluded so it isn't aborted.
+      if (isOneOnOne) {
         try {
           const [targetId] = targetUserIds;
           const blocked = await isBlocked(userId, targetId);
@@ -506,8 +532,9 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
 
       // Busy check — only block if the target is in an ANSWERED call. Stale
       // unanswered entries (e.g. from a crashed session) shouldn't prevent
-      // new calls from coming through.
-      if (targetUserIds.length === 1) {
+      // new calls from coming through. Genuine 1-on-1 only — a group call must
+      // never be aborted just because one member is busy.
+      if (isOneOnOne) {
         try {
           const [targetId] = targetUserIds;
           const busyCallId = await callState.getUserCallId(targetId);
@@ -530,7 +557,9 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
       // Unavailable check — only short-circuit if BOTH token queries
       // succeeded AND both returned zero AND there's no live socket.
       // A failed query should never cause a spurious "unavailable".
-      if (targetUserIds.length === 1) {
+      // Genuine 1-on-1 only — in a group, an unreachable member is skipped in
+      // the ring loop, never a reason to abort the whole call.
+      if (isOneOnOne) {
         try {
           const [targetId] = targetUserIds;
           const results = await Promise.allSettled([
@@ -593,16 +622,33 @@ export async function registerCallHandlers(io: Server, socket: Socket): Promise<
 
       socket.join(`call:${callId}`);
 
-      // Fetch display names for all participants (for call UI)
+      // Fetch display names for all participants (for call UI). availableFor
+      // is used in the ring loop to skip group members who disabled this call
+      // type (e.g. text-only users with no 'call'/'video' in availableFor).
       const participantUsers = await prisma.user.findMany({
         where: { id: { in: Array.from(participantIds) } },
-        select: { id: true, displayName: true, avatarUrl: true },
+        select: { id: true, displayName: true, avatarUrl: true, availableFor: true },
       });
       const userMap = new Map(participantUsers.map((u) => [u.id, u]));
 
       // Notify each target user. Targets are independent — fan out in parallel
       // so the per-call latency stays ~PUSH_GATE_MS regardless of group size.
       await Promise.all(targetUserIds.map(async (targetId) => {
+        // Group calls: skip members who disabled this call type. A member
+        // opts out by removing 'call'/'video' from availableFor; don't ring or
+        // push them, but the rest of the group still rings. 1-on-1 calls are
+        // unaffected (the caller's UI already hides the button in that case).
+        if (isGroupCall) {
+          const targetAvailability = userMap.get(targetId)?.availableFor ?? [];
+          if (!targetAvailability.includes(requiredAvailability)) {
+            logger.info(
+              { targetId, callId, requiredAvailability },
+              'Skipping group-call ring — member disabled this call type',
+            );
+            return;
+          }
+        }
+
         const targetSockets = await io.in(`user:${targetId}`).fetchSockets();
         const isOnline = targetSockets.length > 0;
 

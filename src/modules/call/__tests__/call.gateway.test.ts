@@ -293,6 +293,84 @@ describe('call.gateway — registerCallHandlers', () => {
       });
       expect(mockSafety.isBlocked).not.toHaveBeenCalled();
     });
+
+    it('does NOT abort a 2-member GROUP call via the 1-on-1 block gate', async () => {
+      // A 2-member group has a single target but is type GROUP — the 1-on-1
+      // block/busy/unavailable gates must be skipped so it isn't aborted.
+      (mockPrisma as any).conversation = { findUnique: vi.fn().mockResolvedValue({ type: 'GROUP' }) };
+      mockPrisma.conversationParticipant.findUnique.mockResolvedValue({ leftAt: null });
+      mockSafety.isBlocked.mockResolvedValue(true); // would abort a real 1-on-1
+      mockPrisma.user.findUnique.mockResolvedValue({ displayName: 'Caller', avatarUrl: null });
+      (mockPrisma as any).user.findMany = vi.fn().mockResolvedValue([
+        { id: 'user-1', displayName: 'Caller', avatarUrl: null, availableFor: ['text', 'call'] },
+        { id: 'u-2', displayName: 'Bob', avatarUrl: null, availableFor: ['text', 'call'] },
+      ]);
+      (mockPrisma as any).voipToken = { count: vi.fn().mockResolvedValue(1) };
+      (mockPrisma as any).fcmToken = { count: vi.fn().mockResolvedValue(1) };
+      const io = makeIO();
+      io.in = vi.fn(() => ({ fetchSockets: vi.fn().mockResolvedValue([]) }));
+      const { socket, handlers } = makeSocket();
+      await registerCallHandlers(io, socket);
+      await handlers['call:initiate']({
+        conversationId: 'c-1',
+        targetUserIds: ['u-2'],
+        isGroup: true,
+        callType: 'AUDIO',
+      });
+      expect(mockSafety.isBlocked).not.toHaveBeenCalled();
+      expect(socket.emit).toHaveBeenCalledWith('call:initiated', expect.any(Object));
+    });
+
+    it('group call skips members who disabled this call type and rings the rest', async () => {
+      (mockPrisma as any).conversation = { findUnique: vi.fn().mockResolvedValue({ type: 'GROUP' }) };
+      mockPrisma.conversationParticipant.findUnique.mockResolvedValue({ leftAt: null });
+      mockPrisma.user.findUnique.mockResolvedValue({ displayName: 'Caller', avatarUrl: null });
+      (mockPrisma as any).user.findMany = vi.fn().mockResolvedValue([
+        { id: 'user-1', displayName: 'Caller', avatarUrl: null, availableFor: ['text', 'call'] },
+        { id: 'u-2', displayName: 'NoCalls', avatarUrl: null, availableFor: ['text'] },         // disabled calls
+        { id: 'u-3', displayName: 'Yes', avatarUrl: null, availableFor: ['text', 'call'] },     // allows calls
+      ]);
+      (mockPrisma as any).voipToken = { count: vi.fn().mockResolvedValue(0) };
+      (mockPrisma as any).fcmToken = { count: vi.fn().mockResolvedValue(1) };
+      const io = makeIO();
+      io.in = vi.fn(() => ({ fetchSockets: vi.fn().mockResolvedValue([]) })); // offline -> push path
+      const { socket, handlers } = makeSocket();
+      await registerCallHandlers(io, socket);
+      await handlers['call:initiate']({
+        conversationId: 'c-1',
+        targetUserIds: ['u-2', 'u-3'],
+        isGroup: true,
+        callType: 'AUDIO',
+      });
+      expect(mockNotif.sendCallPush).toHaveBeenCalledWith('u-3', expect.anything());
+      expect(mockNotif.sendCallPush).not.toHaveBeenCalledWith('u-2', expect.anything());
+      expect(socket.emit).toHaveBeenCalledWith('call:initiated', expect.any(Object));
+    });
+
+    it('per-mode: a VIDEO group call skips a member who allows calls but not video', async () => {
+      (mockPrisma as any).conversation = { findUnique: vi.fn().mockResolvedValue({ type: 'GROUP' }) };
+      mockPrisma.conversationParticipant.findUnique.mockResolvedValue({ leftAt: null });
+      mockPrisma.user.findUnique.mockResolvedValue({ displayName: 'Caller', avatarUrl: null });
+      (mockPrisma as any).user.findMany = vi.fn().mockResolvedValue([
+        { id: 'user-1', displayName: 'Caller', avatarUrl: null, availableFor: ['text', 'call', 'video'] },
+        { id: 'u-2', displayName: 'AudioOnly', avatarUrl: null, availableFor: ['text', 'call'] },          // no video
+        { id: 'u-3', displayName: 'Video', avatarUrl: null, availableFor: ['text', 'call', 'video'] },     // video ok
+      ]);
+      (mockPrisma as any).voipToken = { count: vi.fn().mockResolvedValue(0) };
+      (mockPrisma as any).fcmToken = { count: vi.fn().mockResolvedValue(1) };
+      const io = makeIO();
+      io.in = vi.fn(() => ({ fetchSockets: vi.fn().mockResolvedValue([]) }));
+      const { socket, handlers } = makeSocket();
+      await registerCallHandlers(io, socket);
+      await handlers['call:initiate']({
+        conversationId: 'c-1',
+        targetUserIds: ['u-2', 'u-3'],
+        isGroup: true,
+        callType: 'VIDEO',
+      });
+      expect(mockNotif.sendCallPush).toHaveBeenCalledWith('u-3', expect.anything());
+      expect(mockNotif.sendCallPush).not.toHaveBeenCalledWith('u-2', expect.anything());
+    });
   });
 
   describe('call:ringing', () => {
