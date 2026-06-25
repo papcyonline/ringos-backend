@@ -4,7 +4,48 @@ import { getIO } from '../../config/socket';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
 
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const openai = new OpenAI({
+  apiKey: env.OPENAI_API_KEY,
+  // Translation is fast; don't hang on the 10-min SDK default.
+  timeout: 30_000,
+  maxRetries: 3,
+});
+
+/**
+ * True for transient network/stream errors that are safe to retry.
+ * The OpenAI SDK's built-in retries only wrap the fetch itself — a
+ * "Premature close" (ERR_STREAM_PREMATURE_CLOSE) happens later, while the
+ * response body is being read, so it escapes the SDK and must be retried here.
+ */
+function isRetryableNetworkError(err: unknown): boolean {
+  const e = err as { code?: string; name?: string; message?: string; cause?: { code?: string } } | undefined;
+  if (!e) return false;
+  const code = e.code ?? e.cause?.code;
+  if (code === 'ERR_STREAM_PREMATURE_CLOSE') return true;
+  if (code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EPIPE') return true;
+  if (e.name === 'APIConnectionError' || e.name === 'APIConnectionTimeoutError' || e.name === 'FetchError') return true;
+  return typeof e.message === 'string' && /premature close|socket hang up|network|terminated/i.test(e.message);
+}
+
+/**
+ * Run an OpenAI call with bounded retries + exponential backoff on transient
+ * network/stream errors (e.g. dropped keep-alive connections to OpenAI).
+ */
+async function withNetworkRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i === attempts - 1 || !isRetryableNetworkError(err)) throw err;
+      const delayMs = 300 * 2 ** i; // 300ms, 600ms, 1200ms
+      logger.warn({ err, attempt: i + 1, delayMs }, 'Translation OpenAI call failed (transient) — retrying');
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastErr;
+}
 
 /**
  * Translate a message asynchronously after it has been sent.
@@ -81,7 +122,7 @@ export async function translateMessage(
 
     const langList = targetLanguages.join(', ');
 
-    const response = await openai.chat.completions.create({
+    const response = await withNetworkRetry(() => openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
@@ -108,7 +149,7 @@ Rules:
       temperature: 0,
       max_tokens: 1024,
       response_format: { type: 'json_object' },
-    });
+    }));
 
     const text = response.choices[0]?.message?.content?.trim();
     if (!text) return;

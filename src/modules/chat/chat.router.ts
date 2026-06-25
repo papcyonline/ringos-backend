@@ -13,7 +13,6 @@ import * as chatService from './chat.service';
 import * as groupService from './group.service';
 import * as pollService from './poll.service';
 import { formatMessagePayload, emitToParticipantRooms, broadcastAndNotifyMessage } from './chat.utils';
-import { translateMessage } from './translation.service';
 import { transcribeMessage } from './transcription.service';
 import { notifyChatMessage, markConversationNotificationsAsRead } from '../notification/notification.service';
 import { prisma } from '../../config/database';
@@ -814,12 +813,9 @@ router.post(
         },
       );
 
+      // Broadcasts to the room and triggers caption auto-translation in the
+      // background (see broadcastAndNotifyMessage → chat.utils translateMessage).
       broadcastAndNotifyMessage(message, conversationId, req.user!.userId);
-
-      // Auto-translate caption in background
-      if (message.content) {
-        translateMessage(message.id, conversationId, message.content).catch(() => {});
-      }
 
       res.status(201).json(message);
     } catch (err) {
