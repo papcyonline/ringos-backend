@@ -23,6 +23,12 @@ import {
 import { sendWelcomeEmail, sendPasswordResetEmail, sendOtpEmail } from '../../shared/email.service';
 import { sendOtpSms } from '../../shared/sms.service';
 
+// Default bio applied when a user finishes onboarding without writing
+// one. Keeps profiles looking complete and is the value the one-off
+// backfill (scripts/backfill-default-bio.ts) uses for legacy/bio-less
+// rows. Editable by the user like any other bio.
+export const DEFAULT_BIO = 'Available for chat';
+
 // Google OAuth client - accepts tokens from web, iOS, and Android clients.
 // Each env var may hold a single ID or a comma-separated list (e.g. for
 // multiple Android signing keys / Firebase projects).
@@ -610,7 +616,10 @@ export async function setUsername(
   const data: Record<string, unknown> = {
     displayName: username,
     isAnonymous: false, // Profile complete — user now visible in People tab
-    bio: opts?.bio,
+    // Fall back to a friendly default so a user is never bio-less. Bio
+    // is no longer a People-tab visibility gate, but a default keeps
+    // profiles looking complete and gives users something to edit.
+    bio: opts?.bio?.trim() || DEFAULT_BIO,
     gender: opts?.gender,
     location: opts?.location,
   };

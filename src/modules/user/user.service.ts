@@ -253,18 +253,21 @@ export async function listUsers(
   const skip = (page - 1) * limit;
 
   // Users must have actually finished onboarding to appear in the
-  // People tab. isAnonymous flips to false inside setUsername — but
-  // we ALSO require a non-empty displayName + bio so a legacy row
-  // somehow flagged complete without any actual profile content
-  // (data drift, partial migration, manual DB tinkering) doesn't
-  // surface as a ghost user. The bio check covers both NULL and ''
-  // for the nullable column; displayName is non-null in the schema
-  // so only the empty-string check matters there.
+  // People tab. isAnonymous flips to false inside setUsername, and we
+  // ALSO require a non-empty displayName so a legacy row somehow
+  // flagged complete without any profile content (data drift, partial
+  // migration, manual DB tinkering) doesn't surface as a ghost user.
+  //
+  // NOTE: bio is intentionally NOT a visibility gate. It previously
+  // was (bio NOT NULL / != ''), but that silently hid every real user
+  // who had no bio — legacy/social accounts and anyone who cleared
+  // their bio in profile edit. Bio-less users now get a default bio
+  // ("Available for chat") at signup + via backfill, and are visible
+  // regardless. See scripts/backfill-default-bio.ts.
   const userWhere: any = {
     id: { notIn: [currentUserId, ...blockedIds] },
     isAnonymous: false,
     displayName: { not: '' },
-    bio: { not: null, notIn: [''] },
   };
   if (trimmedQ.length > 0) {
     userWhere.OR = [
