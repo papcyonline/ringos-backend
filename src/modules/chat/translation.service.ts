@@ -1,27 +1,10 @@
-import OpenAI from 'openai';
 import { prisma } from '../../config/database';
 import { getIO } from '../../config/socket';
-import { env } from '../../config/env';
+import { createOpenAIClient } from '../../config/openai';
 import { logger } from '../../shared/logger';
 
-// The openai SDK v4 bundles node-fetch@2, which throws
-// ERR_STREAM_PREMATURE_CLOSE while gunzipping OpenAI's responses (fails on
-// every call, not intermittently). Two defenses:
-//  1. Prefer the platform's native fetch (undici on Node 18+), which decodes
-//     compressed response streams reliably.
-//  2. As a fallback for the node-fetch path (older Node), ask OpenAI not to
-//     gzip at all, so there is no decompression step to fail.
-const nativeFetch: typeof fetch | undefined =
-  typeof globalThis.fetch === 'function' ? (...args) => globalThis.fetch(...args) : undefined;
-
-const openai = new OpenAI({
-  apiKey: env.OPENAI_API_KEY,
-  // Translation is fast; don't hang on the 10-min SDK default.
-  timeout: 30_000,
-  maxRetries: 3,
-  ...(nativeFetch ? { fetch: nativeFetch } : {}),
-  defaultHeaders: { 'Accept-Encoding': 'identity' },
-});
+// Translation is fast; don't hang on the 10-min SDK default.
+const openai = createOpenAIClient({ timeout: 30_000, maxRetries: 3 });
 
 /**
  * True for transient network/stream errors that are safe to retry.

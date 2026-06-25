@@ -1,9 +1,8 @@
-import OpenAI from 'openai';
-import { env } from '../../config/env';
+import { createOpenAIClient } from '../../config/openai';
 import { koraToolDeclarations, executeTool, ToolResult } from './tools/kora-tools';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const openai = createOpenAIClient();
 const MODEL = 'gpt-4o-mini';
 
 interface LlmMessage {

@@ -1,15 +1,15 @@
-import OpenAI, { toFile } from 'openai';
+import { toFile } from 'openai';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { prisma } from '../../config/database';
 import { getIO } from '../../config/socket';
-import { env } from '../../config/env';
+import { createOpenAIClient } from '../../config/openai';
 import { logger } from '../../shared/logger';
 import { downloadFromDrive } from '../../shared/gdrive.service';
 import { checkTranscription, incrementTranscription } from '../../shared/usage.service';
 import { AppError } from '../../shared/errors';
 
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const openai = createOpenAIClient();
 
 interface AudioBlob {
   buffer: Buffer;
