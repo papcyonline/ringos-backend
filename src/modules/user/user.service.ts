@@ -459,15 +459,21 @@ export async function uploadCover(userId: string, coverUrl: string) {
   return updated;
 }
 
+// updateMany (not update) so a presence flip for a user whose row no
+// longer exists — e.g. a deleted account whose socket reconnects with a
+// still-valid token — is a harmless no-op instead of a thrown P2025.
 export async function setOnline(userId: string) {
-  await prisma.user.update({
+  await prisma.user.updateMany({
     where: { id: userId },
     data: { isOnline: true },
   });
 }
 
+// updateMany (not update) so a disconnect cleanup for a user whose row no
+// longer exists (deleted account, stale socket) is a no-op rather than a
+// thrown P2025 — a disconnect handler must never throw.
 export async function setOffline(userId: string) {
-  await prisma.user.update({
+  await prisma.user.updateMany({
     where: { id: userId },
     data: { isOnline: false, lastSeenAt: new Date() },
   });

@@ -301,24 +301,31 @@ describe('uploadAvatar / setOnline / setOffline', () => {
     }));
   });
 
-  it('setOnline flips isOnline=true', async () => {
-    mockPrisma.user.update.mockResolvedValue({});
+  it('setOnline flips isOnline=true via updateMany', async () => {
+    mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
     await setOnline('user-1');
-    expect(mockPrisma.user.update).toHaveBeenCalledWith({
+    expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
       where: { id: 'user-1' },
       data: { isOnline: true },
     });
   });
 
-  it('setOffline flips isOnline=false and stamps lastSeenAt', async () => {
-    mockPrisma.user.update.mockResolvedValue({});
+  it('setOffline flips isOnline=false and stamps lastSeenAt via updateMany', async () => {
+    mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
     await setOffline('user-1');
-    expect(mockPrisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         isOnline: false,
         lastSeenAt: expect.any(Date),
       }),
     }));
+  });
+
+  it('setOffline is a no-op (does not throw) when the user no longer exists', async () => {
+    // updateMany returns count:0 for a deleted account / stale socket — the
+    // disconnect handler must never throw (regression for P2025).
+    mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+    await expect(setOffline('ghost')).resolves.toBeUndefined();
   });
 });
 
