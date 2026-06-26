@@ -607,29 +607,40 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
 }
 
 /**
+ * Prisma `where` that defines a genuine, recipient-facing message request.
+ * Shared by the list query AND the digest count job so the two can never
+ * drift (a mismatch is what made the digest report "16" when the screen
+ * showed 1). A request only counts when a stranger has actually sent a
+ * real, still-visible message — see the inline notes.
+ */
+export function messageRequestWhere(userId: string) {
+  return {
+    status: 'ACTIVE' as const,
+    requestStatus: 'PENDING' as const,
+    // Only return conversations the *recipient* is looking at —
+    // a sender's pending request shows up in their normal inbox.
+    requestedById: { not: userId },
+    participants: { some: { userId, leftAt: null } },
+    // Require a real message — a stranger merely *opening* the DM creates
+    // a pending conversation, but it isn't a request until they actually
+    // send something. Excludes ghost/empty requests.
+    messages: {
+      some: {
+        isSystem: false,
+        NOT: { deletedFor: { has: userId } },
+      },
+    },
+  };
+}
+
+/**
  * Pending message requests addressed to this user (i.e. someone who
  * doesn't follow them initiated a DM). Mirrors the shape of
  * getConversations so the frontend can render with the same widgets.
  */
 export async function getMessageRequests(userId: string) {
   return prisma.conversation.findMany({
-    where: {
-      status: 'ACTIVE',
-      requestStatus: 'PENDING',
-      // Only return conversations the *recipient* is looking at —
-      // a sender's pending request shows up in their normal inbox.
-      requestedById: { not: userId },
-      participants: { some: { userId, leftAt: null } },
-      // Require a real message — a stranger merely *opening* the DM creates
-      // a pending conversation, but it isn't a request until they actually
-      // send something. Excludes ghost/empty requests.
-      messages: {
-        some: {
-          isSystem: false,
-          NOT: { deletedFor: { has: userId } },
-        },
-      },
-    },
+    where: messageRequestWhere(userId),
     include: {
       participants: {
         include: {

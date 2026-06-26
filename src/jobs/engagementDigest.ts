@@ -1,5 +1,6 @@
 import { prisma } from '../config/database';
 import { logger } from '../shared/logger';
+import { messageRequestWhere } from '../modules/chat/chat.service';
 import {
   createNotification,
   sendPushToUser,
@@ -88,18 +89,15 @@ async function lastDigestAt(
 }
 
 /**
- * Pending message-request count for this user — only conversations
- * where someone ELSE initiated the request, the user is still a
- * participant, and the conversation is still ACTIVE + PENDING.
+ * Pending message-request count for this user. Uses the SAME where-clause
+ * as the Message Requests screen list (messageRequestWhere) so the digest
+ * count and the on-screen list always agree — without the shared filter the
+ * digest counted ghost/empty pending conversations (e.g. "16") that the
+ * screen excludes (which showed "1").
  */
 async function pendingRequestCount(userId: string): Promise<number> {
   return prisma.conversation.count({
-    where: {
-      status: 'ACTIVE',
-      requestStatus: 'PENDING',
-      requestedById: { not: userId },
-      participants: { some: { userId, leftAt: null } },
-    },
+    where: messageRequestWhere(userId),
   });
 }
 

@@ -83,6 +83,7 @@ import {
   setDisappearingMessages,
   searchMessages,
   clearHistory,
+  messageRequestWhere,
 } from '../chat.service';
 import { ForbiddenError, NotFoundError } from '../../../shared/errors';
 
@@ -608,5 +609,30 @@ describe('clearHistory', () => {
   it('rejects non-participants', async () => {
     mockPrisma.conversationParticipant.findUnique.mockResolvedValue(null);
     await expect(clearHistory('conv-1', 'user-1')).rejects.toBeInstanceOf(ForbiddenError);
+  });
+});
+
+// Shared by the requests LIST and the digest COUNT job. A mismatch here is
+// what made the digest report "16" when the screen showed 1, so lock the
+// contract: a request only counts with a real, still-visible human message.
+describe('messageRequestWhere', () => {
+  it('gates on a genuine recipient-facing message (the digest/list contract)', () => {
+    const where = messageRequestWhere('user-1');
+
+    expect(where).toMatchObject({
+      status: 'ACTIVE',
+      requestStatus: 'PENDING',
+      requestedById: { not: 'user-1' },
+      participants: { some: { userId: 'user-1', leftAt: null } },
+      // The clause the count job was missing — excludes ghost/empty
+      // requests (stranger opened a DM but never sent a real message) and
+      // messages the user has deleted.
+      messages: {
+        some: {
+          isSystem: false,
+          NOT: { deletedFor: { has: 'user-1' } },
+        },
+      },
+    });
   });
 });
