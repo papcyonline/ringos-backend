@@ -86,10 +86,7 @@ export async function translateMessage(
 ): Promise<void> {
   try {
     if (!content.trim()) return;
-    if (shouldSkipTranslation(content)) {
-      logger.info({ messageId, content }, 'TRANSLATE_DEBUG skipped (heuristic: not a real sentence)');
-      return;
-    }
+    if (shouldSkipTranslation(content)) return;
 
     // Get unique languages of all active participants
     const participants = await prisma.conversationParticipant.findMany({
@@ -111,8 +108,6 @@ export async function translateMessage(
           .flatMap((p) => (p.user.preference?.language ?? 'en').split(',').map((l: string) => l.trim()).filter(Boolean))
       ),
     ];
-
-    logger.info({ messageId, conversationId, targetLanguages, content }, 'TRANSLATE_DEBUG participant languages');
 
     if (targetLanguages.length === 0) return;
 
@@ -165,11 +160,6 @@ Rules:
 
     // Remove source language from translations if included
     delete parsed.translations[parsed.detectedLanguage];
-
-    logger.info(
-      { messageId, detected: parsed.detectedLanguage, translationKeys: Object.keys(parsed.translations) },
-      'TRANSLATE_DEBUG detection result',
-    );
 
     // If no translations remain (message is already in the only target language), skip
     if (Object.keys(parsed.translations).length === 0) return;
