@@ -30,6 +30,7 @@ const { mockPrisma } = vi.hoisted(() => {
     },
     reelView: {
       create: vi.fn(),
+      createMany: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
     },
@@ -283,25 +284,26 @@ describe('unrepostReel', () => {
 
 describe('markReelViewed', () => {
   it('first view: creates view row and increments viewCount', async () => {
-    mockPrisma.reelView.create.mockResolvedValue({});
+    mockPrisma.reelView.createMany.mockResolvedValue({ count: 1 });
 
     await markReelViewed('reel-1', 'user-1', { watchedSec: 5, completed: false });
 
-    expect(mockPrisma.reelView.create).toHaveBeenCalled();
+    expect(mockPrisma.reelView.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      skipDuplicates: true,
+    }));
     expect(mockPrisma.reel.update).toHaveBeenCalledWith(expect.objectContaining({
       data: { viewCount: { increment: 1 } },
     }));
   });
 
-  it('repeat view (P2002): updates progress monotonically', async () => {
-    const err: any = new Error('unique violation');
-    err.code = 'P2002';
-    mockPrisma.reelView.create.mockRejectedValue(err);
+  it('repeat view (duplicate skipped): updates progress monotonically, no viewCount bump', async () => {
+    mockPrisma.reelView.createMany.mockResolvedValue({ count: 0 });
     mockPrisma.reelView.findUnique.mockResolvedValue({ watchedSec: 3, completed: false });
     mockPrisma.reelView.update.mockResolvedValue({});
 
     await markReelViewed('reel-1', 'user-1', { watchedSec: 7, completed: true });
 
+    expect(mockPrisma.reel.update).not.toHaveBeenCalled();
     expect(mockPrisma.reelView.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         watchedSec: 7,
@@ -311,9 +313,7 @@ describe('markReelViewed', () => {
   });
 
   it('repeat view: does not regress watchedSec', async () => {
-    const err: any = new Error('unique violation');
-    err.code = 'P2002';
-    mockPrisma.reelView.create.mockRejectedValue(err);
+    mockPrisma.reelView.createMany.mockResolvedValue({ count: 0 });
     mockPrisma.reelView.findUnique.mockResolvedValue({ watchedSec: 30, completed: true });
     mockPrisma.reelView.update.mockResolvedValue({});
 
@@ -327,10 +327,12 @@ describe('markReelViewed', () => {
     }));
   });
 
-  it('non-P2002 errors are swallowed', async () => {
-    mockPrisma.reelView.create.mockRejectedValue(new Error('boom'));
+  it('repeat view with no existing row: no-op (no throw)', async () => {
+    mockPrisma.reelView.createMany.mockResolvedValue({ count: 0 });
+    mockPrisma.reelView.findUnique.mockResolvedValue(null);
 
     await expect(markReelViewed('reel-1', 'user-1')).resolves.toBeUndefined();
+    expect(mockPrisma.reelView.update).not.toHaveBeenCalled();
   });
 });
 

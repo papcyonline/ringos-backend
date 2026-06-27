@@ -548,38 +548,44 @@ export async function markReelViewed(
   const watchedSec = Math.max(0, Math.floor(progress.watchedSec ?? 0));
   const completed = progress.completed ?? false;
 
-  // First view per user: create ReelView row + increment public viewCount.
-  // Repeat view: keep best-known watch progress (max watchedSec, sticky completed).
-  try {
-    await prisma.reelView.create({
-      data: { reelId, userId, watchedSec, completed },
-    });
+  // createMany with skipDuplicates never throws on the (reelId, userId) unique
+  // constraint — its count tells us whether this was the first view (1) or a
+  // repeat (0). This replaces the previous create/try-catch, which threw a
+  // P2002 on every repeat/concurrent view and logged it as a Prisma ERROR
+  // even though it was expected and handled.
+  const { count } = await prisma.reelView.createMany({
+    data: [{ reelId, userId, watchedSec, completed }],
+    skipDuplicates: true,
+  });
+
+  if (count === 1) {
+    // First view per user: increment the public viewCount.
     await prisma.reel.update({
       where: { id: reelId },
       data: { viewCount: { increment: 1 } },
     });
-  } catch (e: any) {
-    // P2002 = unique constraint (viewer already counted). Update progress
-    // monotonically so partial → full watch is captured but not regressed.
-    if (e?.code !== 'P2002') return;
-    const existing = await prisma.reelView
-      .findUnique({
-        where: { reelId_userId: { reelId, userId } },
-        select: { watchedSec: true, completed: true },
-      })
-      .catch(() => null);
-    if (!existing) return;
-    await prisma.reelView
-      .update({
-        where: { reelId_userId: { reelId, userId } },
-        data: {
-          viewedAt: new Date(),
-          watchedSec: Math.max(existing.watchedSec, watchedSec),
-          completed: existing.completed || completed,
-        },
-      })
-      .catch(() => {});
+    return;
   }
+
+  // Repeat view: keep best-known watch progress (max watchedSec, sticky
+  // completed) so partial → full watch is captured but never regressed.
+  const existing = await prisma.reelView
+    .findUnique({
+      where: { reelId_userId: { reelId, userId } },
+      select: { watchedSec: true, completed: true },
+    })
+    .catch(() => null);
+  if (!existing) return;
+  await prisma.reelView
+    .update({
+      where: { reelId_userId: { reelId, userId } },
+      data: {
+        viewedAt: new Date(),
+        watchedSec: Math.max(existing.watchedSec, watchedSec),
+        completed: existing.completed || completed,
+      },
+    })
+    .catch(() => {});
 }
 
 // ─── Rate limit helper ────────────────────────────────────
