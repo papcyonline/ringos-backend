@@ -137,9 +137,11 @@ Rules:
 - Do NOT include a translation for the detected source language
 - If the message is already in a target language, omit that language from translations
 - Preserve emojis, @mentions, and formatting as-is
-- Pidgin English (e.g. "How far", "Wetin dey happen", "I no sabi", "Na so e be") is English — detect it as "en" and do NOT translate it
-- Internet shorthand and abbreviations (e.g. "u" = you, "r" = are, "pls" = please, "ngl", "brb", "omw", "wyd", "lol", "smh", "tbh", "imo") are English — detect as "en" and do NOT translate
-- If the message is English written informally, with slang, shorthand, or pidgin, return empty translations: {"detectedLanguage":"en","translations":{}}`,
+- ALWAYS translate normal, conversational messages into every target language that differs from the detected one. Casual or informal phrasing still counts — e.g. "Hello there my friend, how are you doing?" MUST be translated. Do not skip a message just because it is casual.
+- The ONLY messages you skip (return the detected language with "translations":{}) are ones written ENTIRELY in:
+  - Nigerian/West-African pidgin (e.g. "How far", "Wetin dey happen", "I no sabi", "Na so e be") — detect as "en", do NOT translate, OR
+  - pure internet shorthand/abbreviations with no real words (e.g. "u r", "pls", "ngl", "brb", "omw", "wyd", "lol", "smh", "tbh", "imo") — detect as "en", do NOT translate
+- A message that contains ordinary words is NOT in those categories and MUST be translated.`,
         },
         {
           role: 'user',
