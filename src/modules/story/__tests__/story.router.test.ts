@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockStoryService, mockCoinsService, mockNotifService } = vi.hoisted(() => ({
+const { mockStoryService, mockNotifService } = vi.hoisted(() => ({
   mockStoryService: {
     createStory: vi.fn().mockResolvedValue({ id: 's-1', slides: [] }),
     getStoryFeed: vi.fn().mockResolvedValue([]),
@@ -23,9 +23,6 @@ const { mockStoryService, mockCoinsService, mockNotifService } = vi.hoisted(() =
     bumpStoryShare: vi.fn().mockResolvedValue(true),
     bumpStoryDownload: vi.fn().mockResolvedValue(true),
     bumpStoryRepost: vi.fn().mockResolvedValue(true),
-  },
-  mockCoinsService: {
-    getStoryGiftStats: vi.fn().mockResolvedValue({ totalCoins: 0, totalGifts: 0, breakdown: [] }),
   },
   mockNotifService: {
     createNotification: vi.fn().mockResolvedValue(null),
@@ -64,7 +61,6 @@ vi.mock('../../../shared/usage.service', () => ({
   isPro: vi.fn().mockResolvedValue(false),
 }));
 vi.mock('../story.service', () => mockStoryService);
-vi.mock('../../coins/coins.service', () => mockCoinsService);
 vi.mock('../../notification/notification.service', () => mockNotifService);
 
 import { storyRouter } from '../story.router';
@@ -152,11 +148,6 @@ describe('story.router', () => {
   it('POST /stories/:id/repost', async () => {
     const res = await request(makeApp()).post('/stories/s-1/repost');
     expect([200, 201]).toContain(res.status);
-  });
-
-  it('GET /stories/:id/gift-stats', async () => {
-    const res = await request(makeApp()).get('/stories/s-1/gift-stats');
-    expect(res.status).toBe(200);
   });
 
   it('PATCH /stories/slides/:slideId/caption', async () => {

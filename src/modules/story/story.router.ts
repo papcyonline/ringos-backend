@@ -30,7 +30,6 @@ import {
   bumpStoryDownload,
   bumpStoryRepost,
 } from './story.service';
-import { getStoryGiftStats } from '../coins/coins.service';
 import { createNotification, sendPostPush } from '../notification/notification.service';
 import { checkStoryMilestone } from './story.notify';
 import { prisma } from '../../config/database';
@@ -664,22 +663,6 @@ router.post(
       next(err);
     }
   },
-);
-
-// ─── GET /api/stories/:id/gift-stats ─────────────────────
-
-router.get(
-  '/:id/gift-stats',
-  authenticate,
-  async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const storyId = req.params.id as string;
-      const stats = await getStoryGiftStats(storyId);
-      res.json(stats);
-    } catch (err) {
-      next(err);
-    }
-  }
 );
 
 // ─── DELETE /api/stories/:id ────────────────────────────────
