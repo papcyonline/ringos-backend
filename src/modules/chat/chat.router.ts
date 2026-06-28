@@ -14,6 +14,7 @@ import * as groupService from './group.service';
 import * as pollService from './poll.service';
 import { formatMessagePayload, emitToParticipantRooms, broadcastAndNotifyMessage, broadcastSystemMessage } from './chat.utils';
 import { transcribeMessage } from './transcription.service';
+import { translateMessageOnDemand } from './translation.service';
 import { notifyChatMessage, markConversationNotificationsAsRead } from '../notification/notification.service';
 import { prisma } from '../../config/database';
 import * as folderService from './folder.service';
@@ -490,6 +491,26 @@ router.post(
         req.params.messageId as string,
         req.params.conversationId as string,
         req.user!.userId,
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/messages/:messageId/translate - On-demand manual translate
+router.post(
+  '/conversations/:conversationId/messages/:messageId/translate',
+  authenticate,
+  userRateLimit('chat-translate', 60, 3600),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await translateMessageOnDemand(
+        req.params.messageId as string,
+        req.params.conversationId as string,
+        req.user!.userId,
+        (req.body?.targetLang as string) ?? '',
       );
       res.json(result);
     } catch (err) {

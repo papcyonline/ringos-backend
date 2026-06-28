@@ -192,3 +192,109 @@ Rules:
     logger.warn({ err, messageId, conversationId }, 'Translation failed (non-critical)');
   }
 }
+
+/**
+ * Manually translate a single message into [targetLang] on demand — the
+ * "Translate" long-press action, a backup for when the automatic pass didn't
+ * produce a translation the reader can see (wrong/stale preference language,
+ * a short message skipped by the heuristic, or a transient OpenAI failure).
+ *
+ * Unlike the automatic pass this:
+ *  - takes the target language straight from the requesting client (its
+ *    displayed locale), so it works even when the user's stored
+ *    `preference.language` is wrong;
+ *  - FORCES a translation (no shouldSkip heuristic);
+ *  - is cached: a language already present in metadata.translations is
+ *    returned for free.
+ * The result is stored in the same shared `metadata.translations[lang]` map
+ * the auto pass uses and broadcast via `chat:translated`, so the chat bubble
+ * renders it through the existing display path with no client changes.
+ */
+export async function translateMessageOnDemand(
+  messageId: string,
+  conversationId: string,
+  userId: string,
+  targetLang: string,
+): Promise<{ detectedLanguage: string; translation: string; alreadyInLanguage: boolean }> {
+  // Only participants of the conversation may translate its messages.
+  const participant = await prisma.conversationParticipant.findFirst({
+    where: { conversationId, userId, leftAt: null },
+  });
+  if (!participant) throw new Error('Not a participant');
+
+  const target = targetLang.trim().toLowerCase().slice(0, 5);
+  if (!target) throw new Error('Missing target language');
+
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { content: true, metadata: true, conversationId: true },
+  });
+  if (!message) throw new Error('Message not found');
+  if (message.conversationId !== conversationId) throw new Error('Message not in conversation');
+
+  const content = (message.content ?? '').trim();
+  if (!content) throw new Error('Nothing to translate');
+
+  const existing = (message.metadata as Record<string, unknown>) ?? {};
+  const existingTr = (existing.translations as Record<string, string> | undefined) ?? {};
+  const detectedExisting = (existing.detectedLanguage as string | undefined) ?? '';
+
+  // Cache hit — already translated into this language (free, no OpenAI call).
+  if (existingTr[target]) {
+    return { detectedLanguage: detectedExisting, translation: existingTr[target], alreadyInLanguage: false };
+  }
+
+  const response = await withNetworkRetry(() => openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      {
+        role: 'system',
+        content: `You are a translation engine. Detect the language of the user's message and translate it into the target language "${target}" (an ISO 639-1 code).
+
+Respond ONLY with valid JSON in this exact format:
+{"detectedLanguage":"<iso-code>","translation":"<translated text>"}
+
+Rules:
+- Use ISO 639-1 two-letter codes for detectedLanguage.
+- If the message is already written in "${target}", return it unchanged as "translation" and set "detectedLanguage" to "${target}".
+- Always produce a translation for normal conversational text, however casual or short.
+- Preserve emojis, @mentions, and formatting as-is.`,
+      },
+      { role: 'user', content },
+    ],
+    temperature: 0,
+    max_tokens: 1024,
+    response_format: { type: 'json_object' },
+  }));
+
+  const text = response.choices[0]?.message?.content?.trim();
+  if (!text) throw new Error('Empty translation response');
+
+  const parsed = JSON.parse(text) as { detectedLanguage?: string; translation?: string };
+  const detected = (parsed.detectedLanguage ?? '').trim().toLowerCase();
+  const translation = (parsed.translation ?? '').trim();
+  if (!translation) throw new Error('Empty translation');
+
+  // Already in the requested language — report it but don't pollute the map.
+  if (detected === target) {
+    return { detectedLanguage: detected, translation, alreadyInLanguage: true };
+  }
+
+  // Merge into the shared translations map (same shape as the auto pass).
+  const mergedTranslations = { ...existingTr, [target]: translation };
+  await prisma.message.update({
+    where: { id: messageId },
+    data: {
+      metadata: { ...existing, detectedLanguage: detected, translations: mergedTranslations },
+    },
+  });
+
+  // Broadcast so the requester's bubble updates via the existing handler.
+  getIO().to(`conversation:${conversationId}`).emit('chat:translated', {
+    messageId,
+    detectedLanguage: detected,
+    translations: mergedTranslations,
+  });
+
+  return { detectedLanguage: detected, translation, alreadyInLanguage: false };
+}
