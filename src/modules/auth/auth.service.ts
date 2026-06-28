@@ -22,6 +22,7 @@ import {
 } from './auth.utils';
 import { sendWelcomeEmail, sendPasswordResetEmail, sendOtpEmail } from '../../shared/email.service';
 import { sendOtpSms } from '../../shared/sms.service';
+import { revokeUserAccessTokens } from './token-revocation';
 
 // Default bio applied when a user finishes onboarding without writing
 // one. Keeps profiles looking complete and is the value the one-off
@@ -795,6 +796,8 @@ export async function refreshTokens(token: string, req?: Request) {
         where: { userId: existing.userId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      // Suspected token theft — also kill any outstanding access tokens.
+      await revokeUserAccessTokens(existing.userId);
       logSecurityEvent({
         userId: existing.userId,
         event: 'TOKEN_REUSE_DETECTED',
@@ -914,6 +917,8 @@ export async function logoutAll(userId: string) {
   const { count } = await prisma.refreshToken.deleteMany({
     where: { userId },
   });
+  // Also invalidate any still-valid access tokens (stateless JWTs).
+  await revokeUserAccessTokens(userId);
 
   logger.info({ userId, sessionsRevoked: count }, 'User logged out from all devices');
 

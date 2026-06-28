@@ -3,6 +3,9 @@ import { Request } from 'express';
 export interface AuthPayload {
   userId: string;
   isAnonymous: boolean;
+  // Standard JWT claims, present on verified access tokens.
+  iat?: number;
+  exp?: number;
 }
 
 export interface AuthRequest extends Request {
