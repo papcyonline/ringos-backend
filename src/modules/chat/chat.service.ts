@@ -67,6 +67,103 @@ function isPrivateIp(ip: string): boolean {
   return false;
 }
 
+/** False if `host` is empty, a private literal IP, or resolves to any private address. */
+async function isHostPublic(host: string): Promise<boolean> {
+  if (!host) return false;
+  if (net.isIP(host) && isPrivateIp(host)) return false;
+  try {
+    const addrs = await dns.lookup(host, { all: true });
+    return !addrs.some(({ address }) => isPrivateIp(address));
+  } catch {
+    // DNS failure — treat as not fetchable.
+    return false;
+  }
+}
+
+const MAX_REDIRECTS = 5;
+const MAX_HTML_BYTES = 1_000_000; // 1 MB — OG tags live in <head>, no need for more.
+
+/**
+ * Fetch HTML from a user-supplied URL, re-validating the host at EVERY redirect
+ * hop. Letting the scraper follow redirects only checks the first host, so a
+ * redirect to 169.254.169.254 (or any internal address) would slip through —
+ * this closes that SSRF gap. Returns null on any non-public hop, non-OK/non-HTML
+ * response, timeout, or too many redirects.
+ */
+async function fetchPublicHtml(startUrl: string): Promise<string | null> {
+  let current = startUrl;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    let parsed: URL;
+    try {
+      parsed = new URL(current);
+    } catch {
+      return null;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (!(await isHostPublic(parsed.hostname))) return null;
+
+    let res: Awaited<ReturnType<typeof fetch>>;
+    try {
+      res = await fetch(current, {
+        redirect: 'manual', // we follow redirects ourselves to re-validate each host
+        signal: AbortSignal.timeout(5000),
+        headers: { Accept: 'text/html' },
+      });
+    } catch {
+      return null;
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location');
+      res.body?.cancel().catch(() => {});
+      if (!loc) return null;
+      current = new URL(loc, current).toString(); // resolve relative redirects
+      continue;
+    }
+
+    if (!res.ok) {
+      res.body?.cancel().catch(() => {});
+      return null;
+    }
+    const ctype = res.headers.get('content-type') ?? '';
+    if (ctype && !ctype.includes('text/html') && !ctype.includes('xml')) {
+      res.body?.cancel().catch(() => {});
+      return null;
+    }
+
+    return readCapped(res, MAX_HTML_BYTES);
+  }
+  return null; // too many redirects
+}
+
+/** Read a response body up to `maxBytes`, returning what was read (head is enough for OG tags). */
+async function readCapped(
+  res: Awaited<ReturnType<typeof fetch>>,
+  maxBytes: number,
+): Promise<string | null> {
+  if (!res.body) return null;
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.length;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => {});
+          break;
+        }
+        chunks.push(value);
+      }
+    }
+  } catch {
+    return null;
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 async function fetchLinkPreview(messageId: string, content: string) {
   try {
     const match = content.match(urlRegex);
@@ -75,40 +172,16 @@ async function fetchLinkPreview(messageId: string, content: string) {
     const rawUrl = match[0];
     const urlStr = rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`;
 
-    // Validate scheme + hostname before touching the network. open-graph-scraper
-    // follows redirects, but we at least prevent the initial fetch from hitting
-    // an internal endpoint.
-    let parsed: URL;
-    try {
-      parsed = new URL(urlStr);
-    } catch {
-      return;
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
-
-    const host = parsed.hostname;
-    if (!host) return;
-    // Block bare literal private addresses even without DNS lookup.
-    if (net.isIP(host) && isPrivateIp(host)) {
-      logger.debug({ messageId, host }, 'Link preview blocked: private literal IP');
+    // Fetch the page ourselves, re-validating the host at every redirect hop so
+    // a redirect can't bounce the request onto an internal address, then scrape
+    // the vetted HTML (never letting the scraper hit the network directly).
+    const html = await fetchPublicHtml(urlStr);
+    if (!html) {
+      logger.debug({ messageId }, 'Link preview skipped: URL not fetchable/public');
       return;
     }
 
-    // Resolve the hostname and reject if any resolved address is private.
-    try {
-      const addrs = await dns.lookup(host, { all: true });
-      for (const { address } of addrs) {
-        if (isPrivateIp(address)) {
-          logger.debug({ messageId, host, address }, 'Link preview blocked: resolved to private IP');
-          return;
-        }
-      }
-    } catch {
-      // DNS failure — don't fetch.
-      return;
-    }
-
-    const { result } = await ogs({ url: urlStr, timeout: 5000 });
+    const { result } = await ogs({ html });
     if (!result.success) return;
 
     const ogData: Record<string, string> = {};

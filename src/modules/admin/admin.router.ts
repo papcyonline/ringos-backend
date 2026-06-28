@@ -2,6 +2,7 @@ import { NextFunction, Router, Response } from 'express';
 import { AuthRequest } from '../../shared/types';
 import { BadRequestError, NotFoundError } from '../../shared/errors';
 import { requireAdmin } from './admin.middleware';
+import { authRateLimit } from '../../middleware/authRateLimit';
 import * as adminService from './admin.service';
 import { prisma } from '../../config/database';
 import { checkUsernameAvailable } from '../auth/auth.service';
@@ -17,6 +18,7 @@ const router = Router();
 
 router.post(
   '/login',
+  authRateLimit('admin-login', 5, 900),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const email = String(req.body?.email ?? '').trim();

@@ -70,6 +70,25 @@ const SIGHTENGINE_SECRET = process.env.SIGHTENGINE_API_SECRET;
 
 export const isModerationConfigured = !!(SIGHTENGINE_USER && SIGHTENGINE_SECRET);
 
+// When a verdict can't be produced (unconfigured, API down, exception), do we
+// allow the media through? Fail-OPEN = allow (old behavior); fail-CLOSED = block.
+// Default: fail-CLOSED in production so an outage or misconfig can't silently
+// leak unmoderated images/video. Set MODERATION_FAIL_OPEN=true to override in an
+// emergency (e.g. a prolonged SightEngine outage blocking all uploads).
+const MODERATION_FAIL_OPEN =
+  process.env.MODERATION_FAIL_OPEN === 'true' ||
+  (process.env.MODERATION_FAIL_OPEN !== 'false' && process.env.NODE_ENV !== 'production');
+
+/** Verdict to return when moderation can't run. Logs loudly so outages are visible. */
+function moderationUnavailable(reason: string): ModerationResult {
+  if (MODERATION_FAIL_OPEN) {
+    logger.warn({ reason }, 'Moderation unavailable — failing OPEN (content allowed)');
+    return { safe: true };
+  }
+  logger.error({ reason }, 'Moderation unavailable — failing CLOSED (content blocked)');
+  return { safe: false, reason: 'Content moderation is temporarily unavailable. Please try again.' };
+}
+
 // Threshold above which content is considered unsafe (0.0 - 1.0)
 const NUDITY_THRESHOLD = 0.6;
 const OFFENSIVE_THRESHOLD = 0.7;
@@ -137,7 +156,7 @@ export async function moderateImageBuffer(
   buffer: Buffer,
   filename: string = 'upload.jpg',
 ): Promise<ModerationResult> {
-  if (!isModerationConfigured) return { safe: true };
+  if (!isModerationConfigured) return moderationUnavailable('not configured (buffer)');
 
   try {
     const form = new FormData();
@@ -151,20 +170,18 @@ export async function moderateImageBuffer(
       body: form,
     });
     if (!response.ok) {
-      logger.warn({ status: response.status }, 'Sightengine API error (buffer)');
-      return { safe: true };
+      return moderationUnavailable(`Sightengine API error ${response.status} (buffer)`);
     }
 
     const data = await response.json() as any;
     if (data.status !== 'success') {
-      logger.warn({ data }, 'Sightengine returned non-success status (buffer)');
-      return { safe: true };
+      return moderationUnavailable('Sightengine non-success status (buffer)');
     }
 
     return verdictFromSightengineResponse(data);
   } catch (err) {
     logger.error({ err }, 'Buffer moderation check failed');
-    return { safe: true };
+    return moderationUnavailable('exception (buffer)');
   }
 }
 
@@ -173,7 +190,7 @@ export async function moderateImageBuffer(
  * Returns { safe: true } if no API key is configured (fail open).
  */
 export async function moderateImageUrl(imageUrl: string): Promise<ModerationResult> {
-  if (!isModerationConfigured) return { safe: true };
+  if (!isModerationConfigured) return moderationUnavailable('not configured (url)');
 
   try {
     const params = new URLSearchParams({
@@ -185,20 +202,18 @@ export async function moderateImageUrl(imageUrl: string): Promise<ModerationResu
 
     const response = await fetch(`https://api.sightengine.com/1.0/check.json?${params}`);
     if (!response.ok) {
-      logger.warn({ status: response.status }, 'Sightengine API error');
-      return { safe: true };
+      return moderationUnavailable(`Sightengine API error ${response.status} (url)`);
     }
 
     const data = await response.json() as any;
     if (data.status !== 'success') {
-      logger.warn({ data }, 'Sightengine returned non-success status');
-      return { safe: true };
+      return moderationUnavailable('Sightengine non-success status (url)');
     }
 
     return verdictFromSightengineResponse(data);
   } catch (err) {
     logger.error({ err, imageUrl }, 'Moderation check failed');
-    return { safe: true };
+    return moderationUnavailable('exception (url)');
   }
 }
 
@@ -207,7 +222,7 @@ export async function moderateImageUrl(imageUrl: string): Promise<ModerationResu
  * Sightengine's video moderation uses a separate endpoint with frame sampling.
  */
 export async function moderateVideoUrl(videoUrl: string): Promise<ModerationResult> {
-  if (!isModerationConfigured) return { safe: true };
+  if (!isModerationConfigured) return moderationUnavailable('not configured (video)');
 
   try {
     const params = new URLSearchParams({
@@ -220,14 +235,12 @@ export async function moderateVideoUrl(videoUrl: string): Promise<ModerationResu
     // Synchronous video check — samples frames and returns aggregated result
     const response = await fetch(`https://api.sightengine.com/1.0/video/check-sync.json?${params}`);
     if (!response.ok) {
-      logger.warn({ status: response.status }, 'Sightengine video API error');
-      return { safe: true };
+      return moderationUnavailable(`Sightengine video API error ${response.status}`);
     }
 
     const data = await response.json() as any;
     if (data.status !== 'success') {
-      logger.warn({ data }, 'Sightengine video returned non-success status');
-      return { safe: true };
+      return moderationUnavailable('Sightengine video non-success status');
     }
 
     // For video, data.data.frames is an array of frame analyses
@@ -263,6 +276,6 @@ export async function moderateVideoUrl(videoUrl: string): Promise<ModerationResu
     return { safe: true, scores };
   } catch (err) {
     logger.error({ err, videoUrl }, 'Video moderation check failed');
-    return { safe: true };
+    return moderationUnavailable('exception (video)');
   }
 }

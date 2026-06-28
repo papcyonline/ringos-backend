@@ -62,6 +62,19 @@ main().catch((err) => {
   process.exit(1);
 });
 
+// Last-resort handlers: log (Sentry's integrations capture these) so a stray
+// rejection/exception is recorded instead of silently taking down the process.
+process.on('unhandledRejection', (reason) => {
+  logger.error({ reason }, 'Unhandled promise rejection');
+});
+
+process.on('uncaughtException', (err) => {
+  logger.fatal(err, 'Uncaught exception');
+  // An uncaught exception leaves the process in an undefined state — exit so the
+  // platform (Render) restarts a clean instance.
+  process.exit(1);
+});
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down...');
