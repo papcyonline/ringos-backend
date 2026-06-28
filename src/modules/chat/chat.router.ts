@@ -6,7 +6,7 @@ import { userRateLimit } from '../../middleware/userRateLimit';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import crypto from 'crypto';
-import { avatarUpload, fileToGroupAvatarUrl, fileToGroupBannerUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl, chatDocumentUpload, fileToChatDocumentUrl, chatVideoUpload, fileToChatVideoUrl, fileToChatVideoThumbnailUrl } from '../../shared/upload';
+import { avatarUpload, fileToGroupAvatarUrl, fileToGroupBannerUrl, chatImageUpload, fileToChatImageUrl, chatAudioUpload, fileToChatAudioUrl, chatDocumentUpload, fileToChatDocumentUrl, chatVideoUpload, fileToChatVideoUrl, fileToChatVideoThumbnailUrl, chatLivePhotoUpload, fileToChatLivePhotoStillUrl } from '../../shared/upload';
 import { getIO } from '../../config/socket';
 import { sendMessageSchema, editMessageSchema, reactMessageSchema, forwardMessageSchema, searchMessagesSchema } from './chat.schema';
 import * as chatService from './chat.service';
@@ -768,6 +768,70 @@ router.post(
           videoThumbnailUrl,
           videoDuration,
           viewOnce,
+        },
+      );
+
+      broadcastAndNotifyMessage(message, conversationId, req.user!.userId);
+
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /conversations/:conversationId/livephoto - Send an Apple Live Photo
+//
+// Multipart with three files: `preview` (JPEG that renders on every client),
+// `still` (the ORIGINAL HEIC/JPEG) and `video` (the paired .mov). The still
+// and video are uploaded byte-for-byte so their Apple asset-identifier
+// metadata survives — that's what lets a recipient's iPhone rebuild a real
+// Live Photo. `imageUrl` holds the JPEG preview so older clients and Android
+// simply see a normal photo (graceful fallback); the live pair lives in
+// metadata. Detection/extraction happens client-side (iOS only).
+router.post(
+  '/conversations/:conversationId/livephoto',
+  authenticate,
+  chatLivePhotoUpload.fields([
+    { name: 'preview', maxCount: 1 },
+    { name: 'still', maxCount: 1 },
+    { name: 'video', maxCount: 1 },
+  ]),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const files = req.files as { [field: string]: Express.Multer.File[] } | undefined;
+      const previewFile = files?.preview?.[0];
+      const stillFile = files?.still?.[0];
+      const videoFile = files?.video?.[0];
+      if (!previewFile || !stillFile || !videoFile) {
+        return res.status(400).json({ error: 'Live Photo requires preview, still and video files' });
+      }
+      const conversationId = req.params.conversationId as string;
+      // Upload all three in parallel — independent PUTs, no ordering.
+      const [imageUrl, livePhotoStillUrl, livePhotoVideoUrl] = await Promise.all([
+        fileToChatImageUrl(previewFile, conversationId),
+        fileToChatLivePhotoStillUrl(stillFile, conversationId),
+        fileToChatVideoUrl(videoFile, conversationId),
+      ]);
+      const caption = (req.body.caption as string | undefined) ?? '';
+      const replyToId = req.body.replyToId as string | undefined;
+      const viewOnce = req.body.viewOnce === 'true';
+      const clientMsgId = req.body.clientMsgId as string | undefined;
+
+      const message = await chatService.sendMessage(
+        conversationId,
+        req.user!.userId,
+        caption,
+        {
+          replyToId,
+          clientMsgId,
+          imageUrl,
+          viewOnce,
+          metadata: {
+            isLivePhoto: true,
+            livePhotoStillUrl,
+            livePhotoVideoUrl,
+          },
         },
       );
 

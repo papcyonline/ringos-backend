@@ -125,6 +125,27 @@ export const chatVideoUpload = multer({
   fileFilter: videoOrThumbnailFilter,
 });
 
+// Live Photo = three files in one message: `preview` (JPEG that renders
+// everywhere), `still` (the ORIGINAL HEIC/JPEG, identifier intact) and
+// `video` (the paired .mov, identifier intact). Images are validated as
+// images; the `video` field as a video.
+function livePhotoFilter(
+  _req: unknown,
+  file: Express.Multer.File,
+  cb: multer.FileFilterCallback,
+) {
+  if (file.fieldname === 'video') {
+    return videoFilter(_req, file, cb);
+  }
+  return imageFilter(_req, file, cb); // preview + still
+}
+
+export const chatLivePhotoUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 60 * 1024 * 1024 },
+  fileFilter: livePhotoFilter,
+});
+
 function documentFilter(_req: unknown, file: Express.Multer.File, cb: multer.FileFilterCallback) {
   const allowed = [
     // Documents
@@ -326,6 +347,30 @@ export async function fileToChatImageUrl(file: Express.Multer.File, conversation
     if (result) return result.url;
   }
   return saveToDisk(file.buffer, 'uploads/chat', '/uploads/chat', path.extname(file.originalname) || '.jpg');
+}
+
+/**
+ * Upload the ORIGINAL Live Photo still (HEIC/JPEG) to R2, byte-for-byte.
+ * It must NOT be re-encoded: the Live Photo pairing relies on the Apple
+ * asset-identifier embedded in the original file's metadata, which any
+ * sharp/transcode step would strip. Paired with the original .mov (uploaded
+ * via fileToChatVideoUrl) this lets the recipient's iPhone rebuild a real
+ * Live Photo (PHLivePhotoView). Falls back to Supabase/disk, which also
+ * preserve raw bytes.
+ */
+export async function fileToChatLivePhotoStillUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
+  if (isR2Configured) {
+    try {
+      return await uploadImageToR2(file.buffer, `chat/${conversationId}/livephotos`, file.originalname || 'still.heic', file.mimetype);
+    } catch (err) { /* fall through */ }
+  }
+  if (isSupabaseConfigured) {
+    try {
+      const result = await uploadChatImageToSupabase(file.buffer, conversationId, file.originalname || 'still.heic');
+      return result.url;
+    } catch (err) { /* fall through */ }
+  }
+  return saveToDisk(file.buffer, 'uploads/chat', '/uploads/chat', path.extname(file.originalname) || '.heic');
 }
 
 export async function fileToChatAudioUrl(file: Express.Multer.File, conversationId: string): Promise<string> {
