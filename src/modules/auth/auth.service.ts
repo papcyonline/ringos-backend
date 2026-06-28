@@ -155,6 +155,31 @@ function phoneToLookup(phone: string): string {
   return crypto.createHash('sha256').update(phone.trim()).digest('hex');
 }
 
+/**
+ * Pick a displayName that isn't already taken (case-insensitive). Starts from
+ * `base`, appending " 2", " 3", … on each collision; when `base` is blank it
+ * falls back to a random generated name. `displayName` doubles as the unique
+ * username, so social/anonymous signups must never reuse one verbatim — doing
+ * so trips the unique index on lower(displayName) and aborts the whole signup
+ * transaction (P2002). The DB index stays the final backstop against races.
+ */
+async function uniqueDisplayName(
+  db: Prisma.TransactionClient,
+  base: string,
+): Promise<string> {
+  const seed = base.trim() || generateAnonymousName();
+  for (let i = 1; i <= 50; i++) {
+    const candidate = i === 1 ? seed : `${seed} ${i}`;
+    const taken = await db.user.findFirst({
+      where: { displayName: { equals: candidate, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (!taken) return candidate;
+  }
+  // Practically unreachable — guarantee uniqueness with a random suffix.
+  return `${seed} ${crypto.randomInt(100000, 1000000)}`;
+}
+
 export async function anonymousLogin(deviceId: string) {
   const { user, accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
     let user = await tx.user.findUnique({ where: { deviceId } });
@@ -163,7 +188,7 @@ export async function anonymousLogin(deviceId: string) {
       user = await tx.user.create({
         data: {
           deviceId,
-          displayName: generateAnonymousName(),
+          displayName: await uniqueDisplayName(tx, ''),
           isAnonymous: true,
         },
       });
@@ -191,7 +216,7 @@ export async function register(rawEmail: string, password: string) {
       data: {
         email,
         passwordHash,
-        displayName: generateAnonymousName(),
+        displayName: await uniqueDisplayName(tx, ''),
         isAnonymous: true, // Stays true until profile setup completes
       },
     });
@@ -473,7 +498,7 @@ async function socialAuthFlow(params: {
             email,
             [providerField]: providerId,
             authProvider,
-            displayName: name,
+            displayName: await uniqueDisplayName(tx, name),
             ...(avatarUrl ? { avatarUrl } : {}),
             isAnonymous: true, // Must complete profile setup
           },
@@ -487,7 +512,7 @@ async function socialAuthFlow(params: {
         data: {
           [providerField]: providerId,
           authProvider,
-          displayName: name,
+          displayName: await uniqueDisplayName(tx, name),
           isAnonymous: true, // Must complete profile setup
         },
       });
@@ -669,7 +694,7 @@ export async function requestOtp(phone: string) {
       data: {
         phoneHash,
         phoneLookup: lookup,
-        displayName: generateAnonymousName(),
+        displayName: await uniqueDisplayName(prisma, ''),
         isAnonymous: true,
       },
     });
