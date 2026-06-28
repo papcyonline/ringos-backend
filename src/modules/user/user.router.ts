@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { authenticate } from '../../middleware/auth';
+import { userRateLimit } from '../../middleware/userRateLimit';
 import { validate } from '../../middleware/validate';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
@@ -39,6 +40,23 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response, next: Ne
     next(err);
   }
 });
+
+// GET /me/export - Download all personal data as JSON (GDPR/CCPA right of access)
+router.get(
+  '/me/export',
+  authenticate,
+  userRateLimit('data-export', 3, 3600), // 3/hour — the query touches many tables
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await userService.exportUserData(req.user!.userId);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="yomeet-data-export.json"');
+      res.status(200).send(JSON.stringify(data, null, 2));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // GET /me/usage - Get daily usage limits and current consumption
 router.get('/me/usage', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {

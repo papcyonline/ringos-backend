@@ -13,6 +13,53 @@ async function findUserOrThrow(userId: string) {
   return user;
 }
 
+/**
+ * Assemble a machine-readable export of everything personal we hold about a
+ * user (GDPR/CCPA right of access & portability). Excludes secrets — password
+ * hash, provider IDs, phone hashes, 2FA secret — and other users' private data.
+ */
+export async function exportUserData(userId: string) {
+  const account = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true, email: true, displayName: true, avatarUrl: true, coverUrl: true,
+      bio: true, profession: true, location: true, profileLinks: true,
+      dateOfBirth: true, status: true, availabilityNote: true,
+      authProvider: true, isVerified: true, verifiedRole: true,
+      isProfilePublic: true, hideOnlineStatus: true, hideReadReceipts: true,
+      twoFactorEnabled: true, createdAt: true, updatedAt: true,
+    },
+  });
+  if (!account) throw new NotFoundError('User not found');
+
+  const [posts, stories, reels, comments, messagesSent, following, followers, blockedUsers, reportsMade] =
+    await Promise.all([
+      prisma.post.findMany({ where: { authorId: userId }, select: { id: true, content: true, createdAt: true }, orderBy: { createdAt: 'desc' } }),
+      prisma.story.findMany({ where: { userId }, select: { id: true, createdAt: true, expiresAt: true }, orderBy: { createdAt: 'desc' } }),
+      prisma.reel.findMany({ where: { userId }, select: { id: true, caption: true, createdAt: true }, orderBy: { createdAt: 'desc' } }),
+      prisma.reelComment.findMany({ where: { userId }, select: { id: true, content: true, reelId: true, createdAt: true }, orderBy: { createdAt: 'desc' } }),
+      prisma.message.findMany({ where: { senderId: userId }, select: { id: true, content: true, conversationId: true, createdAt: true }, orderBy: { createdAt: 'desc' } }),
+      prisma.follow.findMany({ where: { followerId: userId }, select: { followingId: true, createdAt: true } }),
+      prisma.follow.findMany({ where: { followingId: userId }, select: { followerId: true, createdAt: true } }),
+      prisma.block.findMany({ where: { blockerId: userId }, select: { blockedId: true, createdAt: true } }),
+      prisma.report.findMany({ where: { reporterId: userId }, select: { id: true, reason: true, contentType: true, contentId: true, createdAt: true } }),
+    ]);
+
+  return {
+    exportedAt: new Date().toISOString(),
+    account,
+    posts,
+    stories,
+    reels,
+    comments,
+    messagesSent,
+    following,
+    followers,
+    blockedUsers,
+    reportsMade,
+  };
+}
+
 // Own-profile cache. Short TTL backstop + explicit invalidation on the common
 // content edits (see invalidateProfileCache) so changes show promptly. Volatile
 // presence fields can lag up to the TTL, which is irrelevant for one's own
