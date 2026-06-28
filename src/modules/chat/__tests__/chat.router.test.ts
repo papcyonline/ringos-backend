@@ -147,6 +147,9 @@ vi.mock('../../../shared/upload', () => {
         video: [{ ...fakeFile, mimetype: 'video/mp4' }],
         document: [{ ...fakeFile, mimetype: 'application/pdf' }],
         thumbnail: [{ ...fakeFile }],
+        // Live Photo route fields (preview + still + video).
+        preview: [{ ...fakeFile }],
+        still: [{ ...fakeFile, originalname: 'a.heic', mimetype: 'image/heic' }],
       };
       next();
     },
@@ -157,6 +160,7 @@ vi.mock('../../../shared/upload', () => {
     chatAudioUpload: fakeUpload,
     chatDocumentUpload: fakeUpload,
     chatVideoUpload: fakeUpload,
+    chatLivePhotoUpload: fakeUpload,
     fileToAvatarUrl: vi.fn().mockResolvedValue('https://cdn/x.jpg'),
     fileToGroupAvatarUrl: vi.fn().mockResolvedValue('https://cdn/group.jpg'),
     fileToGroupBannerUrl: vi.fn().mockResolvedValue('https://cdn/group-banner.jpg'),
@@ -165,6 +169,7 @@ vi.mock('../../../shared/upload', () => {
     fileToChatDocumentUrl: vi.fn().mockResolvedValue('https://cdn/doc.pdf'),
     fileToChatVideoUrl: vi.fn().mockResolvedValue('https://cdn/vid.mp4'),
     fileToChatVideoThumbnailUrl: vi.fn().mockResolvedValue('https://cdn/thumb.jpg'),
+    fileToChatLivePhotoStillUrl: vi.fn().mockResolvedValue('https://cdn/still.heic'),
   };
 });
 vi.mock('../chat.schema', () => ({
