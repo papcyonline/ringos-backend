@@ -737,19 +737,30 @@ model MessageReaction {
 }
 
 model Report {
-  id         String       @id @default(uuid())
-  reporterId String
-  reportedId String
-  reason     ReportReason
-  details    String?
-  status     ReportStatus @default(PENDING)
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
+  id          String             @id @default(uuid())
+  reporterId  String
+  reportedId  String
+  reason      ReportReason
+  details     String?
+  // When the report targets a specific piece of content (not just the user).
+  contentType ReportContentType?
+  contentId   String?
+  status      ReportStatus       @default(PENDING)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
 
   reporter User @relation("ReportsMade", fields: [reporterId], references: [id], onDelete: Cascade)
   reported User @relation("ReportsAgainst", fields: [reportedId], references: [id], onDelete: Cascade)
 
   @@index([reportedId, status])
+}
+
+enum ReportContentType {
+  STORY
+  REEL
+  POST
+  MESSAGE
+  COMMENT
 }
 
 model Block {

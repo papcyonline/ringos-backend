@@ -2,6 +2,7 @@ import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { validate } from '../../middleware/validate';
 import { authenticate } from '../../middleware/auth';
+import { userRateLimit } from '../../middleware/userRateLimit';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import { reportSchema, blockSchema } from './safety.schema';
@@ -20,6 +21,7 @@ const handoffSchema = z.object({
 router.post(
   '/report',
   authenticate,
+  userRateLimit('safety-report', 30, 3600), // 30 reports/hour — curbs mass-report abuse
   validate(reportSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -37,6 +39,7 @@ router.post(
 router.post(
   '/block',
   authenticate,
+  userRateLimit('safety-block', 60, 3600), // 60 blocks/hour
   validate(blockSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {

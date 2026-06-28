@@ -7,6 +7,8 @@ interface ReportData {
   reportedId: string;
   reason: 'HARASSMENT' | 'SPAM' | 'INAPPROPRIATE_CONTENT' | 'SELF_HARM' | 'THREATS' | 'OTHER';
   details?: string;
+  contentType?: 'STORY' | 'REEL' | 'POST' | 'MESSAGE' | 'COMMENT';
+  contentId?: string;
 }
 
 interface ReportResult {
@@ -37,6 +39,8 @@ export async function reportUser(reporterId: string, data: ReportData): Promise<
         reportedId: data.reportedId,
         reason: data.reason,
         details: data.details,
+        contentType: data.contentType,
+        contentId: data.contentId,
       },
     });
 
