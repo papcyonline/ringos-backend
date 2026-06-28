@@ -18,6 +18,7 @@ import { startScheduledPostsJob } from './jobs/scheduledPosts';
 import { startAbandonedSignupCleanupJob } from './jobs/abandonedSignupCleanup';
 import { startReEngagementCampaignJob } from './jobs/reengagementCampaign';
 import { startEngagementDigestJob } from './jobs/engagementDigest';
+import { electLeaderAndRun } from './jobs/leader';
 import { logger } from './shared/logger';
 import { initSentry } from './shared/sentry.service';
 import { initRedis, closeRedis } from './shared/redis.service';
@@ -42,15 +43,19 @@ async function main() {
     registerSpotlightHandlers(io, socket);
   });
 
-  startMatchExpiryJob();
-  startSessionCleanupJob();
-  startAvailabilityExpiryJob();
-  startStoryCleanupJob();
-  startMessageExpiryJob();
-  startScheduledPostsJob();
-  startAbandonedSignupCleanupJob();
-  startReEngagementCampaignJob();
-  startEngagementDigestJob();
+  // Run background jobs on a single elected leader so multiple instances don't
+  // each fire every job (which would send duplicate push notifications).
+  electLeaderAndRun(() => {
+    startMatchExpiryJob();
+    startSessionCleanupJob();
+    startAvailabilityExpiryJob();
+    startStoryCleanupJob();
+    startMessageExpiryJob();
+    startScheduledPostsJob();
+    startAbandonedSignupCleanupJob();
+    startReEngagementCampaignJob();
+    startEngagementDigestJob();
+  });
 
   server.listen(env.PORT, '0.0.0.0', () => {
     logger.info(`Server running on port ${env.PORT} in ${env.NODE_ENV} mode`);
