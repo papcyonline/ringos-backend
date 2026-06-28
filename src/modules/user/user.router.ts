@@ -17,6 +17,14 @@ import { getUsageSummary, isPro } from '../../shared/usage.service';
 
 const router = Router();
 
+/** Parse optional ?limit / ?cursor for follower/following pagination. */
+function parseFollowPage(req: AuthRequest): { limit?: number; cursor?: string } {
+  const rawLimit = Number(req.query.limit);
+  const limit = Number.isFinite(rawLimit) ? rawLimit : undefined;
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  return { limit, cursor };
+}
+
 // GET / - List users with presence info (excludes current user and blocked), paginated
 router.get('/', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -228,7 +236,7 @@ router.put(
 // GET /me/following - List who current user follows
 router.get('/me/following', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const following = await followService.getFollowing(req.user!.userId, req.user!.userId);
+    const following = await followService.getFollowing(req.user!.userId, req.user!.userId, parseFollowPage(req));
     res.json(following);
   } catch (err) {
     next(err);
@@ -426,7 +434,7 @@ router.delete('/:id/like', authenticate, async (req: AuthRequest, res: Response,
 // GET /:id/followers - List followers of a user
 router.get('/:id/followers', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const followers = await followService.getFollowers(req.params.id as string, req.user!.userId);
+    const followers = await followService.getFollowers(req.params.id as string, req.user!.userId, parseFollowPage(req));
     res.json(followers);
   } catch (err) {
     next(err);
@@ -436,7 +444,7 @@ router.get('/:id/followers', authenticate, async (req: AuthRequest, res: Respons
 // GET /:id/following - List who a user follows
 router.get('/:id/following', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const following = await followService.getFollowing(req.params.id as string, req.user!.userId);
+    const following = await followService.getFollowing(req.params.id as string, req.user!.userId, parseFollowPage(req));
     res.json(following);
   } catch (err) {
     next(err);

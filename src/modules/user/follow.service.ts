@@ -59,7 +59,26 @@ async function viewerRelationships(viewerId: string, userIds: string[]) {
   };
 }
 
-export async function getFollowers(userId: string, viewerId: string) {
+// Cap how many follow rows a single request can load. Without this, a request
+// for a celebrity's followers would pull every row (+ joined user) into memory
+// and could OOM the worker. Clients that pass a smaller `limit` + `cursor`
+// paginate; older clients (no params) still get an array, just bounded.
+const FOLLOW_PAGE_MAX = 2000;
+
+function followPageArgs(limit?: number, cursor?: string) {
+  const requested = Number.isFinite(limit) ? (limit as number) : FOLLOW_PAGE_MAX;
+  const take = Math.min(Math.max(Math.trunc(requested), 1), FOLLOW_PAGE_MAX);
+  return {
+    take,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  };
+}
+
+export async function getFollowers(
+  userId: string,
+  viewerId: string,
+  opts: { limit?: number; cursor?: string } = {},
+) {
   const rows = await prisma.follow.findMany({
     where: { followingId: userId },
     select: {
@@ -70,6 +89,7 @@ export async function getFollowers(userId: string, viewerId: string) {
       },
     },
     orderBy: { createdAt: 'desc' },
+    ...followPageArgs(opts.limit, opts.cursor),
   });
   const { iFollow, followsMe } = await viewerRelationships(
     viewerId,
@@ -86,7 +106,11 @@ export async function getFollowers(userId: string, viewerId: string) {
   }));
 }
 
-export async function getFollowing(userId: string, viewerId: string) {
+export async function getFollowing(
+  userId: string,
+  viewerId: string,
+  opts: { limit?: number; cursor?: string } = {},
+) {
   const rows = await prisma.follow.findMany({
     where: { followerId: userId },
     select: {
@@ -97,6 +121,7 @@ export async function getFollowing(userId: string, viewerId: string) {
       },
     },
     orderBy: { createdAt: 'desc' },
+    ...followPageArgs(opts.limit, opts.cursor),
   });
   const { iFollow, followsMe } = await viewerRelationships(
     viewerId,
