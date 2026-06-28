@@ -4,7 +4,11 @@ import * as redis from './redis.service';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const FREE_CALL_MINS = 5;
+// Free users get this many SECONDS of call time per day (audio + video
+// combined). Tracked second-precise in Redis; the minute fields below are
+// derived for legacy/display callers.
+const FREE_CALL_SECS = 120;
+const FREE_CALL_MINS = Math.ceil(FREE_CALL_SECS / 60);
 const FREE_KORA_SESSIONS = 2;
 const FREE_KORA_MESSAGES = 3;
 const FREE_TRANSCRIPTIONS = 3;
@@ -67,18 +71,23 @@ export interface CallMinutesResult {
   allowed: boolean;
   usedMins: number;
   limitMins: number;
+  usedSecs: number;
+  limitSecs: number;
+  remainingSecs: number;
   resetAt: string;
 }
 
 /**
- * Check how many call minutes a user has consumed today.
- * Pro users always get `allowed: true` with `limitMins: -1`.
+ * Check how much call time a user has consumed today.
+ * Pro users always get `allowed: true` with `limitMins/limitSecs/remainingSecs: -1`.
+ * Free users are gated on SECONDS so the 2-minute/day budget is exact (no
+ * minute-rounding that would trip the limit ~60s early).
  */
 export async function checkCallMinutes(userId: string): Promise<CallMinutesResult> {
   const resetAt = nextMidnightUTC().toISOString();
 
   if (await isPro(userId)) {
-    return { allowed: true, usedMins: 0, limitMins: -1, resetAt };
+    return { allowed: true, usedMins: 0, limitMins: -1, usedSecs: 0, limitSecs: -1, remainingSecs: -1, resetAt };
   }
 
   const key = `usage:calls:${userId}:${todayKey()}`;
@@ -87,16 +96,20 @@ export async function checkCallMinutes(userId: string): Promise<CallMinutesResul
     const raw = await redis.get(key);
     const usedSecs = raw ? parseInt(raw as string, 10) : 0;
     const usedMins = Math.ceil(usedSecs / 60);
+    const remainingSecs = Math.max(0, FREE_CALL_SECS - usedSecs);
 
     return {
-      allowed: usedMins < FREE_CALL_MINS,
+      allowed: usedSecs < FREE_CALL_SECS,
       usedMins,
       limitMins: FREE_CALL_MINS,
+      usedSecs,
+      limitSecs: FREE_CALL_SECS,
+      remainingSecs,
       resetAt,
     };
   } catch (err) {
     logger.error({ err, userId }, 'checkCallMinutes failed — allowing');
-    return { allowed: true, usedMins: 0, limitMins: FREE_CALL_MINS, resetAt };
+    return { allowed: true, usedMins: 0, limitMins: FREE_CALL_MINS, usedSecs: 0, limitSecs: FREE_CALL_SECS, remainingSecs: FREE_CALL_SECS, resetAt };
   }
 }
 
@@ -264,7 +277,7 @@ export async function incrementKoraMessage(userId: string, sessionId: string): P
 
 export interface UsageSummary {
   isPro: boolean;
-  calls: { usedMins: number; limitMins: number; resetAt: string };
+  calls: { usedMins: number; limitMins: number; usedSecs: number; limitSecs: number; remainingSecs: number; resetAt: string };
   kora: {
     sessionsUsed: number;
     limitSessions: number;
@@ -289,7 +302,7 @@ export async function getUsageSummary(userId: string): Promise<UsageSummary> {
   if (pro) {
     return {
       isPro: true,
-      calls: { usedMins: 0, limitMins: -1, resetAt },
+      calls: { usedMins: 0, limitMins: -1, usedSecs: 0, limitSecs: -1, remainingSecs: -1, resetAt },
       kora: {
         sessionsUsed: 0,
         limitSessions: -1,
@@ -313,6 +326,9 @@ export async function getUsageSummary(userId: string): Promise<UsageSummary> {
     calls: {
       usedMins: callResult.usedMins,
       limitMins: callResult.limitMins,
+      usedSecs: callResult.usedSecs,
+      limitSecs: callResult.limitSecs,
+      remainingSecs: callResult.remainingSecs,
       resetAt,
     },
     kora: {

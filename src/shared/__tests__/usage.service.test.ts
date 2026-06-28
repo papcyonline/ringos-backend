@@ -107,23 +107,25 @@ describe('checkCallMinutes', () => {
 
   it('free user under limit: allowed=true', async () => {
     mockPrisma.user.findUnique.mockResolvedValue({ isVerified: false, subscription: null });
-    mockRedis.get.mockResolvedValue('120'); // 2 minutes used
+    mockRedis.get.mockResolvedValue('60'); // 60s used, under the 120s/day budget
 
     const res = await checkCallMinutes('user-1');
 
     expect(res.allowed).toBe(true);
-    expect(res.usedMins).toBe(2);
-    expect(res.limitMins).toBe(5);
+    expect(res.usedMins).toBe(1);
+    expect(res.limitMins).toBe(2);
+    expect(res.remainingSecs).toBe(60);
   });
 
   it('free user at limit: allowed=false', async () => {
     mockPrisma.user.findUnique.mockResolvedValue({ isVerified: false, subscription: null });
-    mockRedis.get.mockResolvedValue('300'); // 5 minutes used
+    mockRedis.get.mockResolvedValue('120'); // full 120s/day budget used
 
     const res = await checkCallMinutes('user-1');
 
     expect(res.allowed).toBe(false);
-    expect(res.usedMins).toBe(5);
+    expect(res.usedMins).toBe(2);
+    expect(res.remainingSecs).toBe(0);
   });
 
   it('redis failure fails open (allowed=true)', async () => {
@@ -366,7 +368,8 @@ describe('getUsageSummary', () => {
 
     expect(res.isPro).toBe(false);
     expect(res.calls.usedMins).toBe(1);
-    expect(res.calls.limitMins).toBe(5);
+    expect(res.calls.limitMins).toBe(2);
+    expect(res.calls.remainingSecs).toBe(60);
     expect(res.kora.sessionsUsed).toBe(1);
     expect(res.kora.limitSessions).toBe(2);
     expect(res.transcription.used).toBe(2);
