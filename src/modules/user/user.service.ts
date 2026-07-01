@@ -83,6 +83,9 @@ export async function getProfile(userId: string) {
     where: { id: userId },
     select: {
       id: true,
+      // Own profile only (GET /me). getUserCore — which serves OTHER users'
+      // profiles — deliberately does NOT select email.
+      email: true,
       displayName: true,
       avatarUrl: true,
       coverUrl: true,
