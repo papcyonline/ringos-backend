@@ -13,7 +13,11 @@ import {
 
 export async function getNotifications(userId: string) {
   const notifications = await prisma.notification.findMany({
-    where: { userId },
+    // Chat messages live in the Chats tab, not the activity bell. Excluding
+    // CHAT_MESSAGE / VOICE_NOTE keeps the bell an activity feed (likes,
+    // follows, comments, …) and stops messages double-counting the app-icon
+    // badge (which = chat unread + bell unread).
+    where: { userId, type: { notIn: ['CHAT_MESSAGE', 'VOICE_NOTE'] } },
     orderBy: { createdAt: 'desc' },
     take: 100,
   });
@@ -50,7 +54,12 @@ export async function getNotifications(userId: string) {
 
 export async function getUnreadCount(userId: string) {
   const count = await prisma.notification.count({
-    where: { userId, isRead: false },
+    // Activity only — messages are counted by the Chats tab, not the bell.
+    where: {
+      userId,
+      isRead: false,
+      type: { notIn: ['CHAT_MESSAGE', 'VOICE_NOTE'] },
+    },
   });
   return { count };
 }
