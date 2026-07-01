@@ -1891,10 +1891,12 @@ export async function getMessages(
 ) {
   await verifyParticipant(conversationId, userId);
 
-  // Check if user has cleared chat history — hide messages before clearedAt
+  // Check if user has cleared chat history — hide messages before clearedAt.
+  // Also grab lastReadAt (the read boundary) so the client can place the
+  // "unread" divider accurately — captured here, BEFORE markAsRead runs.
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId } },
-    select: { clearedAt: true },
+    select: { clearedAt: true, lastReadAt: true },
   });
 
   // Build query: cursor-based if cursor provided, offset-based otherwise
@@ -1957,6 +1959,9 @@ export async function getMessages(
     limit,
     hasMore,
     nextCursor,
+    // Read boundary at fetch time — the client anchors the unread divider at
+    // the first message newer than this (immune to stale conversation counts).
+    myLastReadAt: participant?.lastReadAt ?? null,
   };
 }
 
