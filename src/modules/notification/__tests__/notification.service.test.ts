@@ -183,7 +183,10 @@ describe('notification.service', () => {
 
       expect(result).toEqual(mockList);
       expect(mockPrisma.notification.findMany).toHaveBeenCalledWith({
-        where: { userId: 'user-1' },
+        where: {
+          userId: 'user-1',
+          type: { notIn: ['CHAT_MESSAGE', 'VOICE_NOTE'] },
+        },
         orderBy: { createdAt: 'desc' },
         take: 100,
       });
@@ -200,7 +203,11 @@ describe('notification.service', () => {
 
       expect(result).toEqual({ count: 5 });
       expect(mockPrisma.notification.count).toHaveBeenCalledWith({
-        where: { userId: 'user-1', isRead: false },
+        where: {
+          userId: 'user-1',
+          isRead: false,
+          type: { notIn: ['CHAT_MESSAGE', 'VOICE_NOTE'] },
+        },
       });
     });
   });
