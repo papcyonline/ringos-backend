@@ -9,10 +9,8 @@ export const CURRENT_LEGAL_VERSION = Number(process.env.LEGAL_VERSION ?? 1);
 
 // Canonical, editable-anytime document URLs (host these on the website).
 const DOCS = {
-  termsUrl:
-    process.env.LEGAL_TERMS_URL ?? 'https://yomeet.app/terms-of-service',
-  privacyUrl:
-    process.env.LEGAL_PRIVACY_URL ?? 'https://yomeet.app/privacy-policy',
+  termsUrl: process.env.LEGAL_TERMS_URL ?? 'https://yomeet.app/terms',
+  privacyUrl: process.env.LEGAL_PRIVACY_URL ?? 'https://yomeet.app/privacy',
   guidelinesUrl:
     process.env.LEGAL_GUIDELINES_URL ??
     'https://yomeet.app/community-guidelines',
