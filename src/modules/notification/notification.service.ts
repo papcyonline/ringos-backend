@@ -426,6 +426,16 @@ export async function sendDataPushToUser(userId: string, data: Record<string, st
   const collapseId =
     isChat && data.conversationId ? `chat-${data.conversationId}` : undefined;
 
+  // Inline-reply support: iOS shows a "Reply" text field when the notification
+  // carries the MESSAGE_REPLY category (set on the aps below). The app's reply
+  // handler reads conversationId from userInfo["payload"], so surface it here.
+  if (data.type === 'chat_message' && data.conversationId) {
+    data.payload = JSON.stringify({
+      conversationId: data.conversationId,
+      type: data.type,
+    });
+  }
+
   // Android: data-only (no notification payload) so the native
   // YomeetFirebaseMessagingService ALWAYS handles display — this ensures
   // proper lock-screen visibility, screen wake, sound, and heads-up.
@@ -457,6 +467,10 @@ export async function sendDataPushToUser(userId: string, data: Record<string, st
           // chats behave like WhatsApp / iMessage — the user still hears
           // and sees the notification even when a Focus is active.
           'interruption-level': 'time-sensitive',
+          // Inline-reply: makes iOS render the pull-down "Reply" text field.
+          // Must match the DarwinNotificationCategory id registered in the app.
+          // Text messages only — leaves voice-note pushes untouched.
+          ...(data.type === 'chat_message' ? { category: 'MESSAGE_REPLY' } : {}),
         },
       },
     },
