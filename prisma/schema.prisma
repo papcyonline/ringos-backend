@@ -216,6 +216,11 @@ model User {
   // existing users without DOB don't break (they're prompted on next
   // launch via isProfileComplete()).
   dateOfBirth   DateTime?
+  // Highest version of the legal docs (Terms / Privacy / Community Guidelines)
+  // this user has accepted. Compared against the backend's current version to
+  // decide when to re-prompt for consent. History lives in LegalConsent.
+  acceptedLegalVersion Int?
+  legalConsents LegalConsent[]
   status        String    @default("available")
   availabilityNote String?
   // Who can DM this user. See MessagePrivacy enum for semantics.
@@ -1374,4 +1379,19 @@ model Announcement {
   updatedAt   DateTime             @updatedAt
 
   @@index([active, startsAt, endsAt])
+}
+
+/// Append-only audit trail of legal-document acceptances. One row per time a
+/// user agrees to the current Terms / Privacy / Community Guidelines version
+/// (onboarding and any later re-consent), for legal proof.
+model LegalConsent {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version    Int
+  acceptedAt DateTime @default(now())
+  platform   String?
+  appVersion String?
+
+  @@index([userId])
 }

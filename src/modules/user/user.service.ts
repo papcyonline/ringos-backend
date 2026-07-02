@@ -94,6 +94,7 @@ export async function getProfile(userId: string) {
       gender: true,
       location: true,
       profileLinks: true,
+      acceptedLegalVersion: true,
       status: true,
       availabilityNote: true,
       isAnonymous: true,
