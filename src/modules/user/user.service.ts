@@ -66,7 +66,7 @@ export async function exportUserData(userId: string) {
 // profile. No-ops when Redis is unconfigured (cache.get returns null).
 const PROFILE_CACHE_TTL_SEC = 60;
 
-async function invalidateProfileCache(userId: string) {
+export async function invalidateProfileCache(userId: string) {
   // Both the own-profile view and the shared viewer-independent core.
   await Promise.all([
     cache.del(cache.cacheKeys.userProfile(userId)),

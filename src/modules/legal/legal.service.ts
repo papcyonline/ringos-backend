@@ -1,4 +1,5 @@
 import { prisma } from '../../config/database';
+import { invalidateProfileCache } from '../user/user.service';
 
 /// The current legal version. Bump this (via the LEGAL_VERSION env var so it
 /// can change without a code deploy) whenever the Terms of Service, Privacy
@@ -48,4 +49,9 @@ export async function recordConsent(
       data: { acceptedLegalVersion: version },
     });
   }
+
+  // Bust the cached profile so GET /users/me immediately reflects the new
+  // acceptedLegalVersion — otherwise the app re-prompts for consent until the
+  // 60s TTL expires (the re-consent loop bug).
+  await invalidateProfileCache(userId);
 }
