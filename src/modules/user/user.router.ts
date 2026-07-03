@@ -13,6 +13,7 @@ import * as userService from './user.service';
 import * as followService from './follow.service';
 import * as likeService from './like.service';
 import { createNotification, sendPostPush } from '../notification/notification.service';
+import { prisma } from '../../config/database';
 import { getUsageSummary, isPro } from '../../shared/usage.service';
 
 const router = Router();
@@ -333,36 +334,53 @@ router.post('/:id/follow', authenticate, async (req: AuthRequest, res: Response,
   try {
     const result = await followService.followUser(req.user!.userId, (req.params.id as string));
 
-    // Send notification to the followed user
-    const follower = await userService.getProfile(req.user!.userId);
-    const followTitle = follower.displayName;
-    const followBody = 'Started following you';
-    createNotification({
-      userId: (req.params.id as string),
-      type: 'NEW_FOLLOWER',
-      title: followTitle,
-      body: followBody,
-      imageUrl: follower.avatarUrl ?? undefined,
-      data: { userId: req.user!.userId, isVerified: follower.isVerified ?? false },
-    }).catch((err) => {
-      logger.error({ err, userId: (req.params.id as string) }, 'Failed to send follow notification');
-    });
-    // Lock-screen push so the recipient sees it even when the app is
-    // closed — without this the follow only shows up next time they
-    // open Yomeet, which kills engagement.
-    sendPostPush((req.params.id as string), {
-      title: followTitle,
-      body: followBody,
-      imageUrl: follower.avatarUrl ?? undefined,
-      data: {
+    // Notify the followed user — deduped and off the response path so it
+    // never delays the follow. Dedupe suppresses a repeat NEW_FOLLOWER from
+    // the same follower within 24h, killing unfollow/refollow spam; a genuine
+    // refollow after the window still notifies.
+    const followedId = req.params.id as string;
+    const followerId = req.user!.userId;
+    void (async () => {
+      const DEDUPE_MS = 24 * 60 * 60 * 1000;
+      const recent = await prisma.notification.findFirst({
+        where: {
+          userId: followedId,
+          type: 'NEW_FOLLOWER',
+          createdAt: { gt: new Date(Date.now() - DEDUPE_MS) },
+          data: { path: ['userId'], equals: followerId },
+        },
+        select: { id: true },
+      });
+      if (recent) return; // already notified by this follower recently — skip
+
+      const follower = await userService.getProfile(followerId);
+      const followTitle = follower.displayName;
+      const followBody = 'Started following you';
+      await createNotification({
+        userId: followedId,
         type: 'NEW_FOLLOWER',
-        userId: req.user!.userId,
-        senderId: req.user!.userId,
-        senderName: followTitle,
-        senderAvatar: follower.avatarUrl ?? '',
-      },
-    }).catch((err) => {
-      logger.error({ err }, 'Failed to send follow push');
+        title: followTitle,
+        body: followBody,
+        imageUrl: follower.avatarUrl ?? undefined,
+        data: { userId: followerId, isVerified: follower.isVerified ?? false },
+      });
+      // Lock-screen push so the recipient sees it even when the app is
+      // closed — without this the follow only shows up next time they
+      // open Yomeet, which kills engagement.
+      await sendPostPush(followedId, {
+        title: followTitle,
+        body: followBody,
+        imageUrl: follower.avatarUrl ?? undefined,
+        data: {
+          type: 'NEW_FOLLOWER',
+          userId: followerId,
+          senderId: followerId,
+          senderName: followTitle,
+          senderAvatar: follower.avatarUrl ?? '',
+        },
+      });
+    })().catch((err) => {
+      logger.error({ err, userId: followedId }, 'Failed to send follow notification');
     });
 
     res.status(201).json(result);
