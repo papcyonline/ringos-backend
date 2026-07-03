@@ -10,6 +10,7 @@ import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service
 import { notifyFollowersOfNewStory, notifyStoryOwnerOfView, checkStoryMilestone } from './story.notify';
 import { markStoryNotificationsAsRead } from '../notification/notification.service';
 import * as cache from '../../shared/redis.service';
+import { getIO } from '../../config/socket';
 
 /**
  * Delete a story slide's underlying media from whichever storage backend
@@ -839,7 +840,7 @@ export async function markStorySlideViewed(slideId: string, viewerId: string, is
   if (slide.story.userId === viewerId) return;
 
   // Record the per-slide view (idempotent on [slideId, viewerId]).
-  await prisma.storySlideView.createMany({
+  const inserted = await prisma.storySlideView.createMany({
     data: [{ slideId, viewerId, isStealth }],
     skipDuplicates: true,
   });
@@ -848,6 +849,23 @@ export async function markStorySlideViewed(slideId: string, viewerId: string, is
   // "viewed your story" push, milestone tiers) is unchanged. markStoryViewed
   // is itself idempotent and only fires the notification on the first insert.
   await markStoryViewed(slide.storyId, viewerId, isStealth);
+
+  // Real-time: push the updated (owner-visible, non-stealth) slide view count
+  // to the story owner so their open viewer / count updates without a manual
+  // refresh. Only on a genuinely new, non-stealth view; stealth views must
+  // not move the owner-visible count. Best-effort (socket may be uninit).
+  if (inserted.count > 0 && !isStealth) {
+    try {
+      const viewCount = await prisma.storySlideView.count({
+        where: { slideId, isStealth: false },
+      });
+      getIO()
+        .to(`user:${slide.story.userId}`)
+        .emit('story:view', { storyId: slide.storyId, slideId, viewCount });
+    } catch {
+      // Socket not initialised (e.g. tests) — ignore.
+    }
+  }
 }
 
 // ─── Viewers list shaping (shared by story- and slide-level) ─
