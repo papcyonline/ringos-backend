@@ -475,7 +475,9 @@ describe('adminSetVerified', () => {
     await adminSetVerified('user-1', false);
 
     expect(mockPrisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: { isVerified: false, verifiedAt: null, verifiedRole: null },
+      // Un-verifying also forces the profile back to public (private is a
+      // verified-only privilege).
+      data: { isVerified: false, verifiedAt: null, verifiedRole: null, isProfilePublic: true },
     }));
   });
 });

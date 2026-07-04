@@ -718,9 +718,11 @@ export async function recordSubscription(
 
 export async function removeVerified(userId: string) {
   await findUserOrThrow(userId);
+  // Losing verification also forfeits the private-profile privilege (only
+  // verified accounts may be private), so force the profile back to public.
   const user = await prisma.user.update({
     where: { id: userId },
-    data: { isVerified: false, verifiedAt: null },
+    data: { isVerified: false, verifiedAt: null, isProfilePublic: true },
     select: { id: true, isVerified: true, verifiedAt: true, verifiedRole: true },
   });
   await invalidateProfileCache(userId);
@@ -759,6 +761,8 @@ export async function adminSetVerified(identifier: string, verified: boolean, ro
       isVerified: verified,
       verifiedAt: verified ? new Date() : null,
       verifiedRole: verified ? (role || null) : null,
+      // Unverifying forfeits the private-profile privilege — force public.
+      ...(verified ? {} : { isProfilePublic: true }),
     },
     select: {
       id: true,
