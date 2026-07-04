@@ -34,6 +34,9 @@ const envSchema = z.object({
   APPLE_TEAM_ID: z.string().optional(),
   APPLE_KEY_ID: z.string().optional(),
   APPLE_PRIVATE_KEY: z.string().optional(),
+  // App-Specific Shared Secret from App Store Connect — required to validate
+  // iOS auto-renewable subscription receipts (Pro/verification).
+  APPLE_SHARED_SECRET: z.string().optional(),
 
   // Twilio (SMS + optional TURN via NTS)
   TWILIO_ACCOUNT_SID: z.string().optional(),

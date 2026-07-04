@@ -14,6 +14,7 @@ import * as followService from './follow.service';
 import * as likeService from './like.service';
 import { createNotification, sendPostPush } from '../notification/notification.service';
 import { prisma } from '../../config/database';
+import { validateAppleReceipt, planFromProductId } from '../../shared/appleReceipt.service';
 import { getUsageSummary, isPro } from '../../shared/usage.service';
 
 const router = Router();
@@ -244,11 +245,37 @@ router.get('/me/following', authenticate, async (req: AuthRequest, res: Response
   }
 });
 
-// POST /me/verify - Set user as verified (subscription active)
+// POST /me/verify - Grant verification/Pro AFTER validating the store receipt
+// server-side. iOS receipts are checked with Apple (never trust the client).
+// Body: { platform: 'ios'|'android', receiptData?: string, productId?: string }.
 router.post('/me/verify', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const result = await userService.setVerified(req.user!.userId);
-    res.json(result);
+    const userId = req.user!.userId;
+    const platform = (req.body.platform as string | undefined)?.toLowerCase();
+    const receiptData = req.body.receiptData as string | undefined;
+    const productId = req.body.productId as string | undefined;
+
+    if (platform === 'ios') {
+      const result = await validateAppleReceipt(receiptData ?? '');
+      if (!result.valid || !result.active) {
+        logger.warn({ userId, reason: result.reason }, 'iOS verify rejected: receipt not valid/active');
+        return res.status(402).json({ error: 'Purchase could not be verified', reason: result.reason });
+      }
+      const verified = await userService.setVerified(userId);
+      await userService.recordSubscription(userId, {
+        status: 'active',
+        plan: planFromProductId(result.productId ?? productId),
+        externalId: result.originalTransactionId,
+      });
+      return res.json(verified);
+    }
+
+    // Android (and any non-iOS): server-side Google Play validation isn't built
+    // yet, so this stays client-asserted. TODO: validate Play purchase tokens
+    // via the Google Play Developer API to close the same hole on Android.
+    logger.warn({ userId, platform }, 'verify granted without server-side receipt validation (non-iOS)');
+    const verified = await userService.setVerified(userId);
+    return res.json(verified);
   } catch (err) {
     next(err);
   }

@@ -703,6 +703,19 @@ export async function setVerified(userId: string) {
   return user;
 }
 
+/// Upsert the user's Subscription row after a validated purchase, so Pro
+/// status and reporting have a real record (previously nothing ever wrote it).
+export async function recordSubscription(
+  userId: string,
+  data: { status: string; plan: string; externalId?: string },
+) {
+  await prisma.subscription.upsert({
+    where: { userId },
+    create: { userId, ...data },
+    update: { ...data },
+  });
+}
+
 export async function removeVerified(userId: string) {
   await findUserOrThrow(userId);
   const user = await prisma.user.update({
