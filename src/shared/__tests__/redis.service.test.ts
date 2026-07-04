@@ -19,6 +19,8 @@ const { redisInstance, RedisCtor } = vi.hoisted(() => {
     zcard: vi.fn(),
     zrange: vi.fn(),
     zadd: vi.fn().mockResolvedValue(1),
+    // checkRateLimit now runs a single atomic Lua script via eval.
+    eval: vi.fn(),
   };
   const RedisCtor = vi.fn().mockImplementation(() => redisInstance);
   return { redisInstance, RedisCtor };
@@ -169,8 +171,9 @@ describe('delPattern', () => {
 });
 
 describe('checkRateLimit (Redis path)', () => {
-  it('allows when count below max', async () => {
-    redisInstance.zcard.mockResolvedValueOnce(2);
+  it('allows when under the limit', async () => {
+    // Lua returns [allowed, remaining, resetAtMs].
+    redisInstance.eval.mockResolvedValueOnce([1, 2, Date.now() + 60_000]);
 
     const res = await checkRateLimit('user-1', 5, 60);
 
@@ -178,10 +181,9 @@ describe('checkRateLimit (Redis path)', () => {
     expect(res.remaining).toBe(2);
   });
 
-  it('blocks when count >= max and computes resetAt from oldest entry', async () => {
-    redisInstance.zcard.mockResolvedValueOnce(5);
+  it('blocks when at the limit and returns a future resetAt', async () => {
     const oldestTs = Date.now() - 10_000;
-    redisInstance.zrange.mockResolvedValueOnce(['m', String(oldestTs)]);
+    redisInstance.eval.mockResolvedValueOnce([0, 0, oldestTs + 60_000]);
 
     const res = await checkRateLimit('user-1', 5, 60);
 
@@ -191,7 +193,7 @@ describe('checkRateLimit (Redis path)', () => {
   });
 
   it('falls back to in-memory limiter on Redis error', async () => {
-    redisInstance.zcard.mockRejectedValueOnce(new Error('redis down'));
+    redisInstance.eval.mockRejectedValueOnce(new Error('redis down'));
 
     const res = await checkRateLimit('user-fb', 5, 60);
 
