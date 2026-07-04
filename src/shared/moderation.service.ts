@@ -89,9 +89,11 @@ function moderationUnavailable(reason: string): ModerationResult {
   return { safe: false, reason: 'Content moderation is temporarily unavailable. Please try again.' };
 }
 
-// Threshold above which content is considered unsafe (0.0 - 1.0)
-const NUDITY_THRESHOLD = 0.6;
+// Thresholds above which content is considered unsafe (0.0 - 1.0)
+const NUDITY_THRESHOLD = 0.5;      // explicit: sexual_activity / sexual_display / erotica
+const SUGGESTIVE_THRESHOLD = 0.6;  // very_suggestive: near-nude / lingerie / strategically covered
 const OFFENSIVE_THRESHOLD = 0.7;
+const WEAPON_THRESHOLD = 0.8;
 
 export interface ModerationResult {
   safe: boolean;
@@ -105,39 +107,89 @@ export interface ModerationResult {
 }
 
 /**
- * Translate a Sightengine `check.json` response body into our
- * ModerationResult. Centralised so the URL and buffer entry points
- * apply the exact same scoring rules + thresholds — and so a future
- * third entry point (e.g. video frames) doesn't have to copy them
- * again.
- *
- * Sightengine's nudity-2.1 model returns granular sub-scores;
- * sexual_activity / sexual_display / erotica are the explicit ones
- * we treat as nudity. very_suggestive is intentionally NOT included
- * because it false-positives heavily on selfies.
+ * Extract the two nudity signals we act on from a Sightengine `nudity`
+ * object. `explicit` = the unambiguous categories; `suggestive` =
+ * very_suggestive (near-nude / lingerie / strategically covered), which
+ * we now block at a higher threshold. Milder classes (suggestive /
+ * mildly_suggestive: bikini, cleavage) are deliberately NOT included —
+ * they false-positive heavily on ordinary selfies and beach photos.
  */
-function verdictFromSightengineResponse(data: any): ModerationResult {
-  const nudity = data.nudity || {};
-  const nudityScore = Math.max(
-    nudity.sexual_activity || 0,
-    nudity.sexual_display || 0,
-    nudity.erotica || 0,
-  );
-  const offensive = data.offensive?.prob || 0;
-  const weapon = data.weapon || 0;
-  const drugs = data.recreational_drug?.prob || 0;
-  const scores = { nudity: nudityScore, offensive, weapon, drugs };
+function nuditySignals(nudity: any): { explicit: number; suggestive: number } {
+  return {
+    explicit: Math.max(
+      nudity.sexual_activity || 0,
+      nudity.sexual_display || 0,
+      nudity.erotica || 0,
+    ),
+    suggestive: nudity.very_suggestive || 0,
+  };
+}
 
-  if (nudityScore > NUDITY_THRESHOLD) {
-    return { safe: false, reason: 'Content contains nudity or sexual content', scores };
+/**
+ * Turn aggregated scores into a ModerationResult. Shared by the image
+ * (`check.json`) and video (frame-sampled) entry points so both apply the
+ * exact same thresholds — the video path used to duplicate this logic and
+ * silently drift.
+ */
+function verdictFromScores(
+  s: { explicit: number; suggestive: number; offensive: number; weapon: number; drugs: number },
+  subject: 'Content' | 'Video',
+): ModerationResult {
+  const scores = {
+    nudity: Math.max(s.explicit, s.suggestive),
+    offensive: s.offensive,
+    weapon: s.weapon,
+    drugs: s.drugs,
+  };
+
+  const unsafe =
+    s.explicit > NUDITY_THRESHOLD ||
+    s.suggestive > SUGGESTIVE_THRESHOLD ||
+    s.offensive > OFFENSIVE_THRESHOLD ||
+    s.weapon > WEAPON_THRESHOLD;
+
+  // Log the breakdown when we block, or when a nudity score lands within
+  // 0.15 of its threshold, so the thresholds can be retuned against real
+  // production data instead of guesses.
+  if (
+    unsafe ||
+    s.explicit > NUDITY_THRESHOLD - 0.15 ||
+    s.suggestive > SUGGESTIVE_THRESHOLD - 0.15
+  ) {
+    logger.info(
+      { explicit: s.explicit, suggestive: s.suggestive, offensive: s.offensive, weapon: s.weapon, unsafe },
+      'moderation score',
+    );
   }
-  if (offensive > OFFENSIVE_THRESHOLD) {
-    return { safe: false, reason: 'Content contains offensive material', scores };
+
+  if (s.explicit > NUDITY_THRESHOLD || s.suggestive > SUGGESTIVE_THRESHOLD) {
+    return { safe: false, reason: `${subject} contains nudity or sexual content`, scores };
   }
-  if (weapon > 0.8) {
-    return { safe: false, reason: 'Content contains weapons', scores };
+  if (s.offensive > OFFENSIVE_THRESHOLD) {
+    return { safe: false, reason: `${subject} contains offensive material`, scores };
+  }
+  if (s.weapon > WEAPON_THRESHOLD) {
+    return { safe: false, reason: `${subject} contains weapons`, scores };
   }
   return { safe: true, scores };
+}
+
+/**
+ * Translate a Sightengine `check.json` (image) response body into our
+ * ModerationResult.
+ */
+function verdictFromSightengineResponse(data: any): ModerationResult {
+  const n = nuditySignals(data.nudity || {});
+  return verdictFromScores(
+    {
+      explicit: n.explicit,
+      suggestive: n.suggestive,
+      offensive: data.offensive?.prob || 0,
+      weapon: data.weapon || 0,
+      drugs: data.recreational_drug?.prob || 0,
+    },
+    'Content',
+  );
 }
 
 /**
@@ -243,37 +295,27 @@ export async function moderateVideoUrl(videoUrl: string): Promise<ModerationResu
       return moderationUnavailable('Sightengine video non-success status');
     }
 
-    // For video, data.data.frames is an array of frame analyses
+    // For video, data.data.frames is an array of frame analyses. Take the
+    // worst score seen across all sampled frames, then apply the shared
+    // verdict so images and video enforce identical thresholds.
     const frames = data.data?.frames || [];
-    let maxNudity = 0;
+    let maxExplicit = 0;
+    let maxSuggestive = 0;
     let maxOffensive = 0;
     let maxWeapon = 0;
 
     for (const frame of frames) {
-      const nudity = frame.nudity || {};
-      const frameNudity = Math.max(
-        nudity.sexual_activity || 0,
-        nudity.sexual_display || 0,
-        nudity.erotica || 0,
-      );
-      maxNudity = Math.max(maxNudity, frameNudity);
+      const n = nuditySignals(frame.nudity || {});
+      maxExplicit = Math.max(maxExplicit, n.explicit);
+      maxSuggestive = Math.max(maxSuggestive, n.suggestive);
       maxOffensive = Math.max(maxOffensive, frame.offensive?.prob || 0);
       maxWeapon = Math.max(maxWeapon, frame.weapon || 0);
     }
 
-    const scores = { nudity: maxNudity, offensive: maxOffensive, weapon: maxWeapon };
-
-    if (maxNudity > NUDITY_THRESHOLD) {
-      return { safe: false, reason: 'Video contains nudity or sexual content', scores };
-    }
-    if (maxOffensive > OFFENSIVE_THRESHOLD) {
-      return { safe: false, reason: 'Video contains offensive material', scores };
-    }
-    if (maxWeapon > 0.8) {
-      return { safe: false, reason: 'Video contains weapons', scores };
-    }
-
-    return { safe: true, scores };
+    return verdictFromScores(
+      { explicit: maxExplicit, suggestive: maxSuggestive, offensive: maxOffensive, weapon: maxWeapon, drugs: 0 },
+      'Video',
+    );
   } catch (err) {
     logger.error({ err, videoUrl }, 'Video moderation check failed');
     return moderationUnavailable('exception (video)');

@@ -6,6 +6,7 @@ import { isPro } from '../../shared/usage.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { deleteFromR2 } from '../../shared/r2.service';
+import { moderateImageBuffer, moderateVideoUrl } from '../../shared/moderation.service';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
 import { notifyFollowersOfNewStory, notifyStoryOwnerOfView, checkStoryMilestone } from './story.notify';
 import { markStoryNotificationsAsRead } from '../notification/notification.service';
@@ -107,6 +108,21 @@ export async function createStory(
     ? new Date('2099-12-31T23:59:59Z')
     : new Date(Date.now() + hoursToExpire * 60 * 60 * 1000);
 
+  // ── Content moderation (pre-upload) ─────────────────────────
+  // Image/text slides are checked BEFORE upload so explicit bytes never
+  // reach storage. Video slides need a public URL for Sightengine's frame
+  // API, so they're checked post-upload below (and deleted if unsafe).
+  for (let i = 0; i < files.length; i++) {
+    const slideType = slidesMetadata?.[i]?.type ?? 'IMAGE';
+    if (slideType === 'VIDEO') continue;
+    const verdict = await moderateImageBuffer(files[i].buffer, files[i].originalname);
+    if (!verdict.safe) {
+      const err: any = new BadRequestError(verdict.reason || 'Image failed content moderation');
+      err.code = 'MODERATION_REJECTED';
+      throw err;
+    }
+  }
+
   let videoCount = 0;
   const uploads = await Promise.all(
     files.map(async (file, index) => {
@@ -160,6 +176,26 @@ export async function createStory(
       }
     })
   );
+
+  // ── Content moderation (post-upload, video) ─────────────────
+  // Sightengine's video API samples the uploaded URL. If any slide is
+  // unsafe, delete every slide we just uploaded (images + videos) so
+  // nothing is orphaned in storage, then reject with the same
+  // MODERATION_REJECTED shape reels use.
+  for (const u of uploads) {
+    if (u.type !== 'VIDEO') continue;
+    const verdict = await moderateVideoUrl(u.mediaUrl);
+    if (!verdict.safe) {
+      await Promise.all(
+        uploads.map((s) =>
+          s.cloudinaryId ? deleteSlideMedia(s.cloudinaryId, s.type).catch(() => {}) : Promise.resolve(),
+        ),
+      );
+      const err: any = new BadRequestError(verdict.reason || 'Video failed content moderation');
+      err.code = 'MODERATION_REJECTED';
+      throw err;
+    }
+  }
 
   const story = await prisma.story.create({
     data: {
