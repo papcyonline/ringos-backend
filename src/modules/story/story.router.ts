@@ -277,7 +277,16 @@ router.post(
       }
 
       res.json({ story });
-    } catch (error) {
+    } catch (error: any) {
+      // Surface 400s (e.g. content-moderation rejection) with their code so
+      // the app can show a specific message instead of a generic failure.
+      // Mirrors the reel router's error shape: { error, code }.
+      if (error?.statusCode === 400) {
+        return res.status(400).json({
+          error: error.message,
+          code: error.code,
+        });
+      }
       logger.error({ error }, 'Error creating story');
       res.status(500).json({ error: 'Failed to create story' });
     }
