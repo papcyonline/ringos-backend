@@ -6,6 +6,7 @@ import { isBlocked } from '../safety/safety.service';
 import { getLimits, isPro } from '../../shared/usage.service';
 import { isReservedUsername } from '../../shared/reserved-usernames';
 import * as cache from '../../shared/redis.service';
+import { getIO } from '../../config/socket';
 
 async function findUserOrThrow(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -573,6 +574,21 @@ export async function updatePrivacy(userId: string, data: UpdatePrivacyInput) {
     select: { id: true, isProfilePublic: true, hideOnlineStatus: true, hideReadReceipts: true },
   });
   await invalidateProfileCache(userId);
+
+  // Broadcast a privacy change so everyone's people list updates the country
+  // flag (derived from location) live — no manual refresh. Mirror the list's
+  // visibility rule: location is only exposed while the profile is public.
+  if (data.isProfilePublic !== undefined) {
+    try {
+      getIO().emit('user:profile-update', {
+        userId,
+        isProfilePublic: updated.isProfilePublic,
+        location: updated.isProfilePublic ? user.location : null,
+      });
+    } catch {
+      // Socket not ready — the list still refreshes on next fetch.
+    }
+  }
   return updated;
 }
 
