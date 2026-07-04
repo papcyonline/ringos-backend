@@ -15,6 +15,7 @@ import * as likeService from './like.service';
 import { createNotification, sendPostPush } from '../notification/notification.service';
 import { prisma } from '../../config/database';
 import { validateAppleReceipt, planFromProductId } from '../../shared/appleReceipt.service';
+import { validateGooglePlayPurchase } from '../../shared/googlePlay.service';
 import { getUsageSummary, isPro } from '../../shared/usage.service';
 
 const router = Router();
@@ -270,10 +271,33 @@ router.post('/me/verify', authenticate, async (req: AuthRequest, res: Response, 
       return res.json(verified);
     }
 
-    // Android (and any non-iOS): server-side Google Play validation isn't built
-    // yet, so this stays client-asserted. TODO: validate Play purchase tokens
-    // via the Google Play Developer API to close the same hole on Android.
-    logger.warn({ userId, platform }, 'verify granted without server-side receipt validation (non-iOS)');
+    if (platform === 'android') {
+      const result = await validateGooglePlayPurchase(productId ?? '', receiptData ?? '');
+      // Graceful: if Play validation isn't configured yet, keep the current
+      // (client-asserted) behaviour so live Android subscribers don't break.
+      // Strict validation activates automatically once the service account is
+      // set. When it IS configured, reject purchases that don't check out.
+      if (result.reason !== 'validation_not_configured') {
+        if (!result.valid || !result.active) {
+          logger.warn({ userId, reason: result.reason }, 'Android verify rejected: purchase not valid/active');
+          return res.status(402).json({ error: 'Purchase could not be verified', reason: result.reason });
+        }
+        await userService.recordSubscription(userId, {
+          status: 'active',
+          plan: planFromProductId(result.productId ?? productId),
+          externalId: result.orderId,
+        });
+      } else {
+        logger.warn({ userId }, 'Android verify: Play validation not configured — granted without validation');
+      }
+      const verified = await userService.setVerified(userId);
+      return res.json(verified);
+    }
+
+    // No/unknown platform — old clients that predate receipt validation. Keep
+    // the legacy client-asserted path so they don't break. TODO: once every
+    // client sends a platform + receipt, reject this to fully close the hole.
+    logger.warn({ userId, platform }, 'verify granted without receipt validation (no/unknown platform)');
     const verified = await userService.setVerified(userId);
     return res.json(verified);
   } catch (err) {

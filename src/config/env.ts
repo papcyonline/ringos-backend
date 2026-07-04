@@ -37,6 +37,12 @@ const envSchema = z.object({
   // App-Specific Shared Secret from App Store Connect — required to validate
   // iOS auto-renewable subscription receipts (Pro/verification).
   APPLE_SHARED_SECRET: z.string().optional(),
+  // Google Cloud service-account JSON (stringified) with androidpublisher
+  // access, linked in Play Console — required to validate Android subscription
+  // purchases. Fails closed if unset.
+  GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  // Android application id (Play package name) for purchase validation.
+  ANDROID_PACKAGE_NAME: z.string().default('com.yomeet.live'),
 
   // Twilio (SMS + optional TURN via NTS)
   TWILIO_ACCOUNT_SID: z.string().optional(),
