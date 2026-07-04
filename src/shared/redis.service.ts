@@ -220,6 +220,29 @@ function memoryRateLimit(
   return { allowed: true, remaining: maxRequests - entry.timestamps.length, resetAt: now + windowMs };
 }
 
+// Atomic sliding-window rate limit. Runs the prune → count → (reject | add)
+// sequence in a single Redis round-trip so concurrent requests can't both read
+// a stale count and slip past the limit. Returns {allowed(0|1), remaining,
+// resetAtMs}.
+//   KEYS[1] = rate limit key
+//   ARGV[1] = now (ms)        ARGV[2] = windowStart (ms)
+//   ARGV[3] = maxRequests     ARGV[4] = windowSeconds
+//   ARGV[5] = unique member
+const RATE_LIMIT_LUA = `
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[2])
+local count = redis.call('ZCARD', KEYS[1])
+local windowMs = tonumber(ARGV[4]) * 1000
+if count >= tonumber(ARGV[3]) then
+  local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+  local resetAt = tonumber(ARGV[1]) + windowMs
+  if oldest[2] then resetAt = tonumber(oldest[2]) + windowMs end
+  return {0, 0, resetAt}
+end
+redis.call('ZADD', KEYS[1], ARGV[1], ARGV[5])
+redis.call('EXPIRE', KEYS[1], ARGV[4])
+return {1, tonumber(ARGV[3]) - count - 1, tonumber(ARGV[1]) + windowMs}
+`;
+
 export async function checkRateLimit(
   key: string,
   maxRequests: number,
@@ -235,28 +258,22 @@ export async function checkRateLimit(
   const rateLimitKey = `ratelimit:${key}`;
 
   try {
-    // Remove old entries
-    await redisClient.zremrangebyscore(rateLimitKey, 0, windowStart);
-
-    // Count current entries
-    const count = await redisClient.zcard(rateLimitKey);
-
-    if (count >= maxRequests) {
-      // Get the oldest entry to calculate reset time
-      const oldest = await redisClient.zrange(rateLimitKey, 0, 0, 'WITHSCORES');
-      const resetAt = oldest.length >= 2 ? parseInt(oldest[1]) + windowSeconds * 1000 : now + windowSeconds * 1000;
-
-      return { allowed: false, remaining: 0, resetAt };
-    }
-
-    // Add new entry
-    await redisClient.zadd(rateLimitKey, now, `${now}-${Math.random()}`);
-    await redisClient.expire(rateLimitKey, windowSeconds);
+    // Single atomic round-trip — no check-then-act race under concurrency.
+    const [allowed, remaining, resetAt] = (await redisClient.eval(
+      RATE_LIMIT_LUA,
+      1,
+      rateLimitKey,
+      now,
+      windowStart,
+      maxRequests,
+      windowSeconds,
+      `${now}-${Math.random()}`
+    )) as [number, number, number];
 
     return {
-      allowed: true,
-      remaining: maxRequests - count - 1,
-      resetAt: now + windowSeconds * 1000,
+      allowed: allowed === 1,
+      remaining: Math.max(0, remaining),
+      resetAt,
     };
   } catch (error) {
     logger.error({ error, key }, 'Rate limit check failed, falling back to memory');
