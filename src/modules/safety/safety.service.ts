@@ -5,7 +5,7 @@ import { BadRequestError, NotFoundError, ConflictError } from '../../shared/erro
 
 interface ReportData {
   reportedId: string;
-  reason: 'HARASSMENT' | 'SPAM' | 'INAPPROPRIATE_CONTENT' | 'SELF_HARM' | 'THREATS' | 'OTHER';
+  reason: 'HARASSMENT' | 'SPAM' | 'INAPPROPRIATE_CONTENT' | 'SELF_HARM' | 'THREATS' | 'SCAM' | 'OTHER';
   details?: string;
   contentType?: 'STORY' | 'REEL' | 'POST' | 'MESSAGE' | 'COMMENT';
   contentId?: string;

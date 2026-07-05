@@ -113,6 +113,7 @@ enum ReportReason {
   INAPPROPRIATE_CONTENT
   SELF_HARM
   THREATS
+  SCAM
   OTHER
 }
 
