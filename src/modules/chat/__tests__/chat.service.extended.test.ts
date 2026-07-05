@@ -29,6 +29,7 @@ const { mockPrisma } = vi.hoisted(() => {
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      count: vi.fn().mockResolvedValue(0), // no-reply gate; 0 = never gated in tests
     },
     user: {
       findUnique: vi.fn(),
