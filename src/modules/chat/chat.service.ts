@@ -1320,11 +1320,12 @@ export async function sendMessage(
 
   // Scam-signal detection. detectScamSignals is pure + synchronous (no I/O),
   // so it rides inline and the warning ships WITH the message in real time —
-  // it never blocks or fails the send. Only 1-on-1 stranger/request chats are
-  // scanned; normal mutual-follow conversations (requestStatus === null) are
-  // skipped so we don't nag established relationships about money/off-app talk.
+  // it never blocks or fails the send. Scans all 1-on-1 DMs (not just stranger
+  // requests): a scammer who gets a follow-back would otherwise escape, and the
+  // warning is a soft recipient-only tip so false positives are low-cost. Group
+  // chats are excluded.
   const scam =
-    content && conversation.type !== 'GROUP' && conversation.requestStatus !== null
+    content && conversation.type !== 'GROUP'
       ? detectScamSignals(content)
       : { warn: false, categories: [] as string[] };
 
