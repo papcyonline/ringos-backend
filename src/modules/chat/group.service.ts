@@ -846,6 +846,7 @@ export async function updateGroupAdminSettings(
     adminsOnlyMessages?: boolean;
     adminsOnlyEditInfo?: boolean;
     adminsOnlyAddMembers?: boolean;
+    adminsOnlyLinks?: boolean;
     disappearAfterSecs?: number | null;
   },
 ) {
@@ -860,6 +861,7 @@ export async function updateGroupAdminSettings(
   if (settings.adminsOnlyMessages !== undefined) data.adminsOnlyMessages = settings.adminsOnlyMessages;
   if (settings.adminsOnlyEditInfo !== undefined) data.adminsOnlyEditInfo = settings.adminsOnlyEditInfo;
   if (settings.adminsOnlyAddMembers !== undefined) data.adminsOnlyAddMembers = settings.adminsOnlyAddMembers;
+  if (settings.adminsOnlyLinks !== undefined) data.adminsOnlyLinks = settings.adminsOnlyLinks;
   if (settings.disappearAfterSecs !== undefined) data.disappearAfterSecs = settings.disappearAfterSecs;
 
   const updated = await prisma.conversation.update({

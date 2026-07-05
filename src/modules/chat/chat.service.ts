@@ -1274,6 +1274,22 @@ export async function sendMessage(
     throw new ForbiddenError('Only admins can send messages in this group');
   }
 
+  // Group content control: only admins may post links when enabled. Rejected
+  // with a permanent code so the client treats it as non-retryable (same as
+  // the no-reply gate) instead of re-driving it into the check.
+  if (
+    conversation.type === 'GROUP' &&
+    conversation.adminsOnlyLinks &&
+    participant.role !== 'ADMIN' &&
+    content &&
+    urlRegex.test(content)
+  ) {
+    throw new BadRequestError(
+      'Only admins can post links in this group.',
+      'GROUP_RESTRICTED',
+    );
+  }
+
   // Run block check and reply verification in parallel
   const parallelChecks: Promise<void>[] = [];
 

@@ -498,6 +498,7 @@ model Conversation {
   adminsOnlyMessages Boolean    @default(false)
   adminsOnlyEditInfo Boolean    @default(false)
   adminsOnlyAddMembers Boolean  @default(false)
+  adminsOnlyLinks    Boolean    @default(false) // non-admins can't post URLs
   // Request flow for stranger DMs. requestStatus stays NULL for
   // existing conversations and group chats; only direct conversations
   // initiated by a non-follower flip to PENDING.
