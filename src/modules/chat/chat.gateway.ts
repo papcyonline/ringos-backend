@@ -221,8 +221,10 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
     } catch (error: any) {
       logger.error({ error, userId }, 'Error sending message');
       const msg = extractErrorMessage(error, 'Failed to send message');
-      socket.emit('chat:error', { message: msg });
-      if (typeof ack === 'function') ack({ ok: false, error: msg });
+      // Forward the error code (e.g. REPLY_REQUIRED) so the client can treat
+      // a permanent rejection as non-retryable instead of re-driving it.
+      socket.emit('chat:error', { message: msg, code: error?.code });
+      if (typeof ack === 'function') ack({ ok: false, error: msg, code: error?.code });
     }
   });
 

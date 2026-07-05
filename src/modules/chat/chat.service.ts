@@ -1,6 +1,6 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
-import { NotFoundError, ForbiddenError } from '../../shared/errors';
+import { NotFoundError, ForbiddenError, BadRequestError } from '../../shared/errors';
 import { isBlocked, blockUser } from '../safety/safety.service';
 import { tryRecordMessageForStreak } from './streak.service';
 import { getLimits } from '../../shared/usage.service';
@@ -12,6 +12,13 @@ import * as cloudinaryService from '../../shared/cloudinary.service';
 // 24h window. Established accounts are never throttled. Tunable.
 const NEW_ACCOUNT_DAYS = 7;
 const NEW_ACCOUNT_MAX_REQUESTS_PER_DAY = 5;
+
+// Anti-pester: max messages one can send in a 1-on-1 chat WITHOUT the other
+// person replying (a reply resets the counter). A pending/declined request's
+// original requester gets the tight cap; accepted/mutual chats get the
+// generous one that normal double-texting never trips. Tunable.
+const UNANSWERED_LIMIT_REQUEST = 3;
+const UNANSWERED_LIMIT_ACCEPTED = 10;
 import ogs from 'open-graph-scraper';
 import { promises as dns } from 'dns';
 import net from 'net';
@@ -1301,6 +1308,42 @@ export async function sendMessage(
 
   if (parallelChecks.length > 0) {
     await Promise.all(parallelChecks);
+  }
+
+  // ── Anti-pester: no-reply gating ────────────────────────────
+  // Cap how many messages you can send in a row without the other person
+  // replying — stops one-sided message-bombing without ever reading content.
+  // Skips groups. The idempotency short-circuit above means a retried send of
+  // the SAME message (same clientMsgId) never reaches here, so honest retries
+  // aren't penalised.
+  if (conversation.type !== 'GROUP') {
+    const isRequester = conversation.requestedById === senderId;
+    const tightTier =
+      isRequester &&
+      (conversation.requestStatus === 'PENDING' || conversation.requestStatus === 'DECLINED');
+    const limit = tightTier ? UNANSWERED_LIMIT_REQUEST : UNANSWERED_LIMIT_ACCEPTED;
+
+    // The other participant's most recent real message is the "reply" that
+    // resets the counter. Null if they've never replied.
+    const lastPartnerMsg = await prisma.message.findFirst({
+      where: { conversationId, senderId: { not: senderId }, isSystem: false },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    const unanswered = await prisma.message.count({
+      where: {
+        conversationId,
+        senderId,
+        isSystem: false,
+        ...(lastPartnerMsg ? { createdAt: { gt: lastPartnerMsg.createdAt } } : {}),
+      },
+    });
+    if (unanswered >= limit) {
+      throw new BadRequestError(
+        'Wait for a reply before sending more messages.',
+        'REPLY_REQUIRED',
+      );
+    }
   }
 
   // Compute message expiry if conversation has disappearing messages enabled
