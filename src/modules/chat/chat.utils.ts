@@ -127,6 +127,7 @@ export function formatMessagePayload(message: any, conversationId: string) {
     pinnedById: message.pinnedById,
     editedAt: message.editedAt,
     deletedAt: message.deletedAt,
+    scamWarning: message.scamWarning ?? false,
     reactions: message.reactions.map((r: any) => ({
       emoji: r.emoji,
       userId: r.userId,

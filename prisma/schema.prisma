@@ -711,6 +711,10 @@ model Message {
   deletedAt      DateTime?
   deletedFor     String[]   @default([])
   expiresAt      DateTime?  // set when disappearAfterSecs is active on conversation
+  // Set true when scam detection flags this message (off-platform lure /
+  // money ask) in a stranger/request context. Drives a client-side safety
+  // banner shown ONLY to the recipient. Never blocks the send.
+  scamWarning    Boolean   @default(false)
   createdAt      DateTime  @default(now())
 
   conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -780,6 +784,26 @@ model Block {
   @@unique([blockerId, blockedId])
   @@index([blockerId])
   @@index([blockedId])
+}
+
+// Auto-generated flag when scam detection fires on a chat message. Feeds a
+// future human review queue (query reviewed=false). Deliberately kept off
+// the automated report/ban ladder — a keyword hit warns the recipient but
+// must not by itself ban the sender (too false-positive-prone). Relation-less
+// (plain IDs) on purpose: this is an internal audit log, not user-facing.
+model ScamFlag {
+  id             String   @id @default(uuid())
+  senderId       String   // flagged sender (potential scammer)
+  recipientId    String   // who received the message
+  conversationId String
+  messageId      String
+  categories     String[] @default([]) // OFF_PLATFORM | MONEY | CONTACT
+  snippet        String   // truncated excerpt of the offending text
+  reviewed       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([senderId, createdAt])
+  @@index([reviewed, createdAt])
 }
 
 model Follow {

@@ -4,7 +4,14 @@ import { NotFoundError, ForbiddenError } from '../../shared/errors';
 import { isBlocked, blockUser } from '../safety/safety.service';
 import { tryRecordMessageForStreak } from './streak.service';
 import { getLimits } from '../../shared/usage.service';
+import { detectScamSignals } from '../../shared/scam.service';
 import * as cloudinaryService from '../../shared/cloudinary.service';
+
+// Anti-scam throttle: accounts younger than this many days may open at most
+// NEW_ACCOUNT_MAX_REQUESTS_PER_DAY stranger message-requests in a rolling
+// 24h window. Established accounts are never throttled. Tunable.
+const NEW_ACCOUNT_DAYS = 7;
+const NEW_ACCOUNT_MAX_REQUESTS_PER_DAY = 5;
 import ogs from 'open-graph-scraper';
 import { promises as dns } from 'dns';
 import net from 'net';
@@ -647,6 +654,29 @@ export async function getOrCreateDirectConversation(userId: string, targetUserId
 
   const isRequest = privacy === 'EVERYONE' && !isFollowedBack;
 
+  // Anti-scam throttle: a brand-new account can only open a handful of
+  // stranger message-requests per day. This strangles mass DM-blasting
+  // without touching established users (they never hit this branch's age
+  // gate) or normal follow-back / mutual conversations (not requests).
+  if (isRequest) {
+    const sender = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { createdAt: true },
+    });
+    const ageMs = sender ? Date.now() - sender.createdAt.getTime() : Number.POSITIVE_INFINITY;
+    if (ageMs < NEW_ACCOUNT_DAYS * 24 * 60 * 60 * 1000) {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const recentRequests = await prisma.conversation.count({
+        where: { requestedById: userId, createdAt: { gte: since } },
+      });
+      if (recentRequests >= NEW_ACCOUNT_MAX_REQUESTS_PER_DAY) {
+        throw new ForbiddenError(
+          "You've reached today's limit for new message requests. Please try again tomorrow.",
+        );
+      }
+    }
+  }
+
   const conversation = await prisma.conversation.create({
     data: {
       type: 'HUMAN_MATCHED',
@@ -1288,6 +1318,16 @@ export async function sendMessage(
     conversation.requestStatus === 'DECLINED' &&
     conversation.requestedById !== senderId;
 
+  // Scam-signal detection. detectScamSignals is pure + synchronous (no I/O),
+  // so it rides inline and the warning ships WITH the message in real time —
+  // it never blocks or fails the send. Only 1-on-1 stranger/request chats are
+  // scanned; normal mutual-follow conversations (requestStatus === null) are
+  // skipped so we don't nag established relationships about money/off-app talk.
+  const scam =
+    content && conversation.type !== 'GROUP' && conversation.requestStatus !== null
+      ? detectScamSignals(content)
+      : { warn: false, categories: [] as string[] };
+
   // Create message and update conversation timestamp in parallel
   const [message] = await Promise.all([
     prisma.message.create({
@@ -1295,6 +1335,7 @@ export async function sendMessage(
         conversationId,
         senderId,
         content,
+        scamWarning: scam.warn,
         clientMsgId: clientMsgId || undefined,
         replyToId: replyToId || undefined,
         imageUrl: imageUrl || undefined,
@@ -1335,6 +1376,38 @@ export async function sendMessage(
   // Async: fetch link preview if message contains a URL (fire-and-forget)
   if (content && urlRegex.test(content)) {
     fetchLinkPreview(message.id, content).catch(() => {});
+  }
+
+  // Async: persist a ScamFlag for the review queue (fire-and-forget). The
+  // recipient-facing warning already shipped via scamWarning above; this is
+  // just the internal audit log, so a failure here must not affect the send.
+  if (scam.categories.length > 0 && conversation.type !== 'GROUP') {
+    void (async () => {
+      try {
+        const others = await prisma.conversationParticipant.findMany({
+          where: { conversationId, userId: { not: senderId }, leftAt: null },
+          select: { userId: true },
+        });
+        const recipientId = others[0]?.userId;
+        if (!recipientId) return;
+        await prisma.scamFlag.create({
+          data: {
+            senderId,
+            recipientId,
+            conversationId,
+            messageId: message.id,
+            categories: scam.categories,
+            snippet: content.slice(0, 280),
+          },
+        });
+        logger.info(
+          { messageId: message.id, senderId, categories: scam.categories, warn: scam.warn },
+          'Scam signal flagged',
+        );
+      } catch (err) {
+        logger.error({ err, messageId: message.id }, 'Scam flag write failed');
+      }
+    })();
   }
 
   // Streak update for 1-on-1 chats only. Group messages don't form
