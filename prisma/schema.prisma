@@ -234,6 +234,10 @@ model User {
   isVerified    Boolean   @default(false)
   verifiedAt    DateTime?
   verifiedRole  String?
+  // When set, this verification is time-limited (manual/admin grant) and the
+  // verificationExpiry job auto-clears isVerified once it passes. NULL =
+  // permanent (e.g. subscription-driven verification) — never auto-expired.
+  verifiedUntil DateTime?
   isProfilePublic Boolean @default(true)
   hideOnlineStatus Boolean @default(false)
   hideReadReceipts Boolean @default(false)

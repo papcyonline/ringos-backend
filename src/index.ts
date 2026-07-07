@@ -12,6 +12,7 @@ import { registerSpotlightHandlers } from './modules/spotlight/spotlight.gateway
 import { startMatchExpiryJob } from './jobs/matchExpiry';
 import { startSessionCleanupJob } from './jobs/sessionCleanup';
 import { startAvailabilityExpiryJob } from './jobs/availabilityExpiry';
+import { startVerificationExpiryJob } from './jobs/verificationExpiry';
 import { startStoryCleanupJob } from './jobs/storyCleanup';
 import { startMessageExpiryJob } from './jobs/messageExpiry';
 import { startScheduledPostsJob } from './jobs/scheduledPosts';
@@ -49,6 +50,7 @@ async function main() {
     startMatchExpiryJob();
     startSessionCleanupJob();
     startAvailabilityExpiryJob();
+    startVerificationExpiryJob();
     startStoryCleanupJob();
     startMessageExpiryJob();
     startScheduledPostsJob();
