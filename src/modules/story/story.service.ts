@@ -177,25 +177,11 @@ export async function createStory(
     })
   );
 
-  // ── Content moderation (post-upload, video) ─────────────────
-  // Sightengine's video API samples the uploaded URL. If any slide is
-  // unsafe, delete every slide we just uploaded (images + videos) so
-  // nothing is orphaned in storage, then reject with the same
-  // MODERATION_REJECTED shape reels use.
-  for (const u of uploads) {
-    if (u.type !== 'VIDEO') continue;
-    const verdict = await moderateVideoUrl(u.mediaUrl);
-    if (!verdict.safe) {
-      await Promise.all(
-        uploads.map((s) =>
-          s.cloudinaryId ? deleteSlideMedia(s.cloudinaryId, s.type).catch(() => {}) : Promise.resolve(),
-        ),
-      );
-      const err: any = new BadRequestError(verdict.reason || 'Video failed content moderation');
-      err.code = 'MODERATION_REJECTED';
-      throw err;
-    }
-  }
+  // NOTE: images are moderated BEFORE upload (above). Videos are moderated in
+  // the BACKGROUND after the story is created (see below) — Sightengine's
+  // synchronous video analysis is slow/unbounded and blocking the upload here
+  // caused legit video posts to time out and fail. The story is auto-removed
+  // if a video turns out unsafe.
 
   const story = await prisma.story.create({
     data: {
@@ -213,6 +199,32 @@ export async function createStory(
 
   logger.info({ storyId: story.id, userId, slideCount: files.length }, 'Story created');
   invalidateFeedCache(); // New story affects everyone's feed
+
+  // Background video moderation (fire-and-forget). The post already succeeded;
+  // if any video slide is unsafe, the whole story is removed. Keeps the upload
+  // request fast + reliable while still enforcing nudity blocking on video.
+  const videoUrls = uploads.filter((u) => u.type === 'VIDEO').map((u) => u.mediaUrl);
+  if (videoUrls.length > 0) {
+    void (async () => {
+      try {
+        for (const url of videoUrls) {
+          const verdict = await moderateVideoUrl(url);
+          if (!verdict.safe) {
+            logger.warn(
+              { storyId: story.id, userId, reason: verdict.reason },
+              'Story video failed moderation — removing story',
+            );
+            await deleteStory(story.id, userId).catch((err) =>
+              logger.error({ err, storyId: story.id }, 'Failed to remove unsafe story'));
+            return;
+          }
+        }
+      } catch (err) {
+        logger.error({ err, storyId: story.id }, 'Background story video moderation failed');
+      }
+    })();
+  }
+
   // Fan-out push notifications to followers — fire-and-forget so the request
   // returns fast. Skipped for channel stories (different audience).
   if (!options?.channelId) {

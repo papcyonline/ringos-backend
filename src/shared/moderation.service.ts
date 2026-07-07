@@ -284,8 +284,19 @@ export async function moderateVideoUrl(videoUrl: string): Promise<ModerationResu
       api_secret: SIGHTENGINE_SECRET!,
     });
 
-    // Synchronous video check — samples frames and returns aggregated result
-    const response = await fetch(`https://api.sightengine.com/1.0/video/check-sync.json?${params}`);
+    // Synchronous video check — samples frames and returns aggregated result.
+    // Hard timeout so a slow/large video can never hang the caller.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45_000);
+    let response: Response;
+    try {
+      response = await fetch(
+        `https://api.sightengine.com/1.0/video/check-sync.json?${params}`,
+        { signal: controller.signal },
+      );
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) {
       return moderationUnavailable(`Sightengine video API error ${response.status}`);
     }
