@@ -35,8 +35,16 @@ const envSchema = z.object({
   APPLE_KEY_ID: z.string().optional(),
   APPLE_PRIVATE_KEY: z.string().optional(),
   // App-Specific Shared Secret from App Store Connect — required to validate
-  // iOS auto-renewable subscription receipts (Pro/verification).
+  // legacy StoreKit 1 receipts (Pro/verification) via /verifyReceipt.
   APPLE_SHARED_SECRET: z.string().optional(),
+  // The iOS app's bundle identifier. Used to verify StoreKit 2 signed
+  // transactions (the JWS the current in_app_purchase client sends) actually
+  // belong to our app. Defaults to the production bundle id.
+  APPLE_BUNDLE_ID: z.string().default('com.yomeet.live'),
+  // The app's numeric App Store ID (adam id). REQUIRED by Apple's
+  // SignedDataVerifier for Production-environment transactions. Default is the
+  // live "com.yomeet.live" app id (from the App Store lookup API).
+  APPLE_APP_APPLE_ID: z.coerce.number().default(6761489525),
   // Google Cloud service-account JSON (stringified) with androidpublisher
   // access, linked in Play Console — required to validate Android subscription
   // purchases. Fails closed if unset.

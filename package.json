@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "prisma generate && tsc",
+    "build": "prisma generate && tsc && npm run copy:assets",
+    "copy:assets": "mkdir -p dist/shared/apple-certs && cp src/shared/apple-certs/*.cer dist/shared/apple-certs/",
     "start": "node dist/index.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -17,6 +18,7 @@
     "prepare": "husky || true"
   },
   "dependencies": {
+    "@apple/app-store-server-library": "^3.1.0",
     "@aws-sdk/client-s3": "^3.982.0",
     "@aws-sdk/s3-request-presigner": "^3.982.0",
     "@google/genai": "^1.40.0",

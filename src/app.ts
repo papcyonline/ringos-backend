@@ -24,6 +24,7 @@ import { giphyRouter } from './modules/giphy/giphy.router';
 import { musicRouter } from './modules/music/music.router';
 import { announcementRouter } from './modules/announcement/announcement.router';
 import { legalRouter } from './modules/legal/legal.router';
+import appstoreWebhookRouter from './modules/webhooks/appstore.router';
 import { sentryRequestHandler, sentryErrorHandler } from './shared/sentry.service';
 
 const app = express();
@@ -110,6 +111,10 @@ app.use('/api/giphy', giphyRouter);
 app.use('/api/music', musicRouter);
 app.use('/api/announcements', announcementRouter);
 app.use('/api/legal', legalRouter);
+// App Store Server Notifications V2 (Apple → us). Authoritative subscription
+// lifecycle: purchase, renewal, refund, expiry. Set this URL in App Store
+// Connect. Authenticity is the Apple-signed JWS, so no auth middleware.
+app.use('/api/webhooks', appstoreWebhookRouter);
 
 // Sentry error handler (must be before custom error handler)
 app.use(sentryErrorHandler);

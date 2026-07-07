@@ -732,6 +732,57 @@ export async function recordSubscription(
   });
 }
 
+/// Map an Apple originalTransactionId back to our user, for App Store Server
+/// Notifications whose transaction lacks an appAccountToken (e.g. purchases
+/// made before the client started tagging them). Relies on a prior client
+/// verify having stored externalId. Returns null when unknown.
+export async function findUserIdBySubscriptionExternalId(
+  externalId: string,
+): Promise<string | null> {
+  if (!externalId) return null;
+  const sub = await prisma.subscription.findFirst({
+    where: { externalId },
+    select: { userId: true },
+  });
+  return sub?.userId ?? null;
+}
+
+/// Does a user with this id exist? Used to validate an appAccountToken
+/// (which we set to User.id at purchase) before acting on a notification.
+export async function userExists(userId: string): Promise<boolean> {
+  if (!userId) return false;
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+  return u !== null;
+}
+
+/// Apply an authoritative subscription state (from an App Store Server
+/// Notification or a validated purchase) to a user: record the Subscription row
+/// and grant/revoke Pro accordingly. Idempotent — safe to call on every renewal.
+export async function applyAppleSubscriptionState(
+  userId: string,
+  opts: { active: boolean; status: string; plan: string; externalId?: string },
+) {
+  await recordSubscription(userId, {
+    status: opts.status,
+    plan: opts.plan,
+    externalId: opts.externalId,
+  });
+  if (opts.active) {
+    await setVerified(userId);
+    return;
+  }
+  // Subscription lapsed/refunded/revoked. Only clear verification that the
+  // subscription itself granted — NEVER strip an admin/official grant
+  // (verifiedRole set) just because a subscription ended.
+  const u = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { verifiedRole: true },
+  });
+  if (u && u.verifiedRole == null) {
+    await removeVerified(userId);
+  }
+}
+
 export async function removeVerified(userId: string) {
   await findUserOrThrow(userId);
   // Losing verification also forfeits the private-profile privilege (only
