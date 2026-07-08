@@ -99,6 +99,33 @@ function getVerifier(environment: Environment): SignedDataVerifier {
   return v;
 }
 
+/**
+ * Run a verification with the most-likely environment first, falling back to the
+ * other one if it throws. Apple signs sandbox and production data with the same
+ * roots but the verifier is environment-scoped, so a mis-detected environment
+ * would otherwise reject a perfectly valid payload. The signature is fully
+ * checked in every attempt, so trying both can't weaken security — it only
+ * removes environment guessing as a failure mode.
+ */
+async function withEitherEnvironment<T>(
+  preferred: Environment,
+  fn: (verifier: SignedDataVerifier, environment: Environment) => Promise<T>,
+): Promise<T> {
+  const order =
+    preferred === Environment.SANDBOX
+      ? [Environment.SANDBOX, Environment.PRODUCTION]
+      : [Environment.PRODUCTION, Environment.SANDBOX];
+  let lastErr: unknown;
+  for (const environment of order) {
+    try {
+      return await fn(getVerifier(environment), environment);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
 // The auto-renewable subscription products we sell. A valid receipt/transaction
 // must carry one of these for us to grant Pro/verification.
 const OUR_PRODUCT_IDS = new Set<string>([
@@ -142,37 +169,37 @@ async function validateSignedTransaction(jws: string): Promise<AppleValidationRe
     return { valid: false, active: false, reason: 'validation_not_configured' };
   }
   try {
-    const environment = peekJwsEnvironment(jws);
-    const verifier = getVerifier(environment);
-    // Throws VerificationException if the signature/bundle id/chain is invalid.
-    const tx = await verifier.verifyAndDecodeTransaction(jws);
+    return await withEitherEnvironment(peekJwsEnvironment(jws), async (verifier, environment) => {
+      // Throws VerificationException if the signature/bundle id/chain is invalid.
+      const tx = await verifier.verifyAndDecodeTransaction(jws);
 
-    const productId = tx.productId;
-    if (!productId || !OUR_PRODUCT_IDS.has(productId)) {
-      return { valid: true, active: false, environment, reason: 'no_matching_product' };
-    }
+      const productId = tx.productId;
+      if (!productId || !OUR_PRODUCT_IDS.has(productId)) {
+        return { valid: true, active: false, environment, reason: 'no_matching_product' };
+      }
 
-    // A refunded/revoked transaction carries revocationDate — never treat it as
-    // active even if its expiry hasn't passed yet.
-    if (typeof tx.revocationDate === 'number') {
-      return { valid: true, active: false, productId, environment, reason: 'revoked' };
-    }
+      // A refunded/revoked transaction carries revocationDate — never treat it as
+      // active even if its expiry hasn't passed yet.
+      if (typeof tx.revocationDate === 'number') {
+        return { valid: true, active: false, productId, environment, reason: 'revoked' };
+      }
 
-    // Auto-renewable subs carry expiresDate (ms). Absent → treat as active
-    // (non-expiring product) since the signature already proved the purchase.
-    const expiresAtMs = typeof tx.expiresDate === 'number' ? tx.expiresDate : undefined;
-    const active = expiresAtMs === undefined || expiresAtMs > Date.now();
-    return {
-      valid: true,
-      active,
-      productId,
-      originalTransactionId: tx.originalTransactionId,
-      expiresAtMs,
-      environment,
-      reason: active ? undefined : 'expired',
-    };
+      // Auto-renewable subs carry expiresDate (ms). Absent → treat as active
+      // (non-expiring product) since the signature already proved the purchase.
+      const expiresAtMs = typeof tx.expiresDate === 'number' ? tx.expiresDate : undefined;
+      const active = expiresAtMs === undefined || expiresAtMs > Date.now();
+      return {
+        valid: true,
+        active,
+        productId,
+        originalTransactionId: tx.originalTransactionId,
+        expiresAtMs,
+        environment,
+        reason: active ? undefined : 'expired',
+      };
+    });
   } catch (err) {
-    logger.warn({ err: (err as Error).message }, 'StoreKit 2 transaction verification failed');
+    logger.warn({ err: describeVerificationError(err) }, 'StoreKit 2 transaction verification failed');
     return { valid: false, active: false, reason: 'jws_verification_failed' };
   }
 }
@@ -206,27 +233,27 @@ export async function verifyAndDecodeAppleNotification(
   if (APPLE_ROOT_CERTS.length === 0) {
     throw new Error('Apple root certs not loaded — cannot verify notifications');
   }
-  const environment = peekJwsEnvironment(signedPayload);
-  const verifier = getVerifier(environment);
-  const decoded = await verifier.verifyAndDecodeNotification(signedPayload);
+  return withEitherEnvironment(peekJwsEnvironment(signedPayload), async (verifier) => {
+    const decoded = await verifier.verifyAndDecodeNotification(signedPayload);
 
-  let transaction: AppleNotificationResult['transaction'];
-  const signedTx = decoded.data?.signedTransactionInfo;
-  if (signedTx) {
-    const tx = await verifier.verifyAndDecodeTransaction(signedTx);
-    transaction = {
-      productId: tx.productId,
-      appAccountToken: tx.appAccountToken,
-      originalTransactionId: tx.originalTransactionId,
-      expiresAtMs: typeof tx.expiresDate === 'number' ? tx.expiresDate : undefined,
-      revoked: typeof tx.revocationDate === 'number',
+    let transaction: AppleNotificationResult['transaction'];
+    const signedTx = decoded.data?.signedTransactionInfo;
+    if (signedTx) {
+      const tx = await verifier.verifyAndDecodeTransaction(signedTx);
+      transaction = {
+        productId: tx.productId,
+        appAccountToken: tx.appAccountToken,
+        originalTransactionId: tx.originalTransactionId,
+        expiresAtMs: typeof tx.expiresDate === 'number' ? tx.expiresDate : undefined,
+        revoked: typeof tx.revocationDate === 'number',
+      };
+    }
+    return {
+      notificationType: String(decoded.notificationType ?? ''),
+      subtype: decoded.subtype ? String(decoded.subtype) : undefined,
+      transaction,
     };
-  }
-  return {
-    notificationType: String(decoded.notificationType ?? ''),
-    subtype: decoded.subtype ? String(decoded.subtype) : undefined,
-    transaction,
-  };
+  });
 }
 
 export interface AppleValidationResult {
