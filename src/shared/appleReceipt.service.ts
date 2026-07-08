@@ -3,9 +3,48 @@ import path from 'path';
 import {
   SignedDataVerifier,
   Environment,
+  VerificationStatus,
 } from '@apple/app-store-server-library';
 import { env } from '../config/env';
 import { logger } from './logger';
+
+// Human-readable reason for a SignedDataVerifier failure. The library throws a
+// VerificationException whose `.message` is empty — the useful detail is in
+// `.status`. This turns that number into something diagnosable in logs.
+export function describeVerificationError(err: unknown): string {
+  const status = (err as { status?: number })?.status;
+  switch (status) {
+    case VerificationStatus.VERIFICATION_FAILURE: return 'VERIFICATION_FAILURE (signature/chain)';
+    case VerificationStatus.RETRYABLE_VERIFICATION_FAILURE: return 'RETRYABLE_VERIFICATION_FAILURE';
+    case VerificationStatus.INVALID_APP_IDENTIFIER: return 'INVALID_APP_IDENTIFIER (bundleId/appAppleId mismatch)';
+    case VerificationStatus.INVALID_ENVIRONMENT: return 'INVALID_ENVIRONMENT';
+    case VerificationStatus.INVALID_CHAIN_LENGTH: return 'INVALID_CHAIN_LENGTH';
+    case VerificationStatus.INVALID_CERTIFICATE: return 'INVALID_CERTIFICATE (root certs?)';
+    case VerificationStatus.FAILURE: return 'FAILURE (payload shape/validator)';
+    default: return status !== undefined ? `status_${status}` : ((err as Error)?.message || String(err));
+  }
+}
+
+/**
+ * Decode the top-level claims of a signed payload WITHOUT verifying, purely for
+ * diagnostics — so we can log what Apple actually sent (bundleId / appAppleId /
+ * environment) vs. what this server expects, when verification is rejected.
+ */
+export function peekPayloadClaims(signedPayload: string): Record<string, unknown> {
+  try {
+    const p = JSON.parse(Buffer.from(signedPayload.split('.')[1], 'base64url').toString('utf8'));
+    const scope = p.data ?? p.summary ?? p;
+    return {
+      notificationType: p.notificationType,
+      subtype: p.subtype,
+      bundleId: scope.bundleId,
+      appAppleId: scope.appAppleId,
+      environment: scope.environment,
+    };
+  } catch {
+    return { peekError: true };
+  }
+}
 
 // Apple's classic receipt-validation endpoints (StoreKit 1). Always call
 // production first; a receipt generated in the sandbox returns status 21007,

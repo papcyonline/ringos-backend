@@ -3,8 +3,11 @@ import { logger } from '../../shared/logger';
 import {
   verifyAndDecodeAppleNotification,
   planFromProductId,
+  describeVerificationError,
+  peekPayloadClaims,
   AppleNotificationResult,
 } from '../../shared/appleReceipt.service';
+import { env } from '../../config/env';
 import * as userService from '../user/user.service';
 
 const router = Router();
@@ -126,9 +129,16 @@ router.post('/appstore', async (req: Request, res: Response) => {
     notification = await verifyAndDecodeAppleNotification(signedPayload);
   } catch (err) {
     // Bad signature / wrong bundle / wrong environment — reject (don't ack a
-    // forgery). Apple retries transient failures; a genuinely invalid payload
-    // won't be "fixed" by a 200.
-    logger.warn({ err: (err as Error).message }, 'Rejected App Store notification (verification failed)');
+    // forgery). Log the decoded status + what Apple sent vs. what we expect so a
+    // config mismatch (bundleId / appAppleId) is obvious.
+    logger.warn(
+      {
+        reason: describeVerificationError(err),
+        sent: peekPayloadClaims(signedPayload),
+        expected: { bundleId: env.APPLE_BUNDLE_ID, appAppleId: env.APPLE_APP_APPLE_ID },
+      },
+      'Rejected App Store notification (verification failed)',
+    );
     return res.status(400).json({ error: 'invalid signedPayload' });
   }
 
