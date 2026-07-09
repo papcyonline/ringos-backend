@@ -7,6 +7,7 @@ import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { deleteFromR2 } from '../../shared/r2.service';
 import { moderateImageBuffer, moderateVideoUrl } from '../../shared/moderation.service';
+import { checkCaptionLinks } from '../../shared/urlSafety';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
 import { notifyFollowersOfNewStory, notifyStoryOwnerOfView, checkStoryMilestone } from './story.notify';
 import { markStoryNotificationsAsRead, markStoryLikeNotificationsAsRead } from '../notification/notification.service';
@@ -107,6 +108,20 @@ export async function createStory(
   const expiresAt = permanent
     ? new Date('2099-12-31T23:59:59Z')
     : new Date(Date.now() + hoursToExpire * 60 * 60 * 1000);
+
+  // ── Link safety (caption URLs) ──────────────────────────────
+  // Clickable story links are URLs typed into a caption; block adult/dangerous
+  // ones before anything is uploaded so they never reach viewers.
+  if (slidesMetadata) {
+    for (const meta of slidesMetadata) {
+      const verdict = checkCaptionLinks(meta?.caption);
+      if (!verdict.safe) {
+        const err: any = new BadRequestError(verdict.reason || 'This link isn’t allowed.');
+        err.code = 'UNSAFE_LINK';
+        throw err;
+      }
+    }
+  }
 
   // ── Content moderation (pre-upload) ─────────────────────────
   // Image/text slides are checked BEFORE upload so explicit bytes never
@@ -1325,6 +1340,15 @@ export async function updateSlideCaption(slideId: string, userId: string, captio
 
   if (!slide) return { updated: false, reason: 'not_found' as const };
   if (slide.story.userId !== userId) return { updated: false, reason: 'not_owner' as const };
+
+  // Same link-safety gate as createStory — a caption edit mustn't smuggle in a
+  // porn/dangerous URL after the fact.
+  const verdict = checkCaptionLinks(caption);
+  if (!verdict.safe) {
+    const err: any = new BadRequestError(verdict.reason || 'This link isn’t allowed.');
+    err.code = 'UNSAFE_LINK';
+    throw err;
+  }
 
   await prisma.storySlide.update({
     where: { id: slideId },

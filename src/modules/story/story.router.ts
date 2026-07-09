@@ -473,7 +473,12 @@ router.patch(
       }
 
       res.json({ success: true });
-    } catch (error) {
+    } catch (error: any) {
+      // Surface link-safety / validation 400s with their code so the app can
+      // show the specific reason (mirrors the create-story error shape).
+      if (error?.statusCode === 400) {
+        return res.status(400).json({ error: error.message, code: error.code });
+      }
       logger.error({ error }, 'Error updating slide caption');
       res.status(500).json({ error: 'Failed to update caption' });
     }
