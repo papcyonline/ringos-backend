@@ -31,7 +31,15 @@ function deleteSlideMedia(cloudinaryId: string, type: 'IMAGE' | 'VIDEO' | 'TEXT'
   return cloudinaryService.deleteFile(cloudinaryId, resourceType);
 }
 
-export const ALLOWED_REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '👏'] as const;
+// Must stay in sync with the app's story/reel reaction picker
+// (_kStoryReactionEmojis + _kMoreReactionEmojis in story_viewer_screen.dart) —
+// any emoji the picker (or the 👍 like button) can send must be accepted here,
+// or reactToStory 400s and the reaction silently fails to persist (e.g. the 👍
+// like not sticking, so the filled-thumb state vanished on re-view).
+export const ALLOWED_REACTION_EMOJIS = [
+  '❤️', '👍', '😂', '😮', '😢', '🙏',
+  '🔥', '👏', '💯', '😍', '🤯', '🥰', '🥳', '😎', '💀', '🙌',
+] as const;
 const ALLOWED_REACTION_SET = new Set<string>(ALLOWED_REACTION_EMOJIS);
 
 // ─── Feed Cache ─────────────────────────────────────────────
