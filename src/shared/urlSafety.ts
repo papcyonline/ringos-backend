@@ -20,13 +20,35 @@ const URL_REGEX =
 const ADULT_TLDS = ['.xxx', '.porn', '.porno', '.adult', '.sex', '.sexy'];
 
 // Adult host tokens. Every entry is chosen so that a plain substring match will
-// NOT hit ordinary words/domains (e.g. we deliberately avoid bare "sex", which
-// lives inside "essex"/"sussex"). Matched against the hostname only.
+// NOT hit ordinary words/domains — we deliberately avoid bare "sex" (essex),
+// "anal" (analytics), "cam" (camera), "jav" (java) and "kink" (kinkos), using
+// compounds/brands instead. Matched against the hostname only. Note most
+// *porn* / *xxx* / *hentai* sites are already caught by those three tokens.
 const ADULT_HOST_KEYWORDS = [
-  'porn', 'xvideos', 'xnxx', 'xhamster', 'redtube', 'youporn', 'brazzers',
-  'onlyfans', 'fansly', 'chaturbate', 'stripchat', 'bongacams', 'livejasmin',
-  'myfreecams', 'camsoda', 'adultfriendfinder', 'hentai', 'rule34', 'spankbang',
-  'sexcam', 'camgirl', 'nsfw', 'fapello', 'xxxvideo', 'pornhub',
+  // core tokens (catch the long tail of *porn* / *xxx* / *hentai* domains)
+  'porn', 'xxx', 'hentai',
+  // sex-* compounds (bare "sex" is unsafe)
+  'sexcam', 'sexchat', 'sextube', 'sextape', 'sexvid',
+  // tube / aggregator sites without a core token
+  'xvideos', 'xnxx', 'xhamster', 'redtube', 'jizz', 'tube8', 'spankbang',
+  'spankwire', 'keezmovies', 'extremetube', 'beeg', 'tnaflix', 'empflix',
+  'drtuber', 'nuvid', '4tube', 'thumbzilla', 'motherless', 'youjizz',
+  // studios / networks
+  'brazzers', 'bangbros', 'realitykings', 'naughtyamerica', 'mofos',
+  'digitalplayground', 'teamskeet', 'twistys', 'evilangel', 'metart', 'tushy',
+  // creator / leak sites
+  'onlyfans', 'fansly', 'fapello', 'faphouse', 'redgifs', 'erome',
+  'coomer', 'kemono', 'thothub', 'simpcity',
+  // live cam sites (bare "cam" is unsafe)
+  'chaturbate', 'stripchat', 'bongacams', 'livejasmin', 'myfreecams',
+  'camsoda', 'cam4', 'camwhores', 'recurbate', 'streamate', 'flirt4free',
+  'imlive', 'xlovecam', 'camgirl',
+  // hentai / JAV (bare "jav" is unsafe)
+  'nhentai', 'hanime', 'fakku', 'iwara', 'gelbooru', 'danbooru', 'rule34',
+  'javhd', 'javbus', 'javfinder', 'javlibrary', 'javguru',
+  // misc strong signals
+  'adultfriendfinder', 'adultwork', 'nsfw', 'milf', 'boobs', 'nudes',
+  'escort', 'fuckbook',
 ];
 
 // Direct downloads we never want a story link to hand off to.
