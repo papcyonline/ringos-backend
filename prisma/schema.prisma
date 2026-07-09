@@ -233,6 +233,10 @@ model User {
   // "new followers" push digest only counts followers gained since they
   // actually looked — not everyone from the last 24h. NULL = never checked.
   lastFollowerCheckAt DateTime?
+  // Same idea for the message-requests inbox: the "you have N message
+  // requests" digest only counts requests that arrived since the user last
+  // opened the Requests screen. NULL = never checked.
+  lastRequestCheckAt  DateTime?
   availableFor  String[]  @default(["text"])
   availableUntil DateTime?
   isVerified    Boolean   @default(false)

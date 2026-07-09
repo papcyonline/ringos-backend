@@ -89,15 +89,25 @@ async function lastDigestAt(
 }
 
 /**
- * Pending message-request count for this user. Uses the SAME where-clause
- * as the Message Requests screen list (messageRequestWhere) so the digest
- * count and the on-screen list always agree — without the shared filter the
- * digest counted ghost/empty pending conversations (e.g. "16") that the
- * screen excludes (which showed "1").
+ * Count message requests that are NEW since [since] — i.e. a real (non-system,
+ * not-deleted) message from the stranger arrived after the user last opened
+ * their Requests inbox. Builds on the SAME base filter as the on-screen list
+ * (messageRequestWhere) so the two never drift; it just adds the "arrived
+ * after [since]" constraint so the digest stops re-nagging about requests the
+ * user has already reviewed.
  */
-async function pendingRequestCount(userId: string): Promise<number> {
+async function newRequestCount(userId: string, since: Date): Promise<number> {
   return prisma.conversation.count({
-    where: messageRequestWhere(userId),
+    where: {
+      ...messageRequestWhere(userId),
+      messages: {
+        some: {
+          isSystem: false,
+          NOT: { deletedFor: { has: userId } },
+          createdAt: { gt: since },
+        },
+      },
+    },
   });
 }
 
@@ -116,7 +126,18 @@ async function maybeFireRequestsDigest(userId: string): Promise<boolean> {
   const last = await lastDigestAt(userId, 'MESSAGE_REQUESTS_DIGEST');
   if (last && Date.now() - last.getTime() < DAY_MS) return false;
 
-  const count = await pendingRequestCount(userId);
+  // Only count requests that arrived since the user last opened their Requests
+  // inbox (falling back to the last digest, then a 24h floor) so we never
+  // re-nag about requests they've already reviewed.
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { lastRequestCheckAt: true },
+  });
+  const candidates: number[] = [Date.now() - DAY_MS];
+  if (last) candidates.push(last.getTime());
+  if (user?.lastRequestCheckAt) candidates.push(user.lastRequestCheckAt.getTime());
+  const since = new Date(Math.max(...candidates));
+  const count = await newRequestCount(userId, since);
   if (count <= 0) return false;
 
   const copy = requestsCopy(count);

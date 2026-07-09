@@ -744,6 +744,18 @@ export function messageRequestWhere(userId: string) {
 }
 
 /**
+ * Record that the user just opened their message-requests inbox. Stamps
+ * `lastRequestCheckAt` so the "you have N message requests" push digest only
+ * counts requests that arrive after this moment (not ones already reviewed).
+ */
+export async function markMessageRequestsSeen(userId: string) {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { lastRequestCheckAt: new Date() },
+  });
+}
+
+/**
  * Pending message requests addressed to this user (i.e. someone who
  * doesn't follow them initiated a DM). Mirrors the shape of
  * getConversations so the frontend can render with the same widgets.

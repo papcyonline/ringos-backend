@@ -153,6 +153,20 @@ router.get(
   },
 );
 
+// POST /conversations/requests/seen - the user opened their requests inbox.
+// Stamps "last checked" so the requests push digest only counts requests that
+// arrive after now, not ones the user already reviewed.
+router.post(
+  '/conversations/requests/seen',
+  authenticate,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      await chatService.markMessageRequestsSeen(req.user!.userId);
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  },
+);
+
 // POST /conversations/:id/accept - Accept a pending message request
 router.post(
   '/conversations/:id/accept',
