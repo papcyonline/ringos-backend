@@ -77,6 +77,9 @@ interface SlideMetadata {
   // so the router can hand JSON.parse output through without tight typing.
   music?: Record<string, unknown>;
   videoEdits?: Record<string, unknown>;
+  // Native text-story payload (text + gradient + font + formatting) so the
+  // viewer renders the body as live, tappable text.
+  textStory?: Record<string, unknown>;
 }
 
 // ─── Create Story ───────────────────────────────────────────
@@ -109,16 +112,20 @@ export async function createStory(
     ? new Date('2099-12-31T23:59:59Z')
     : new Date(Date.now() + hoursToExpire * 60 * 60 * 1000);
 
-  // ── Link safety (caption URLs) ──────────────────────────────
-  // Clickable story links are URLs typed into a caption; block adult/dangerous
-  // ones before anything is uploaded so they never reach viewers.
+  // ── Link safety (caption + text-story body URLs) ────────────
+  // Clickable story links are URLs typed into a caption OR into a text story's
+  // body; block adult/dangerous ones before anything is uploaded so they never
+  // reach viewers.
   if (slidesMetadata) {
     for (const meta of slidesMetadata) {
-      const verdict = checkCaptionLinks(meta?.caption);
-      if (!verdict.safe) {
-        const err: any = new BadRequestError(verdict.reason || 'This link isn’t allowed.');
-        err.code = 'UNSAFE_LINK';
-        throw err;
+      const bodyText = (meta?.textStory as { text?: string } | undefined)?.text;
+      for (const source of [meta?.caption, bodyText]) {
+        const verdict = checkCaptionLinks(source);
+        if (!verdict.safe) {
+          const err: any = new BadRequestError(verdict.reason || 'This link isn’t allowed.');
+          err.code = 'UNSAFE_LINK';
+          throw err;
+        }
       }
     }
   }
@@ -151,6 +158,7 @@ export async function createStory(
       const metaBlob: Record<string, any> = {};
       if (meta?.music) metaBlob.music = meta.music;
       if (meta?.videoEdits) metaBlob.videoEdits = meta.videoEdits;
+      if (meta?.textStory) metaBlob.textStory = meta.textStory;
       const slideMetadata: Record<string, any> | undefined =
           Object.keys(metaBlob).length > 0 ? metaBlob : undefined;
       if (slideType === 'VIDEO') {
