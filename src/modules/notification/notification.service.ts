@@ -112,6 +112,25 @@ export async function markStoryNotificationsAsRead(userId: string, storyId: stri
 }
 
 /**
+ * Mark the STORY_LIKED notifications for `storyId` as read for its owner.
+ * Triggered when the owner opens their own story's viewers/likers sheet (the
+ * list that shows exactly who liked/reacted) — so those already-seen likes stop
+ * counting in the bell. STORY_LIKED covers both ❤️ likes and emoji reactions,
+ * both keyed by data.storyId, so this clears both.
+ */
+export async function markStoryLikeNotificationsAsRead(userId: string, storyId: string) {
+  await prisma.notification.updateMany({
+    where: {
+      userId,
+      isRead: false,
+      type: 'STORY_LIKED',
+      data: { path: ['storyId'], equals: storyId },
+    },
+    data: { isRead: true },
+  });
+}
+
+/**
  * Mark every MISSED_CALL notification for `userId` as read. Triggered by the
  * client when the calls tab is opened — the missed-call list is the user's
  * inbox for these, so seeing the tab counts as seeing the entries.

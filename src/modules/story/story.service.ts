@@ -9,7 +9,7 @@ import { deleteFromR2 } from '../../shared/r2.service';
 import { moderateImageBuffer, moderateVideoUrl } from '../../shared/moderation.service';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
 import { notifyFollowersOfNewStory, notifyStoryOwnerOfView, checkStoryMilestone } from './story.notify';
-import { markStoryNotificationsAsRead } from '../notification/notification.service';
+import { markStoryNotificationsAsRead, markStoryLikeNotificationsAsRead } from '../notification/notification.service';
 import * as cache from '../../shared/redis.service';
 import { getIO } from '../../config/socket';
 
@@ -1005,6 +1005,12 @@ export async function getStorySlideViewers(slideId: string, userId: string) {
     return null;
   }
 
+  // The owner is looking at exactly who liked/reacted to this story, so clear
+  // the STORY_LIKED alerts from their bell. Fire-and-forget + idempotent.
+  void markStoryLikeNotificationsAsRead(userId, slide.story.id).catch((err) => {
+    logger.warn({ err, storyId: slide.story.id, userId }, 'Failed to clear story-like notifications on viewers open');
+  });
+
   const views = await prisma.storySlideView.findMany({
     where: { slideId, isStealth: false },
     orderBy: { createdAt: 'desc' },
@@ -1045,6 +1051,11 @@ export async function getStoryViewers(storyId: string, userId: string) {
   if (!story || story.userId !== userId) {
     return null;
   }
+
+  // Owner is viewing who liked/reacted — clear the STORY_LIKED bell alerts.
+  void markStoryLikeNotificationsAsRead(userId, storyId).catch((err) => {
+    logger.warn({ err, storyId, userId }, 'Failed to clear story-like notifications on viewers open');
+  });
 
   const views = await prisma.storyView.findMany({
     where: { storyId, isStealth: false },
