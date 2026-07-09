@@ -246,6 +246,18 @@ router.get('/me/following', authenticate, async (req: AuthRequest, res: Response
   }
 });
 
+// POST /me/followers/seen - the user opened their own followers list. Stamp
+// "last checked" (so the new-followers digest only counts follows gained after
+// this) and clear their NEW_FOLLOWER bell notifications.
+router.post('/me/followers/seen', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    await followService.markFollowersSeen(req.user!.userId);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /me/verify - Grant verification/Pro AFTER validating the store receipt
 // server-side. iOS receipts are checked with Apple (never trust the client).
 // Body: { platform: 'ios'|'android', receiptData?: string, productId?: string }.

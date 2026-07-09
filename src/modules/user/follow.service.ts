@@ -1,6 +1,20 @@
 import { prisma } from '../../config/database';
 import { BadRequestError, ConflictError, NotFoundError } from '../../shared/errors';
 import { invalidateFeedCache } from '../story/story.service';
+import { markNewFollowerNotificationsAsRead } from '../notification/notification.service';
+
+/**
+ * Record that the user just looked at their own followers list: stamp
+ * `lastFollowerCheckAt` (so the new-followers push digest only counts followers
+ * gained after this moment) and clear their NEW_FOLLOWER bell notifications.
+ */
+export async function markFollowersSeen(userId: string) {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { lastFollowerCheckAt: new Date() },
+  });
+  await markNewFollowerNotificationsAsRead(userId);
+}
 
 export async function followUser(followerId: string, followingId: string) {
   if (followerId === followingId) {

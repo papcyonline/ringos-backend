@@ -152,11 +152,19 @@ async function maybeFireFollowersDigest(userId: string): Promise<boolean> {
   const last = await lastDigestAt(userId, 'NEW_FOLLOWERS_DIGEST');
   if (last && Date.now() - last.getTime() < DAY_MS) return false;
 
-  // "New since" = whichever is more recent of the last digest or 24 h
-  // ago. Without the floor, a user whose last digest was a week ago
-  // would suddenly get a week's worth of followers reported.
-  const floor = new Date(Date.now() - DAY_MS);
-  const since = last && last > floor ? last : floor;
+  // "New since" = the MOST RECENT of: when the user last opened their followers
+  // list, the last digest, and a 24h floor. Using lastFollowerCheckAt is what
+  // stops the digest from re-reporting followers the user already scrolled
+  // through in-app. The 24h floor caps a first-time / long-idle user so they
+  // don't get a week's worth reported at once.
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { lastFollowerCheckAt: true },
+  });
+  const candidates: number[] = [Date.now() - DAY_MS];
+  if (last) candidates.push(last.getTime());
+  if (user?.lastFollowerCheckAt) candidates.push(user.lastFollowerCheckAt.getTime());
+  const since = new Date(Math.max(...candidates));
   const count = await newFollowerCount(userId, since);
   if (count < FOLLOWERS_DIGEST_MIN) return false;
 

@@ -229,6 +229,10 @@ model User {
   isAnonymous   Boolean   @default(true)
   isOnline      Boolean   @default(false)
   lastSeenAt    DateTime?
+  // When the user last opened their own followers list. Used so the
+  // "new followers" push digest only counts followers gained since they
+  // actually looked — not everyone from the last 24h. NULL = never checked.
+  lastFollowerCheckAt DateTime?
   availableFor  String[]  @default(["text"])
   availableUntil DateTime?
   isVerified    Boolean   @default(false)

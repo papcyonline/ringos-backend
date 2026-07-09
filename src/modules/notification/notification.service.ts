@@ -127,6 +127,23 @@ export async function markMissedCallNotificationsAsRead(userId: string) {
   });
 }
 
+/**
+ * Mark every NEW_FOLLOWER notification for `userId` as read. Triggered when the
+ * user opens their followers list — that list is the inbox for these, so seeing
+ * it counts as seeing the follows. Keeps the bell in sync with the followers
+ * screen (previously only opening the bell itself cleared them).
+ */
+export async function markNewFollowerNotificationsAsRead(userId: string) {
+  await prisma.notification.updateMany({
+    where: {
+      userId,
+      isRead: false,
+      type: 'NEW_FOLLOWER',
+    },
+    data: { isRead: true },
+  });
+}
+
 export async function deleteNotification(userId: string, notificationId: string) {
   await prisma.notification.deleteMany({
     where: { id: notificationId, userId },
