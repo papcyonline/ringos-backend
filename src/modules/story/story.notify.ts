@@ -4,6 +4,7 @@ import {
   createNotification,
   sendDataPushToUser,
 } from '../notification/notification.service';
+import { getBlockedUserIds } from '../spotlight/spotlight.service';
 
 /**
  * Send a "X viewed your story" push + in-app notification to the story
@@ -44,34 +45,83 @@ export async function notifyFollowersOfNewStory(
   });
   if (!author) return;
 
-  // Followers = users who follow the author (we notify *them*).
-  const follows = await prisma.follow.findMany({
-    where: { followingId: authorId },
-    select: { followerId: true },
+  // Throttle: the story tray shows ONE ring per author, so we announce only
+  // the author's first active story. If they already have another live,
+  // ephemeral, non-channel story, their audience was already pinged — extra
+  // posts just add slides to the same ring and shouldn't re-buzz anyone.
+  // Resets naturally ~24h later as that story expires. Mirrors the "notify at
+  // most once per window" idiom the engagement digests use.
+  //
+  // Permanent stories are deliberately excluded from the count: they never
+  // expire, so counting them would suppress every future announcement for any
+  // user who has ever posted one (a premium feature).
+  const now = new Date();
+  const priorActive = await prisma.story.count({
+    where: {
+      userId: authorId,
+      channelId: null,
+      id: { not: storyId },
+      isPermanent: false,
+      expiresAt: { gt: now },
+    },
   });
-  if (follows.length === 0) return;
+  if (priorActive > 0) return;
 
-  // Exclude users who muted this author's stories.
-  const muted = await prisma.storyMute.findMany({
-    where: { mutedUserId: authorId },
-    select: { muterId: true },
-  });
-  const mutedSet = new Set(muted.map((m) => m.muterId));
+  // A new story surfaces in TWO different feeds, so it has two audiences:
+  //   - people who FOLLOW the author -> see it in GET /stories/following
+  //   - people the author FOLLOWS    -> see it in GET /stories/feed
+  // We notify both with copy matching where they'll find it. Mutual follows
+  // land in both sets; they get the "#1" message only (deduped below) so a
+  // single story never double-pings.
+  const [followers, following, muted, hidden, blocked] = await Promise.all([
+    prisma.follow.findMany({
+      where: { followingId: authorId },
+      select: { followerId: true },
+    }),
+    prisma.follow.findMany({
+      where: { followerId: authorId },
+      select: { followingId: true },
+    }),
+    prisma.storyMute.findMany({
+      where: { mutedUserId: authorId },
+      select: { muterId: true },
+    }),
+    prisma.storyHide.findMany({
+      where: { ownerId: authorId },
+      select: { hiddenUserId: true },
+    }),
+    getBlockedUserIds(authorId),
+  ]);
 
-  const targets = follows
+  // Recipients the story would never reach anyway — mirror the feed's own
+  // audience filters so we never ping someone who muted this author, whom the
+  // author blocked (either direction), or whom the author hid their story from.
+  const excluded = new Set<string>(blocked);
+  for (const m of muted) excluded.add(m.muterId);
+  for (const h of hidden) excluded.add(h.hiddenUserId);
+
+  // #1 - "posted a new story" -> users who follow the author (Following feed).
+  const followerIds = followers
     .map((f) => f.followerId)
-    .filter((id) => !mutedSet.has(id));
-  if (targets.length === 0) return;
+    .filter((id) => !excluded.has(id));
+
+  // #2 - "who follows you posted a story" -> users the author follows (main
+  // feed), excluding mutuals already covered by #1 so they're pinged once.
+  const followerSet = new Set(followerIds);
+  const followingIds = following
+    .map((f) => f.followingId)
+    .filter((id) => !excluded.has(id) && !followerSet.has(id));
+
+  if (followerIds.length === 0 && followingIds.length === 0) return;
 
   const title = author.displayName;
-  const body = 'posted a new story';
 
-  // In-app notification (DB row + socket event) + FCM data push, in parallel.
-  // sendDataPushToUser reads `senderName` and `content` from the payload to
-  // build the iOS lock-screen alert title/body — without these the push
-  // would show "Yomeet / New message" because the fallbacks kick in.
-  await Promise.allSettled(
-    targets.flatMap((userId) => [
+  // Fan out one audience with a given body copy. In-app notification (DB row +
+  // socket event) + FCM data push, in parallel. sendDataPushToUser reads
+  // `senderName` and `content` to build the iOS lock-screen alert title/body -
+  // without them the push falls back to "Yomeet / New message".
+  const fanOut = (userIds: string[], body: string) =>
+    userIds.flatMap((userId) => [
       createNotification({
         userId,
         type: 'NEW_STORY',
@@ -92,11 +142,20 @@ export async function notifyFollowersOfNewStory(
         authorName: author.displayName,
         avatarUrl: author.avatarUrl ?? '',
       }),
-    ]),
-  );
+    ]);
+
+  await Promise.allSettled([
+    ...fanOut(followerIds, 'posted a new story'),
+    ...fanOut(followingIds, 'who follows you posted a story'),
+  ]);
 
   logger.info(
-    { storyId, authorId, recipientCount: targets.length },
+    {
+      storyId,
+      authorId,
+      followerCount: followerIds.length,
+      followingCount: followingIds.length,
+    },
     'Notified followers of new story',
   );
 }
