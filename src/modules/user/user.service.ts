@@ -809,7 +809,15 @@ export async function removeVerified(userId: string) {
   return user;
 }
 
-export async function adminSetVerified(identifier: string, verified: boolean, role?: string) {
+export async function adminSetVerified(
+  identifier: string,
+  verified: boolean,
+  role?: string,
+  // Time-limited grant: when set (and verifying), verification auto-expires
+  // after this many days via the verificationExpiry job. Omit/undefined =
+  // permanent (verifiedUntil stays NULL, never auto-cleared).
+  durationDays?: number,
+) {
   // Find user by ID, email, or displayName
   const user = await prisma.user.findFirst({
     where: {
@@ -822,12 +830,21 @@ export async function adminSetVerified(identifier: string, verified: boolean, ro
   });
   if (!user) throw new NotFoundError('User not found');
 
+  const now = new Date();
+  const verifiedUntil =
+    verified && durationDays && durationDays > 0
+      ? new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000)
+      : null;
+
   const updated = await prisma.user.update({
     where: { id: user.id },
     data: {
       isVerified: verified,
-      verifiedAt: verified ? new Date() : null,
+      verifiedAt: verified ? now : null,
       verifiedRole: verified ? (role || null) : null,
+      // NULL = permanent; a future date = auto-expiring (cleared by the
+      // verificationExpiry job). Always reset on unverify.
+      verifiedUntil,
       // Unverifying forfeits the private-profile privilege — force public.
       ...(verified ? {} : { isProfilePublic: true }),
     },
@@ -838,6 +855,7 @@ export async function adminSetVerified(identifier: string, verified: boolean, ro
       isVerified: true,
       verifiedAt: true,
       verifiedRole: true,
+      verifiedUntil: true,
     },
   });
 

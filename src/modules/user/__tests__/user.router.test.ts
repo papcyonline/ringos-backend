@@ -267,6 +267,17 @@ describe('user.router', () => {
       process.env.ADMIN_SECRET = original;
     });
 
+    it('rejects when durationDays is not a positive number', async () => {
+      const original = process.env.ADMIN_SECRET;
+      process.env.ADMIN_SECRET = 'matching-key';
+      const res = await request(makeApp())
+        .post('/users/admin/verify')
+        .set('x-admin-secret', 'matching-key')
+        .send({ user: 'a@b.com', verified: true, durationDays: -5 });
+      expect([400, 429]).toContain(res.status);
+      process.env.ADMIN_SECRET = original;
+    });
+
     it('succeeds with valid secret + body', async () => {
       const original = process.env.ADMIN_SECRET;
       process.env.ADMIN_SECRET = 'matching-key';
@@ -275,6 +286,20 @@ describe('user.router', () => {
         .set('x-admin-secret', 'matching-key')
         .send({ user: 'a@b.com', verified: true });
       expect([200, 429]).toContain(res.status);
+      process.env.ADMIN_SECRET = original;
+    });
+
+    it('accepts a valid durationDays and passes it through', async () => {
+      const original = process.env.ADMIN_SECRET;
+      process.env.ADMIN_SECRET = 'matching-key';
+      const res = await request(makeApp())
+        .post('/users/admin/verify')
+        .set('x-admin-secret', 'matching-key')
+        .send({ user: 'a@b.com', verified: true, durationDays: 90 });
+      expect([200, 429]).toContain(res.status);
+      if (res.status === 200) {
+        expect(mockUserService.adminSetVerified).toHaveBeenCalledWith('a@b.com', true, undefined, 90);
+      }
       process.env.ADMIN_SECRET = original;
     });
   });

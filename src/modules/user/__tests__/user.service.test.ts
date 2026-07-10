@@ -467,7 +467,7 @@ describe('adminSetVerified', () => {
     });
   });
 
-  it('un-verifying clears verifiedAt and verifiedRole', async () => {
+  it('un-verifying clears verifiedAt, verifiedRole and verifiedUntil', async () => {
     mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
     mockPrisma.user.update.mockResolvedValue({});
     mockPrisma.conversationParticipant.findMany.mockResolvedValue([]);
@@ -477,8 +477,38 @@ describe('adminSetVerified', () => {
     expect(mockPrisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
       // Un-verifying also forces the profile back to public (private is a
       // verified-only privilege).
-      data: { isVerified: false, verifiedAt: null, verifiedRole: null, isProfilePublic: true },
+      data: { isVerified: false, verifiedAt: null, verifiedRole: null, verifiedUntil: null, isProfilePublic: true },
     }));
+  });
+
+  it('permanent grant (no durationDays) leaves verifiedUntil null', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
+    mockPrisma.user.update.mockResolvedValue({ id: 'user-1', isVerified: true });
+    mockPrisma.conversationParticipant.findMany.mockResolvedValue([]);
+
+    await adminSetVerified('user-1', true, 'Brand');
+
+    expect(mockPrisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ isVerified: true, verifiedUntil: null }),
+    }));
+  });
+
+  it('durationDays sets a future verifiedUntil (~N days out)', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
+    mockPrisma.user.update.mockResolvedValue({ id: 'user-1', isVerified: true });
+    mockPrisma.conversationParticipant.findMany.mockResolvedValue([]);
+
+    const before = Date.now();
+    await adminSetVerified('user-1', true, undefined, 90);
+
+    const data = mockPrisma.user.update.mock.calls[0][0].data;
+    expect(data.isVerified).toBe(true);
+    expect(data.verifiedUntil).toBeInstanceOf(Date);
+    const ms = data.verifiedUntil.getTime() - before;
+    const day = 24 * 60 * 60 * 1000;
+    // ~90 days out, allowing a little slack for execution time.
+    expect(ms).toBeGreaterThan(89.9 * day);
+    expect(ms).toBeLessThan(90.1 * day);
   });
 });
 

@@ -349,7 +349,7 @@ router.post('/admin/verify', async (req: Request, res: Response, next: NextFunct
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const { user: identifier, verified, role } = req.body;
+    const { user: identifier, verified, role, durationDays } = req.body;
     if (!identifier || typeof identifier !== 'string' || identifier.length > 255) {
       return res.status(400).json({ error: 'Provide a valid "user" (email/id/name)' });
     }
@@ -359,7 +359,14 @@ router.post('/admin/verify', async (req: Request, res: Response, next: NextFunct
     if (role !== undefined && typeof role !== 'string') {
       return res.status(400).json({ error: '"role" must be a string if provided' });
     }
-    const result = await userService.adminSetVerified(identifier, verified, role);
+    // Optional time-limited grant. Bounded at 10 years to catch typos/abuse.
+    if (
+      durationDays !== undefined &&
+      (typeof durationDays !== 'number' || !Number.isFinite(durationDays) || durationDays <= 0 || durationDays > 3650)
+    ) {
+      return res.status(400).json({ error: '"durationDays" must be a positive number of days (max 3650) if provided' });
+    }
+    const result = await userService.adminSetVerified(identifier, verified, role, durationDays);
     res.json(result);
   } catch (err) {
     next(err);
