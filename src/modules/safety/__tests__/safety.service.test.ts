@@ -19,6 +19,9 @@ const { mockPrisma } = vi.hoisted(() => {
       upsert: vi.fn(),
       update: vi.fn(),
     },
+    refreshToken: {
+      updateMany: vi.fn(),
+    },
     conversation: {
       findMany: vi.fn(),
       updateMany: vi.fn(),
@@ -39,6 +42,11 @@ const { mockPrisma } = vi.hoisted(() => {
 vi.mock('../../../config/database', () => ({ prisma: mockPrisma }));
 vi.mock('../../../shared/logger', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+const { mockRevokeAccessTokens } = vi.hoisted(() => ({ mockRevokeAccessTokens: vi.fn() }));
+vi.mock('../../auth/token-revocation', () => ({
+  revokeUserAccessTokens: mockRevokeAccessTokens,
 }));
 
 import {
@@ -117,6 +125,12 @@ describe('reportUser', () => {
     const lastCall = calls[calls.length - 1][0];
     expect(lastCall.create.banStatus).toBe('PERMANENT_BAN');
     expect(lastCall.update.banStatus).toBe('PERMANENT_BAN');
+    // Ban must tear down live sessions so it takes effect immediately.
+    expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'u-2', revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(mockRevokeAccessTokens).toHaveBeenCalledWith('u-2');
   });
 
   it('3+ total reports (not yet 5) → TEMP_BAN', async () => {
@@ -148,6 +162,9 @@ describe('reportUser', () => {
     const calls = mockPrisma.userModeration.upsert.mock.calls;
     const lastCall = calls[calls.length - 1][0];
     expect(lastCall.create.banStatus).toBe('WARNING');
+    // A warning is not a ban — sessions must stay intact.
+    expect(mockPrisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    expect(mockRevokeAccessTokens).not.toHaveBeenCalled();
   });
 });
 

@@ -112,6 +112,7 @@ import {
   logoutAll,
 } from '../auth.service';
 import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../../shared/errors';
+import { checkBanStatus } from '../../safety/safety.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -526,6 +527,19 @@ describe('refreshTokens', () => {
     });
 
     await expect(refreshTokens('valid.tok')).rejects.toBeInstanceOf(UnauthorizedError);
+  });
+
+  it('refuses to refresh a banned user and tears down their sessions', async () => {
+    mockAuthUtils.verifyRefreshToken.mockReturnValue({ userId: 'u-1' });
+    vi.mocked(checkBanStatus).mockResolvedValueOnce({ banned: true, status: 'PERMANENT_BAN' });
+
+    await expect(refreshTokens('valid.tok')).rejects.toBeInstanceOf(ForbiddenError);
+    // No new tokens minted, and every active session is revoked.
+    expect(mockAuthUtils.generateAccessToken).not.toHaveBeenCalled();
+    expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'u-1', revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
   });
 });
 

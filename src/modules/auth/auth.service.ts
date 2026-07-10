@@ -746,6 +746,23 @@ export async function refreshTokens(token: string, req?: Request) {
     throw new UnauthorizedError('Invalid refresh token');
   }
 
+  // A ban must survive an existing session: without this check a banned user
+  // keeps minting fresh access tokens here for the life of their refresh token.
+  // Refuse, and tear down every session so subsequent refreshes fail too.
+  const ban = await checkBanStatus(payload.userId);
+  if (ban.banned) {
+    await prisma.refreshToken.updateMany({
+      where: { userId: payload.userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await revokeUserAccessTokens(payload.userId);
+    throw new ForbiddenError(
+      ban.expiresAt
+        ? `Your account is temporarily suspended until ${ban.expiresAt.toISOString()}`
+        : 'Your account has been permanently suspended',
+    );
+  }
+
   return prisma.$transaction(async (tx) => {
     const existing = await tx.refreshToken.findUnique({ where: { token } });
 

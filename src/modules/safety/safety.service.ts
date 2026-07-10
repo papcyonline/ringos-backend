@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { BadRequestError, NotFoundError, ConflictError } from '../../shared/errors';
+import { revokeUserAccessTokens } from '../auth/token-revocation';
 
 interface ReportData {
   reportedId: string;
@@ -286,6 +287,36 @@ export async function checkBanStatus(
   };
 }
 
+/**
+ * Apply a ban AND tear down the user's live sessions so the ban is enforced
+ * immediately — not just at the next login. Without this, a banned user keeps
+ * full access for the life of their access token and can silently mint fresh
+ * ones via POST /refresh. We therefore:
+ *   1. persist the ban on UserModeration,
+ *   2. revoke every active refresh token (no new access tokens can be minted),
+ *   3. set the Redis "valid-from" marker so the auth middleware rejects any
+ *      access token already in the wild (revokeUserAccessTokens).
+ * Runs on the caller's transaction client when given, so the DB writes commit
+ * or roll back atomically with whatever triggered the ban.
+ */
+export async function applyBan(
+  userId: string,
+  banStatus: 'TEMP_BAN' | 'PERMANENT_BAN',
+  banExpiresAt: Date | null,
+  db: Prisma.TransactionClient = prisma,
+) {
+  await db.userModeration.upsert({
+    where: { userId },
+    create: { userId, banStatus, banExpiresAt },
+    update: { banStatus, banExpiresAt },
+  });
+  await db.refreshToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  await revokeUserAccessTokens(userId);
+}
+
 async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionClient) {
   const db = tx ?? prisma;
   const now = new Date();
@@ -307,39 +338,21 @@ async function checkAndApplyThresholds(userId: string, tx?: Prisma.TransactionCl
 
   // 5+ total reports ever → PERMANENT_BAN (highest priority, irreversible)
   if (totalReports >= 5) {
-    await db.userModeration.upsert({
-      where: { userId },
-      create: { userId, banStatus: 'PERMANENT_BAN', banExpiresAt: null },
-      update: { banStatus: 'PERMANENT_BAN', banExpiresAt: null },
-    });
+    await applyBan(userId, 'PERMANENT_BAN', null, db);
     logger.warn({ userId, totalReports }, 'User permanently banned: 5+ total reports');
     return;
   }
 
   // 5 reports in 48h → TEMP_BAN (24h) — rapid-fire abuse pattern
   if (reportsIn48h >= 5) {
-    await db.userModeration.upsert({
-      where: { userId },
-      create: { userId, banStatus: 'TEMP_BAN', banExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
-      update: {
-        banStatus: 'TEMP_BAN',
-        banExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
-      },
-    });
+    await applyBan(userId, 'TEMP_BAN', new Date(now.getTime() + 24 * 60 * 60 * 1000), db);
     logger.warn({ userId, reportsIn48h }, 'User temp-banned: 5+ reports in 48h');
     return;
   }
 
   // 3+ total reports → TEMP_BAN (24h)
   if (totalReports >= 3) {
-    await db.userModeration.upsert({
-      where: { userId },
-      create: { userId, banStatus: 'TEMP_BAN', banExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
-      update: {
-        banStatus: 'TEMP_BAN',
-        banExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
-      },
-    });
+    await applyBan(userId, 'TEMP_BAN', new Date(now.getTime() + 24 * 60 * 60 * 1000), db);
     logger.warn({ userId, totalReports }, 'User temp-banned: 3+ total reports');
     return;
   }
