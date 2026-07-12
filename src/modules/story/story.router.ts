@@ -3,7 +3,7 @@ import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import { storyMediaUpload } from '../../shared/upload';
-import { getLimits, isPro } from '../../shared/usage.service';
+import { getLimits } from '../../shared/usage.service';
 import {
   createStory,
   getStoryFeed,
@@ -302,8 +302,8 @@ router.post(
     try {
       const viewerId = req.user!.userId;
       const storyId = req.params.id as string;
-      const stealth = req.body.stealth === true && await isPro(viewerId);
-      await markStoryViewed(storyId, viewerId, stealth);
+      // Every view counts and is visible — no stealth/invisible viewing.
+      await markStoryViewed(storyId, viewerId);
       res.json({ success: true });
     } catch (error) {
       logger.error({ error }, 'Error marking story viewed');
@@ -346,8 +346,8 @@ router.post(
     try {
       const viewerId = req.user!.userId;
       const slideId = req.params.slideId as string;
-      const stealth = req.body.stealth === true && await isPro(viewerId);
-      await markStorySlideViewed(slideId, viewerId, stealth);
+      // Every view counts and is visible — no stealth/invisible viewing.
+      await markStorySlideViewed(slideId, viewerId);
       res.json({ success: true });
     } catch (error) {
       logger.error({ error }, 'Error marking story slide viewed');

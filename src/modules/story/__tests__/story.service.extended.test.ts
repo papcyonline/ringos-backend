@@ -373,13 +373,14 @@ describe('markStoryViewed', () => {
     expect(notify.notifyStoryOwnerOfView).not.toHaveBeenCalled();
   });
 
-  it('stealth view skips notification even on first view', async () => {
+  it('notifies on first view even with the legacy stealth flag (stealth removed)', async () => {
     mockPrisma.storyView.createMany.mockResolvedValue({ count: 1 });
     const notify = await import('../story.notify');
 
+    // Every view now counts and is visible; the legacy stealth arg is a no-op.
     await markStoryViewed('s-1', 'viewer-1', true);
 
-    expect(notify.notifyStoryOwnerOfView).not.toHaveBeenCalled();
+    expect(notify.notifyStoryOwnerOfView).toHaveBeenCalled();
   });
 });
 
@@ -396,7 +397,7 @@ describe('getStoryViewers', () => {
     expect(await getStoryViewers('s-1', 'user-1')).toBeNull();
   });
 
-  it('joins user info and excludes stealth views', async () => {
+  it('joins user info and includes all viewers', async () => {
     mockPrisma.story.findUnique.mockResolvedValue({ userId: 'user-1' });
     mockPrisma.storyView.findMany.mockResolvedValue([
       { viewerId: 'v-1', createdAt: new Date(), liked: true },
@@ -416,7 +417,7 @@ describe('getStoryViewers', () => {
     const res = await getStoryViewers('s-1', 'user-1');
 
     expect(mockPrisma.storyView.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { storyId: 's-1', isStealth: false },
+      where: { storyId: 's-1' },
     }));
     expect(res).toHaveLength(2);
     expect(res![0]).toMatchObject({ userId: 'v-1', displayName: 'Alice', liked: true });

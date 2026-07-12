@@ -887,19 +887,15 @@ export async function markStoryViewed(storyId: string, viewerId: string, isSteal
     data: [{ storyId, viewerId, isStealth }],
     skipDuplicates: true,
   });
-  // Only fire the "viewed your story" notification on the FIRST view by
-  // this viewer (createMany.count > 0 means a row was actually inserted)
-  // and never for stealth views — those are intentionally invisible.
-  if (result.count > 0 && !isStealth) {
+  // Fire the "viewed your story" notification on the FIRST view by this viewer
+  // (createMany.count > 0 means a row was actually inserted). Every viewer
+  // counts and is visible — there is no invisible/stealth viewing.
+  if (result.count > 0) {
     // Fire-and-forget — don't await, don't block playback on push.
     void notifyStoryOwnerOfView(storyId, story.userId, viewerId);
-    // Milestone check: count non-stealth views and notify the owner
-    // if they just crossed a tier. We only count public views (the
-    // owner already can't see stealth ones in viewer-list, and a
-    // stealth view shouldn't push them into "100 views" copy that
-    // they then read on the wrong premise).
+    // Milestone check: notify the owner if they just crossed a view tier.
     const viewCount = await prisma.storyView.count({
-      where: { storyId, isStealth: false },
+      where: { storyId },
     });
     void checkStoryMilestone(storyId, story.userId, 'views', viewCount);
   }
@@ -929,14 +925,13 @@ export async function markStorySlideViewed(slideId: string, viewerId: string, is
   // is itself idempotent and only fires the notification on the first insert.
   await markStoryViewed(slide.storyId, viewerId, isStealth);
 
-  // Real-time: push the updated (owner-visible, non-stealth) slide view count
-  // to the story owner so their open viewer / count updates without a manual
-  // refresh. Only on a genuinely new, non-stealth view; stealth views must
-  // not move the owner-visible count. Best-effort (socket may be uninit).
-  if (inserted.count > 0 && !isStealth) {
+  // Real-time: push the updated slide view count to the story owner so their
+  // open viewer / count updates without a manual refresh. Only on a genuinely
+  // new view. Best-effort (socket may be uninitialised).
+  if (inserted.count > 0) {
     try {
       const viewCount = await prisma.storySlideView.count({
-        where: { slideId, isStealth: false },
+        where: { slideId },
       });
       getIO()
         .to(`user:${slide.story.userId}`)
@@ -1043,7 +1038,7 @@ export async function getStorySlideViewers(slideId: string, userId: string) {
   });
 
   const views = await prisma.storySlideView.findMany({
-    where: { slideId, isStealth: false },
+    where: { slideId },
     orderBy: { createdAt: 'desc' },
     take: 500,
   });
@@ -1089,7 +1084,7 @@ export async function getStoryViewers(storyId: string, userId: string) {
   });
 
   const views = await prisma.storyView.findMany({
-    where: { storyId, isStealth: false },
+    where: { storyId },
     orderBy: { createdAt: 'desc' },
     take: 500,
   });
