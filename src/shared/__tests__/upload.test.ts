@@ -74,6 +74,11 @@ vi.mock('sharp', () => {
   return { default: () => chain };
 });
 vi.mock('uuid', () => ({ v4: () => 'uuid-x' }));
+// Video normalization is exercised in video.service tests; here it passes the
+// buffer through (its real fail-open behavior) so upload logic stays isolated.
+vi.mock('../video.service', () => ({
+  ensureWebSafeH264: (buf: Buffer) => Promise.resolve(buf),
+}));
 vi.mock('fs', () => ({
   default: {
     existsSync: mockExistsSync,

@@ -83,10 +83,14 @@ const MODERATION_FAIL_OPEN =
 function moderationUnavailable(reason: string): ModerationResult {
   if (MODERATION_FAIL_OPEN) {
     logger.warn({ reason }, 'Moderation unavailable — failing OPEN (content allowed)');
-    return { safe: true };
+    return { safe: true, unavailable: true };
   }
   logger.error({ reason }, 'Moderation unavailable — failing CLOSED (content blocked)');
-  return { safe: false, reason: 'Content moderation is temporarily unavailable. Please try again.' };
+  return {
+    safe: false,
+    unavailable: true,
+    reason: 'Content moderation is temporarily unavailable. Please try again.',
+  };
 }
 
 // Thresholds above which content is considered unsafe (0.0 - 1.0)
@@ -97,6 +101,14 @@ const WEAPON_THRESHOLD = 0.8;
 
 export interface ModerationResult {
   safe: boolean;
+  /**
+   * True when no real verdict could be produced (API down, timeout, or a codec
+   * the moderator can't decode) — as opposed to a genuine "unsafe" content
+   * decision. Callers can choose to let such media through (e.g. for video,
+   * which we've already normalized to H.264) instead of showing the user a
+   * false "violates guidelines" rejection.
+   */
+  unavailable?: boolean;
   reason?: string;
   scores?: {
     nudity?: number;

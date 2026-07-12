@@ -8,7 +8,7 @@ import {
 } from '../../shared/r2.service';
 import { moderateVideoUrl } from '../../shared/moderation.service';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
-import { faststartRemux, extractPosterFrame } from '../../shared/video.service';
+import { ensureWebSafeH264, extractPosterFrame } from '../../shared/video.service';
 import * as cache from '../../shared/redis.service';
 import path from 'path';
 
@@ -46,25 +46,30 @@ export async function createReel(
     throw new BadRequestError('Reels must be 60 seconds or less');
   }
 
-  // Faststart the MP4 (moov atom to the front) so playback starts on the
-  // first read instead of after downloading most of the file. Fail-open:
-  // on any ffmpeg error this returns the original buffer unchanged.
-  const faststarted = await faststartRemux(
+  // Normalize to a web-safe H.264 MP4 (faststart): H.264 is cheaply remuxed,
+  // while iPhone HEVC/HDR/4K is transcoded so it plays everywhere and can be
+  // decoded by the moderator. Fail-open: on any ffmpeg error this returns the
+  // original buffer unchanged.
+  const normalized = await ensureWebSafeH264(
     file.buffer,
     path.extname(file.originalname || '') || '.mp4',
   );
 
   const upload = await uploadToR2WithKey(
-    faststarted,
+    normalized,
     `reels/${userId}`,
-    file.originalname || 'reel.mp4',
-    file.mimetype || 'video/mp4',
+    'reel.mp4',
+    'video/mp4',
   );
 
   // Sightengine moderation — sample frames for nudity/offensive/weapon content.
   // If unsafe, delete the just-uploaded object so we don't leak storage.
+  // Block only on a genuine "unsafe" verdict. If moderation was merely
+  // unavailable (API down/timeout, or a codec it couldn't decode), let the reel
+  // through rather than showing the user a false guidelines rejection — the
+  // video is already normalized to H.264, so this is a rare fallback.
   const moderation = await moderateVideoUrl(upload.url);
-  if (!moderation.safe) {
+  if (!moderation.safe && !moderation.unavailable) {
     await deleteFromR2(upload.key).catch(() => {});
     const err: any = new BadRequestError(
       moderation.reason || 'Video failed content moderation',
@@ -81,10 +86,7 @@ export async function createReel(
   // thumbnail stays null and the FE falls back to a placeholder.
   let thumbnailUrl: string | null = null;
   try {
-    const poster = await extractPosterFrame(
-      faststarted,
-      path.extname(file.originalname || '') || '.mp4',
-    );
+    const poster = await extractPosterFrame(normalized, '.mp4');
     if (poster && poster.length > 0) {
       const posterUpload = await uploadToR2WithKey(
         poster,

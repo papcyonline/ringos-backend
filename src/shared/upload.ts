@@ -20,6 +20,7 @@ import {
   uploadVoiceNoteToSupabase,
 } from './supabase.service';
 import { moderateImageBuffer } from './moderation.service';
+import { ensureWebSafeH264 } from './video.service';
 import { ForbiddenError } from './errors';
 import { logger } from './logger';
 
@@ -522,22 +523,27 @@ export async function fileToStoryVideoUrl(
   file: Express.Multer.File,
   userId: string
 ): Promise<{ secureUrl: string; publicId: string; thumbnailUrl: string | null }> {
-  // 1. Try R2. No transcode (Render CPU can't handle ffmpeg cheaply) and no
-  // server-side thumbnail — frontend renders the first frame as poster.
+  // Normalize to a web-safe H.264 MP4 (transcodes iPhone HEVC/HDR/4K) so the
+  // stored story plays on every device. Fail-open → original buffer.
+  const normalized = await ensureWebSafeH264(
+    file.buffer,
+    path.extname(file.originalname || '') || '.mp4',
+  );
+  // 1. Try R2. Frontend renders the first frame as poster (no server thumbnail).
   if (isR2Configured) {
     try {
       const result = await uploadToR2WithKey(
-        file.buffer,
+        normalized,
         `stories/${userId}`,
-        file.originalname || 'video.mp4',
-        file.mimetype || 'video/mp4',
+        'video.mp4',
+        'video/mp4',
       );
       return { secureUrl: result.url, publicId: result.key, thumbnailUrl: null };
     } catch (err) { /* R2 failed, fall back */ }
   }
   // 2. Fallback to Cloudinary
   if (cloudinaryService.isCloudinaryConfigured) {
-    const result = await cloudinaryService.uploadBuffer(file.buffer, {
+    const result = await cloudinaryService.uploadBuffer(normalized, {
       folder: `yomeet/stories/${userId}`,
       resourceType: 'video',
     });
@@ -549,7 +555,7 @@ export async function fileToStoryVideoUrl(
       return { secureUrl: optimizedUrl, publicId: result.publicId, thumbnailUrl };
     }
   }
-  const url = saveToDisk(file.buffer, 'uploads/stories', '/uploads/stories', path.extname(file.originalname) || '.mp4');
+  const url = saveToDisk(normalized, 'uploads/stories', '/uploads/stories', '.mp4');
   return { secureUrl: url, publicId: '', thumbnailUrl: null };
 }
 
@@ -588,16 +594,22 @@ export async function fileToPostVideoUrl(
   file: Express.Multer.File,
   userId: string
 ): Promise<{ secureUrl: string; publicId: string; thumbnailUrl: string | null }> {
+  // Normalize to a web-safe H.264 MP4 (transcodes iPhone HEVC/HDR/4K) so it
+  // plays everywhere and the moderator can decode it. Fail-open → original.
+  const normalized = await ensureWebSafeH264(
+    file.buffer,
+    path.extname(file.originalname || '') || '.mp4',
+  );
   // 1. Try R2 (cheapest, no egress)
   if (isR2Configured) {
     try {
-      const result = await uploadVideoToR2(file.buffer, `posts/${userId}`, file.originalname || 'video.mp4');
+      const result = await uploadVideoToR2(normalized, `posts/${userId}`, 'video.mp4');
       return { secureUrl: result.url, publicId: '', thumbnailUrl: result.thumbnailUrl };
     } catch (err) { /* R2 failed, fall back to next storage */ }
   }
   // 2. Fallback to Cloudinary
   if (cloudinaryService.isCloudinaryConfigured) {
-    const result = await cloudinaryService.uploadBuffer(file.buffer, {
+    const result = await cloudinaryService.uploadBuffer(normalized, {
       folder: `yomeet/posts/${userId}`,
       resourceType: 'video',
     });
@@ -607,6 +619,6 @@ export async function fileToPostVideoUrl(
       return { secureUrl: optimizedUrl, publicId: result.publicId, thumbnailUrl };
     }
   }
-  const url = saveToDisk(file.buffer, 'uploads/posts', '/uploads/posts', path.extname(file.originalname) || '.mp4');
+  const url = saveToDisk(normalized, 'uploads/posts', '/uploads/posts', '.mp4');
   return { secureUrl: url, publicId: '', thumbnailUrl: null };
 }

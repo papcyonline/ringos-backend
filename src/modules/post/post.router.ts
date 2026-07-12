@@ -108,7 +108,11 @@ router.post(
             const result = item.type === 'VIDEO'
               ? await moderateVideoUrl(item.url)
               : await moderateImageUrl(item.url);
-            if (!result.safe) {
+            // For video, let "unavailable" verdicts (API down/timeout, or a
+            // codec the moderator couldn't decode) through instead of showing a
+            // false guidelines rejection — the upload is already H.264. Images
+            // keep their existing fail-closed behavior.
+            if (!result.safe && !(item.type === 'VIDEO' && result.unavailable)) {
               console.warn(`[PostUpload] Rejected media: ${result.reason}`, result.scores);
               // Best-effort cleanup of uploaded media (fire and forget)
               for (const m of media) {
