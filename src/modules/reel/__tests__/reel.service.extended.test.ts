@@ -41,7 +41,7 @@ vi.mock('../../../shared/r2.service', () => ({
   deleteFromR2: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../../../shared/moderation.service', () => ({
-  moderateVideoUrl: vi.fn().mockResolvedValue({ safe: true }),
+  moderateVideoBuffer: vi.fn().mockResolvedValue({ safe: true }),
 }));
 vi.mock('../../../shared/cloudinary.service', () => ({
   isCloudinaryConfigured: true,

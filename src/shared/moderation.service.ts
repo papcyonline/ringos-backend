@@ -1,4 +1,9 @@
+import sharp from 'sharp';
+import type OpenAI from 'openai';
 import { logger } from './logger';
+import { env } from '../config/env';
+import { createOpenAIClient } from '../config/openai';
+import { extractFrames } from './video.service';
 
 // ─── Text content filter ─────────────────────────────────────────────────────
 
@@ -18,9 +23,6 @@ function normalizeLeet(text: string): string {
     .replace(/!/g, 'i');
 }
 
-// Patterns use word boundaries (\b) where the term could appear as a
-// substring of innocent words (e.g. "ass" in "classic"), and no boundary
-// where the prefix is always explicit (e.g. "ejaculat-").
 const EXPLICIT_PATTERNS: RegExp[] = [
   /\bporn(ography|ographic|hub|star)?\b/,
   /\bxxx\b/,
@@ -52,7 +54,7 @@ const EXPLICIT_PATTERNS: RegExp[] = [
   /\bshemale\b/,
   /\bsex.?worker\b/,
   /\berotic(a)?\b/,
-  /\bncest\b/,
+  /\bincest\b/,
   /\bpedophil/,
 ];
 
@@ -65,19 +67,57 @@ export function containsExplicitText(text: string): boolean {
   return EXPLICIT_PATTERNS.some((p) => p.test(normalized));
 }
 
-const SIGHTENGINE_USER = process.env.SIGHTENGINE_API_USER;
-const SIGHTENGINE_SECRET = process.env.SIGHTENGINE_API_SECRET;
+// ─── Visual moderation (OpenAI omni-moderation, off-server) ──────────────────
+//
+// Image/video nudity + graphic-violence detection runs via OpenAI's FREE
+// moderation endpoint (`omni-moderation-latest`). We send image bytes as a
+// base64 data URL, so it never needs to FETCH our storage (the failure that
+// used to delete legit video stories). It's a plain HTTP call — nothing heavy
+// runs on our server. Video = sample a few frames (ffmpeg) and check the worst.
 
-export const isModerationConfigured = !!(SIGHTENGINE_USER && SIGHTENGINE_SECRET);
+export const isModerationConfigured = !!env.OPENAI_API_KEY;
 
-// When a verdict can't be produced (unconfigured, API down, exception), do we
-// allow the media through? Fail-OPEN = allow (old behavior); fail-CLOSED = block.
-// Default: fail-CLOSED in production so an outage or misconfig can't silently
-// leak unmoderated images/video. Set MODERATION_FAIL_OPEN=true to override in an
-// emergency (e.g. a prolonged SightEngine outage blocking all uploads).
+// Fail-OPEN = allow when a verdict can't be produced; fail-CLOSED = block.
+// Default fail-CLOSED in production so an outage can't silently leak content.
+// Video callers additionally let `unavailable` through (a rare fallback).
 const MODERATION_FAIL_OPEN =
   process.env.MODERATION_FAIL_OPEN === 'true' ||
   (process.env.MODERATION_FAIL_OPEN !== 'false' && process.env.NODE_ENV !== 'production');
+
+// Block thresholds on OpenAI category scores (0..1).
+const SEXUAL_THRESHOLD = 0.7;
+const GRAPHIC_THRESHOLD = 0.85; // violence/graphic (gore)
+const MINORS_THRESHOLD = 0.3; // sexual/minors — highest liability, low bar
+
+// Cap frames per video: they go in ONE moderation request, and fewer frames
+// keeps the payload + latency small. Env-tunable.
+const VIDEO_FRAMES = Number(process.env.MODERATION_VIDEO_FRAMES) || 6;
+
+export interface ModerationResult {
+  safe: boolean;
+  /**
+   * True when no real verdict could be produced (API down/rate-limited, or a
+   * codec we couldn't decode) — as opposed to a genuine "unsafe" decision.
+   * Callers can let such media through instead of a false rejection.
+   */
+  unavailable?: boolean;
+  reason?: string;
+  scores?: {
+    nudity?: number;
+    offensive?: number;
+    weapon?: number;
+    drugs?: number;
+  };
+}
+
+let client: OpenAI | null = null;
+function getClient(): OpenAI {
+  // Bound latency: the reel path awaits moderation synchronously, so a slow or
+  // stuck OpenAI call must fail fast (→ unavailable → upload proceeds) rather
+  // than hang on the SDK's default 10-min timeout / multiple retries.
+  if (!client) client = createOpenAIClient({ timeout: 15_000, maxRetries: 1 });
+  return client;
+}
 
 /** Verdict to return when moderation can't run. Logs loudly so outages are visible. */
 function moderationUnavailable(reason: string): ModerationResult {
@@ -93,254 +133,171 @@ function moderationUnavailable(reason: string): ModerationResult {
   };
 }
 
-// Thresholds above which content is considered unsafe (0.0 - 1.0)
-const NUDITY_THRESHOLD = 0.5;      // explicit: sexual_activity / sexual_display / erotica
-const SUGGESTIVE_THRESHOLD = 0.6;  // very_suggestive: near-nude / lingerie / strategically covered
-const OFFENSIVE_THRESHOLD = 0.7;
-const WEAPON_THRESHOLD = 0.8;
-
-export interface ModerationResult {
-  safe: boolean;
-  /**
-   * True when no real verdict could be produced (API down, timeout, or a codec
-   * the moderator can't decode) — as opposed to a genuine "unsafe" content
-   * decision. Callers can choose to let such media through (e.g. for video,
-   * which we've already normalized to H.264) instead of showing the user a
-   * false "violates guidelines" rejection.
-   */
-  unavailable?: boolean;
-  reason?: string;
-  scores?: {
-    nudity?: number;
-    offensive?: number;
-    weapon?: number;
-    drugs?: number;
-  };
+/** sharp-normalize any input (HEIC/WebP/GIF/EXIF/alpha) to a JPEG data URL. */
+async function toJpegDataUrl(buffer: Buffer): Promise<string> {
+  const jpeg = await sharp(buffer, { animated: false })
+    .rotate()
+    .flatten({ background: '#ffffff' })
+    .jpeg({ quality: 80 })
+    .toBuffer();
+  return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
 }
 
-/**
- * Extract the two nudity signals we act on from a Sightengine `nudity`
- * object. `explicit` = the unambiguous categories; `suggestive` =
- * very_suggestive (near-nude / lingerie / strategically covered), which
- * we now block at a higher threshold. Milder classes (suggestive /
- * mildly_suggestive: bikini, cleavage) are deliberately NOT included —
- * they false-positive heavily on ordinary selfies and beach photos.
- */
-function nuditySignals(nudity: any): { explicit: number; suggestive: number } {
+interface Signals {
+  sexual: number;
+  graphic: number;
+  minors: number;
+}
+
+/** Turn one OpenAI moderation result's category scores into worst-signal numbers. */
+function signalsFrom(scores: Record<string, number>): Signals {
   return {
-    explicit: Math.max(
-      nudity.sexual_activity || 0,
-      nudity.sexual_display || 0,
-      nudity.erotica || 0,
-    ),
-    suggestive: nudity.very_suggestive || 0,
+    sexual: scores['sexual'] ?? 0,
+    graphic: scores['violence/graphic'] ?? 0,
+    minors: scores['sexual/minors'] ?? 0,
   };
 }
 
-/**
- * Turn aggregated scores into a ModerationResult. Shared by the image
- * (`check.json`) and video (frame-sampled) entry points so both apply the
- * exact same thresholds — the video path used to duplicate this logic and
- * silently drift.
- */
-function verdictFromScores(
-  s: { explicit: number; suggestive: number; offensive: number; weapon: number; drugs: number },
-  subject: 'Content' | 'Video',
-): ModerationResult {
-  const scores = {
-    nudity: Math.max(s.explicit, s.suggestive),
-    offensive: s.offensive,
-    weapon: s.weapon,
-    drugs: s.drugs,
-  };
-
+function verdictFrom(worst: Signals, subject: 'Content' | 'Video'): ModerationResult {
+  const scores = { nudity: worst.sexual };
   const unsafe =
-    s.explicit > NUDITY_THRESHOLD ||
-    s.suggestive > SUGGESTIVE_THRESHOLD ||
-    s.offensive > OFFENSIVE_THRESHOLD ||
-    s.weapon > WEAPON_THRESHOLD;
+    worst.sexual >= SEXUAL_THRESHOLD ||
+    worst.graphic >= GRAPHIC_THRESHOLD ||
+    worst.minors >= MINORS_THRESHOLD;
 
-  // Log the breakdown when we block, or when a nudity score lands within
-  // 0.15 of its threshold, so the thresholds can be retuned against real
-  // production data instead of guesses.
-  if (
-    unsafe ||
-    s.explicit > NUDITY_THRESHOLD - 0.15 ||
-    s.suggestive > SUGGESTIVE_THRESHOLD - 0.15
-  ) {
+  if (unsafe || worst.sexual > SEXUAL_THRESHOLD - 0.15) {
     logger.info(
-      { explicit: s.explicit, suggestive: s.suggestive, offensive: s.offensive, weapon: s.weapon, unsafe },
+      { sexual: worst.sexual, graphic: worst.graphic, minors: worst.minors, unsafe },
       'moderation score',
     );
   }
 
-  if (s.explicit > NUDITY_THRESHOLD || s.suggestive > SUGGESTIVE_THRESHOLD) {
+  // Sexual content involving minors is the highest-liability class — block it
+  // at a low threshold. (Note: omni-moderation scores this mainly on text; on
+  // image-only inputs it's usually 0, so this is best-effort insurance.)
+  if (worst.minors >= MINORS_THRESHOLD) {
+    return { safe: false, reason: `${subject} contains prohibited sexual content`, scores };
+  }
+  if (worst.sexual >= SEXUAL_THRESHOLD) {
     return { safe: false, reason: `${subject} contains nudity or sexual content`, scores };
   }
-  if (s.offensive > OFFENSIVE_THRESHOLD) {
-    return { safe: false, reason: `${subject} contains offensive material`, scores };
-  }
-  if (s.weapon > WEAPON_THRESHOLD) {
-    return { safe: false, reason: `${subject} contains weapons`, scores };
+  if (worst.graphic >= GRAPHIC_THRESHOLD) {
+    return { safe: false, reason: `${subject} contains graphic violence`, scores };
   }
   return { safe: true, scores };
 }
 
 /**
- * Translate a Sightengine `check.json` (image) response body into our
- * ModerationResult.
+ * Moderate one or more images (as JPEG data URLs) and return the worst signal
+ * across them. The moderation endpoint accepts only ONE image per request, so
+ * we fire one request per image in parallel. Returns null only if EVERY request
+ * failed (caller maps null → unavailable); individual failures are skipped.
  */
-function verdictFromSightengineResponse(data: any): ModerationResult {
-  const n = nuditySignals(data.nudity || {});
-  return verdictFromScores(
-    {
-      explicit: n.explicit,
-      suggestive: n.suggestive,
-      offensive: data.offensive?.prob || 0,
-      weapon: data.weapon || 0,
-      drugs: data.recreational_drug?.prob || 0,
-    },
-    'Content',
+async function moderateDataUrls(dataUrls: string[]): Promise<Signals | null> {
+  if (dataUrls.length === 0) return null;
+  const settled = await Promise.all(
+    dataUrls.map(async (url) => {
+      try {
+        const res = await getClient().moderations.create({
+          model: 'omni-moderation-latest',
+          input: [{ type: 'image_url' as const, image_url: { url } }],
+        });
+        const first = res.results?.[0];
+        if (!first) return null;
+        return signalsFrom(first.category_scores as unknown as Record<string, number>);
+      } catch (err) {
+        logger.error({ err: (err as Error).message }, 'OpenAI moderation request failed');
+        return null;
+      }
+    }),
   );
+  const ok = settled.filter((s): s is Signals => s !== null);
+  if (ok.length === 0) return null;
+  const worst: Signals = { sexual: 0, graphic: 0, minors: 0 };
+  for (const s of ok) {
+    if (s.sexual > worst.sexual) worst.sexual = s.sexual;
+    if (s.graphic > worst.graphic) worst.graphic = s.graphic;
+    if (s.minors > worst.minors) worst.minors = s.minors;
+  }
+  return worst;
 }
 
 /**
- * Check an image buffer against Sightengine's moderation API by
- * posting the raw bytes (multipart/form-data).
- *
- * Prefer this over [moderateImageUrl] when the image isn't yet in
- * publicly addressable storage — avatar uploads overwrite the user's
- * canonical URL, so checking AFTER upload would leave an unsafe file
- * at that URL even if we then reject. With buffer moderation we can
- * decide BEFORE the bytes ever land in storage.
- *
- * Returns { safe: true } if no API key is configured (fail open).
+ * Moderate raw image bytes. Preferred wherever the bytes are in hand (avatars,
+ * covers, story/post images) — no URL fetch, so storage reachability is a
+ * non-issue.
  */
 export async function moderateImageBuffer(
   buffer: Buffer,
-  filename: string = 'upload.jpg',
+  _filename: string = 'upload.jpg',
 ): Promise<ModerationResult> {
-  if (!isModerationConfigured) return moderationUnavailable('not configured (buffer)');
-
+  if (!isModerationConfigured) return moderationUnavailable('not configured');
+  let dataUrl: string;
   try {
-    const form = new FormData();
-    form.append('media', new Blob([buffer]), filename);
-    form.append('models', 'nudity-2.1,offensive,weapon,recreational_drug');
-    form.append('api_user', SIGHTENGINE_USER!);
-    form.append('api_secret', SIGHTENGINE_SECRET!);
-
-    const response = await fetch('https://api.sightengine.com/1.0/check.json', {
-      method: 'POST',
-      body: form,
-    });
-    if (!response.ok) {
-      return moderationUnavailable(`Sightengine API error ${response.status} (buffer)`);
-    }
-
-    const data = await response.json() as any;
-    if (data.status !== 'success') {
-      return moderationUnavailable('Sightengine non-success status (buffer)');
-    }
-
-    return verdictFromSightengineResponse(data);
+    dataUrl = await toJpegDataUrl(buffer);
   } catch (err) {
-    logger.error({ err }, 'Buffer moderation check failed');
-    return moderationUnavailable('exception (buffer)');
+    logger.error({ err: (err as Error).message }, 'Image decode (sharp) failed');
+    return moderationUnavailable('image decode failed');
   }
+  const worst = await moderateDataUrls([dataUrl]);
+  if (!worst) return moderationUnavailable('api error (image)');
+  return verdictFrom(worst, 'Content');
 }
 
-/**
- * Check an image URL against Sightengine's moderation API.
- * Returns { safe: true } if no API key is configured (fail open).
- */
+/** Moderate an image by URL — downloads the bytes, then classifies. */
 export async function moderateImageUrl(imageUrl: string): Promise<ModerationResult> {
-  if (!isModerationConfigured) return moderationUnavailable('not configured (url)');
-
+  if (!isModerationConfigured) return moderationUnavailable('not configured');
   try {
-    const params = new URLSearchParams({
-      url: imageUrl,
-      models: 'nudity-2.1,offensive,weapon,recreational_drug',
-      api_user: SIGHTENGINE_USER!,
-      api_secret: SIGHTENGINE_SECRET!,
-    });
-
-    const response = await fetch(`https://api.sightengine.com/1.0/check.json?${params}`);
-    if (!response.ok) {
-      return moderationUnavailable(`Sightengine API error ${response.status} (url)`);
-    }
-
-    const data = await response.json() as any;
-    if (data.status !== 'success') {
-      return moderationUnavailable('Sightengine non-success status (url)');
-    }
-
-    return verdictFromSightengineResponse(data);
+    const res = await fetch(imageUrl);
+    if (!res.ok) return moderationUnavailable(`fetch ${res.status} (image url)`);
+    return moderateImageBuffer(Buffer.from(await res.arrayBuffer()));
   } catch (err) {
-    logger.error({ err, imageUrl }, 'Moderation check failed');
-    return moderationUnavailable('exception (url)');
+    logger.error({ err: (err as Error).message, imageUrl }, 'Image moderation (url) failed');
+    return moderationUnavailable('exception (image url)');
   }
 }
 
 /**
- * Check a video URL by sampling frames.
- * Sightengine's video moderation uses a separate endpoint with frame sampling.
+ * Moderate a video from its raw bytes: sample frames (ffmpeg), then check them
+ * all in one moderation request. Preferred over [moderateVideoUrl] wherever the
+ * buffer is available (story, reel) — no fetch of our own storage.
  */
-export async function moderateVideoUrl(videoUrl: string): Promise<ModerationResult> {
-  if (!isModerationConfigured) return moderationUnavailable('not configured (video)');
-
+export async function moderateVideoBuffer(buffer: Buffer, ext = '.mp4'): Promise<ModerationResult> {
+  if (!isModerationConfigured) return moderationUnavailable('not configured');
   try {
-    const params = new URLSearchParams({
-      stream_url: videoUrl,
-      models: 'nudity-2.1,offensive,weapon',
-      api_user: SIGHTENGINE_USER!,
-      api_secret: SIGHTENGINE_SECRET!,
-    });
+    const frames = await extractFrames(buffer, { maxFrames: VIDEO_FRAMES, ext });
+    if (frames.length === 0) return moderationUnavailable('no frames decoded (video)');
 
-    // Synchronous video check — samples frames and returns aggregated result.
-    // Hard timeout so a slow/large video can never hang the caller.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 45_000);
-    let response: Response;
-    try {
-      response = await fetch(
-        `https://api.sightengine.com/1.0/video/check-sync.json?${params}`,
-        { signal: controller.signal },
-      );
-    } finally {
-      clearTimeout(timer);
+    const dataUrls: string[] = [];
+    for (const f of frames) {
+      try {
+        dataUrls.push(await toJpegDataUrl(f));
+      } catch {
+        /* skip an undecodable frame */
+      }
     }
-    if (!response.ok) {
-      return moderationUnavailable(`Sightengine video API error ${response.status}`);
-    }
+    if (dataUrls.length === 0) return moderationUnavailable('no frames encodable (video)');
 
-    const data = await response.json() as any;
-    if (data.status !== 'success') {
-      return moderationUnavailable('Sightengine video non-success status');
-    }
-
-    // For video, data.data.frames is an array of frame analyses. Take the
-    // worst score seen across all sampled frames, then apply the shared
-    // verdict so images and video enforce identical thresholds.
-    const frames = data.data?.frames || [];
-    let maxExplicit = 0;
-    let maxSuggestive = 0;
-    let maxOffensive = 0;
-    let maxWeapon = 0;
-
-    for (const frame of frames) {
-      const n = nuditySignals(frame.nudity || {});
-      maxExplicit = Math.max(maxExplicit, n.explicit);
-      maxSuggestive = Math.max(maxSuggestive, n.suggestive);
-      maxOffensive = Math.max(maxOffensive, frame.offensive?.prob || 0);
-      maxWeapon = Math.max(maxWeapon, frame.weapon || 0);
-    }
-
-    return verdictFromScores(
-      { explicit: maxExplicit, suggestive: maxSuggestive, offensive: maxOffensive, weapon: maxWeapon, drugs: 0 },
-      'Video',
-    );
+    const worst = await moderateDataUrls(dataUrls);
+    if (!worst) return moderationUnavailable('api error (video)');
+    return verdictFrom(worst, 'Video');
   } catch (err) {
-    logger.error({ err, videoUrl }, 'Video moderation check failed');
-    return moderationUnavailable('exception (video)');
+    logger.error({ err: (err as Error).message }, 'Video moderation (buffer) failed');
+    return moderationUnavailable('exception (video buffer)');
+  }
+}
+
+/** Moderate a video by URL — downloads it, then samples/classifies frames. */
+export async function moderateVideoUrl(videoUrl: string): Promise<ModerationResult> {
+  if (!isModerationConfigured) return moderationUnavailable('not configured');
+  try {
+    const res = await fetch(videoUrl);
+    if (!res.ok) return moderationUnavailable(`fetch ${res.status} (video url)`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const m = videoUrl.split('?')[0].match(/\.([a-z0-9]{2,5})$/i);
+    return moderateVideoBuffer(buffer, m ? `.${m[1]}` : '.mp4');
+  } catch (err) {
+    logger.error({ err: (err as Error).message, videoUrl }, 'Video moderation (url) failed');
+    return moderationUnavailable('exception (video url)');
   }
 }

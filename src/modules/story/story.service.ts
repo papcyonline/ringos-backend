@@ -6,7 +6,7 @@ import { isPro } from '../../shared/usage.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { deleteFromR2 } from '../../shared/r2.service';
-import { moderateImageBuffer, moderateVideoUrl } from '../../shared/moderation.service';
+import { moderateImageBuffer, moderateVideoBuffer } from '../../shared/moderation.service';
 import { checkCaptionLinks } from '../../shared/urlSafety';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
 import { notifyFollowersOfNewStory, notifyStoryOwnerOfView, checkStoryMilestone } from './story.notify';
@@ -232,14 +232,32 @@ export async function createStory(
   invalidateFeedCache(); // New story affects everyone's feed
 
   // Background video moderation (fire-and-forget). The post already succeeded;
-  // if any video slide is unsafe, the whole story is removed. Keeps the upload
-  // request fast + reliable while still enforcing nudity blocking on video.
-  const videoUrls = uploads.filter((u) => u.type === 'VIDEO').map((u) => u.mediaUrl);
-  if (videoUrls.length > 0) {
+  // if a video slide is GENUINELY unsafe, the whole story is removed. We
+  // moderate the ORIGINAL uploaded buffer (sampling frames), not the stored
+  // URL — no third-party fetch of our storage.
+  const videoModerationInputs = files
+    .map((file, index) => ({ file, type: slidesMetadata?.[index]?.type ?? 'IMAGE' }))
+    .filter((x) => x.type === 'VIDEO')
+    .map((x) => ({
+      buffer: x.file.buffer,
+      ext: x.file.originalname?.match(/\.[a-z0-9]{2,5}$/i)?.[0] || '.mp4',
+    }));
+  if (videoModerationInputs.length > 0) {
     void (async () => {
       try {
-        for (const url of videoUrls) {
-          const verdict = await moderateVideoUrl(url);
+        for (const input of videoModerationInputs) {
+          const verdict = await moderateVideoBuffer(input.buffer, input.ext);
+          // Only delete on a GENUINE unsafe verdict. An `unavailable` verdict
+          // (API down/rate-limited, or a codec we couldn't decode) is NOT a
+          // content decision — treating it as unsafe would silently delete
+          // legit video stories. Keep the story and log instead.
+          if (!verdict.safe && verdict.unavailable) {
+            logger.warn(
+              { storyId: story.id, userId, reason: verdict.reason },
+              'Story video moderation unavailable — keeping story (not deleting)',
+            );
+            continue;
+          }
           if (!verdict.safe) {
             logger.warn(
               { storyId: story.id, userId, reason: verdict.reason },
