@@ -138,16 +138,26 @@ export async function createStory(
     }
   }
 
-  // ── Content moderation (pre-upload) ─────────────────────────
-  // Image/text slides are checked BEFORE upload so explicit bytes never
-  // reach storage. Video slides need a public URL for Sightengine's frame
-  // API, so they're checked post-upload below (and deleted if unsafe).
+  // ── Content moderation (pre-creation) ───────────────────────
+  // EVERY slide — image AND video — is checked BEFORE the story is created, so
+  // nothing unsafe is ever visible to anyone. Video used to be checked in the
+  // BACKGROUND (the story posted, showed to others, then vanished if unsafe);
+  // gpt-4o-mini frame-sampling is fast enough (~2-3s) to do it up-front now,
+  // like reels, so a bad clip is rejected before the story exists.
   for (let i = 0; i < files.length; i++) {
-    const slideType = slidesMetadata?.[i]?.type ?? 'IMAGE';
-    if (slideType === 'VIDEO') continue;
-    const verdict = await moderateImageBuffer(files[i].buffer, files[i].originalname);
-    if (!verdict.safe) {
-      const err: any = new BadRequestError(verdict.reason || 'Image failed content moderation');
+    const isVideo = (slidesMetadata?.[i]?.type ?? 'IMAGE') === 'VIDEO';
+    const verdict = isVideo
+      ? await moderateVideoBuffer(
+          files[i].buffer,
+          files[i].originalname?.match(/\.[a-z0-9]{2,5}$/i)?.[0] || '.mp4',
+        )
+      : await moderateImageBuffer(files[i].buffer, files[i].originalname);
+    // Videos additionally let an `unavailable` verdict through (a codec we
+    // couldn't decode / API hiccup) rather than falsely rejecting a legit clip;
+    // images fail closed.
+    const block = isVideo ? !verdict.safe && !verdict.unavailable : !verdict.safe;
+    if (block) {
+      const err: any = new BadRequestError(verdict.reason || 'Content failed moderation');
       err.code = 'MODERATION_REJECTED';
       throw err;
     }
@@ -230,49 +240,6 @@ export async function createStory(
 
   logger.info({ storyId: story.id, userId, slideCount: files.length }, 'Story created');
   invalidateFeedCache(); // New story affects everyone's feed
-
-  // Background video moderation (fire-and-forget). The post already succeeded;
-  // if a video slide is GENUINELY unsafe, the whole story is removed. We
-  // moderate the ORIGINAL uploaded buffer (sampling frames), not the stored
-  // URL — no third-party fetch of our storage.
-  const videoModerationInputs = files
-    .map((file, index) => ({ file, type: slidesMetadata?.[index]?.type ?? 'IMAGE' }))
-    .filter((x) => x.type === 'VIDEO')
-    .map((x) => ({
-      buffer: x.file.buffer,
-      ext: x.file.originalname?.match(/\.[a-z0-9]{2,5}$/i)?.[0] || '.mp4',
-    }));
-  if (videoModerationInputs.length > 0) {
-    void (async () => {
-      try {
-        for (const input of videoModerationInputs) {
-          const verdict = await moderateVideoBuffer(input.buffer, input.ext);
-          // Only delete on a GENUINE unsafe verdict. An `unavailable` verdict
-          // (API down/rate-limited, or a codec we couldn't decode) is NOT a
-          // content decision — treating it as unsafe would silently delete
-          // legit video stories. Keep the story and log instead.
-          if (!verdict.safe && verdict.unavailable) {
-            logger.warn(
-              { storyId: story.id, userId, reason: verdict.reason },
-              'Story video moderation unavailable — keeping story (not deleting)',
-            );
-            continue;
-          }
-          if (!verdict.safe) {
-            logger.warn(
-              { storyId: story.id, userId, reason: verdict.reason },
-              'Story video failed moderation — removing story',
-            );
-            await deleteStory(story.id, userId).catch((err) =>
-              logger.error({ err, storyId: story.id }, 'Failed to remove unsafe story'));
-            return;
-          }
-        }
-      } catch (err) {
-        logger.error({ err, storyId: story.id }, 'Background story video moderation failed');
-      }
-    })();
-  }
 
   // Fan-out push notifications to followers — fire-and-forget so the request
   // returns fast. Skipped for channel stories (different audience).
