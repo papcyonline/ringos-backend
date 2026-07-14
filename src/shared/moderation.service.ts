@@ -198,13 +198,21 @@ async function moderateDataUrls(dataUrls: string[]): Promise<Flags | null> {
   return combined;
 }
 
+// Short, clear, user-facing toast text per category.
+const LABELS: Record<Category, string> = {
+  nudity: 'nudity',
+  weapons: 'weapons',
+  drugs: 'drugs',
+  violence: 'graphic violence',
+};
+
 function verdictFrom(flags: Flags, subject: 'Content' | 'Video'): ModerationResult {
   const hit = CATEGORIES.filter((c) => flags[c]);
   logger.info({ subject, nudity: flags.nudity, weapons: flags.weapons, drugs: flags.drugs, violence: flags.violence, unsafe: hit.length > 0 }, 'moderation result');
-  if (hit.length > 0) {
-    return { safe: false, reason: `${subject} contains prohibited content (${hit.join(', ')})`, categories: hit };
-  }
-  return { safe: true };
+  if (hit.length === 0) return { safe: true };
+  // One category → name it ("No nudity allowed"); multiple → keep it generic.
+  const reason = hit.length === 1 ? `No ${LABELS[hit[0]]} allowed` : "This content isn't allowed";
+  return { safe: false, reason, categories: hit };
 }
 
 /**
