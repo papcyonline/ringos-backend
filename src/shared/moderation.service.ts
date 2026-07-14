@@ -237,17 +237,28 @@ export async function moderateImageBuffer(
   return verdictFrom(flags, 'Content');
 }
 
+/** Fetch a URL into a Buffer, or null if unreachable — so the two URL entry
+ *  points don't each repeat the fetch / ok-check / try-catch dance. */
+async function fetchToBuffer(url: string, label: string): Promise<Buffer | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      logger.warn({ status: res.status, label }, 'Moderation fetch not ok');
+      return null;
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch (err) {
+    logger.error({ err: (err as Error).message, label }, 'Moderation fetch failed');
+    return null;
+  }
+}
+
 /** Moderate an image by URL — downloads the bytes, then classifies. */
 export async function moderateImageUrl(imageUrl: string): Promise<ModerationResult> {
   if (!isModerationConfigured) return moderationUnavailable('not configured');
-  try {
-    const res = await fetch(imageUrl);
-    if (!res.ok) return moderationUnavailable(`fetch ${res.status} (image url)`);
-    return moderateImageBuffer(Buffer.from(await res.arrayBuffer()));
-  } catch (err) {
-    logger.error({ err: (err as Error).message, imageUrl }, 'Image moderation (url) failed');
-    return moderationUnavailable('exception (image url)');
-  }
+  const buffer = await fetchToBuffer(imageUrl, 'image url');
+  if (!buffer) return moderationUnavailable('fetch failed (image url)');
+  return moderateImageBuffer(buffer);
 }
 
 /**
@@ -283,14 +294,8 @@ export async function moderateVideoBuffer(buffer: Buffer, ext = '.mp4'): Promise
 /** Moderate a video by URL — downloads it, then samples/classifies frames. */
 export async function moderateVideoUrl(videoUrl: string): Promise<ModerationResult> {
   if (!isModerationConfigured) return moderationUnavailable('not configured');
-  try {
-    const res = await fetch(videoUrl);
-    if (!res.ok) return moderationUnavailable(`fetch ${res.status} (video url)`);
-    const buffer = Buffer.from(await res.arrayBuffer());
-    const m = videoUrl.split('?')[0].match(/\.([a-z0-9]{2,5})$/i);
-    return moderateVideoBuffer(buffer, m ? `.${m[1]}` : '.mp4');
-  } catch (err) {
-    logger.error({ err: (err as Error).message, videoUrl }, 'Video moderation (url) failed');
-    return moderationUnavailable('exception (video url)');
-  }
+  const buffer = await fetchToBuffer(videoUrl, 'video url');
+  if (!buffer) return moderationUnavailable('fetch failed (video url)');
+  const m = videoUrl.split('?')[0].match(/\.([a-z0-9]{2,5})$/i);
+  return moderateVideoBuffer(buffer, m ? `.${m[1]}` : '.mp4');
 }
