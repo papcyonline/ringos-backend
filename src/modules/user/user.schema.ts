@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { containsExplicitText } from '../../shared/moderation.service';
+import { containsExplicitText } from '../../shared/text-moderation.service';
 
 const MoodTag = z.enum([
   'HAPPY',

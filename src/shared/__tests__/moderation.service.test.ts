@@ -1,183 +1,157 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Shared mutable state the mocks read from (hoisted so vi.mock factories can
+// reference it safely).
+const h = vi.hoisted(() => ({
+  classifyReturn: [] as { className: string; probability: number }[],
+  classifyQueue: [] as { className: string; probability: number }[][],
+  framesReturn: [] as Buffer[],
+  classifyThrows: false,
+}));
+
 vi.mock('../logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('nsfwjs', () => ({
+  load: vi.fn(async () => ({
+    classify: vi.fn(async () => {
+      if (h.classifyThrows) throw new Error('model unavailable');
+      return h.classifyQueue.length ? h.classifyQueue.shift() : h.classifyReturn;
+    }),
+  })),
+}));
+
+vi.mock('@tensorflow/tfjs-node', () => ({
+  node: { decodeImage: vi.fn(() => ({ dispose: vi.fn() })) },
+}));
+
+vi.mock('sharp', () => {
+  const chain: any = {
+    rotate: () => chain,
+    flatten: () => chain,
+    jpeg: () => chain,
+    toBuffer: async () => Buffer.from('jpeg-bytes'),
+  };
+  return { default: vi.fn(() => chain) };
+});
+
+vi.mock('../video.service', () => ({
+  extractFrames: vi.fn(async () => h.framesReturn),
+}));
+
+const preds = (o: Partial<Record<'porn' | 'hentai' | 'sexy' | 'neutral' | 'drawing', number>>) => [
+  { className: 'Porn', probability: o.porn ?? 0 },
+  { className: 'Hentai', probability: o.hentai ?? 0 },
+  { className: 'Sexy', probability: o.sexy ?? 0 },
+  { className: 'Neutral', probability: o.neutral ?? 1 },
+  { className: 'Drawing', probability: o.drawing ?? 0 },
+];
+
 const originalEnv = process.env;
-let originalFetch: any;
 
 beforeEach(() => {
   vi.resetModules();
-  process.env = { ...originalEnv, SIGHTENGINE_API_USER: 'u', SIGHTENGINE_API_SECRET: 's' };
-  originalFetch = (global as any).fetch;
+  process.env = { ...originalEnv };
+  h.classifyReturn = preds({ neutral: 1 });
+  h.classifyQueue = [];
+  h.framesReturn = [Buffer.from('frame')];
+  h.classifyThrows = false;
   vi.clearAllMocks();
 });
 
 afterEach(() => {
   process.env = originalEnv;
-  (global as any).fetch = originalFetch;
 });
 
-function mockFetch(data: any, ok = true) {
-  (global as any).fetch = vi.fn().mockResolvedValue({
-    ok,
-    status: ok ? 200 : 500,
-    json: async () => data,
-  });
-}
-
-describe('moderation.service', () => {
-  describe('moderateImageUrl', () => {
-    it('returns safe when no API key configured', async () => {
-      process.env = { ...originalEnv };
-      delete process.env.SIGHTENGINE_API_USER;
-      delete process.env.SIGHTENGINE_API_SECRET;
-      const { moderateImageUrl } = await import('../moderation.service');
-      const res = await moderateImageUrl('https://x/img.jpg');
-      expect(res.safe).toBe(true);
-    });
-
-    it('returns safe when API errors (fail open)', async () => {
-      mockFetch({}, false);
-      const { moderateImageUrl } = await import('../moderation.service');
-      const res = await moderateImageUrl('https://x/img.jpg');
-      expect(res.safe).toBe(true);
-    });
-
-    it('returns safe when status is non-success', async () => {
-      mockFetch({ status: 'failed' });
-      const { moderateImageUrl } = await import('../moderation.service');
-      const res = await moderateImageUrl('https://x/img.jpg');
-      expect(res.safe).toBe(true);
-    });
-
-    it('flags nudity above threshold', async () => {
-      mockFetch({
-        status: 'success',
-        nudity: { sexual_activity: 0.9, sexual_display: 0.1, erotica: 0.1 },
-      });
-      const { moderateImageUrl } = await import('../moderation.service');
-      const res = await moderateImageUrl('https://x/img.jpg');
-      expect(res.safe).toBe(false);
-      expect(res.reason).toMatch(/nudity/);
-    });
-
-    it('flags offensive content', async () => {
-      mockFetch({
-        status: 'success',
-        nudity: {},
-        offensive: { prob: 0.9 },
-      });
-      const { moderateImageUrl } = await import('../moderation.service');
-      const res = await moderateImageUrl('https://x/img.jpg');
-      expect(res.safe).toBe(false);
-      expect(res.reason).toMatch(/offensive/);
-    });
-
-    it('flags weapons above threshold', async () => {
-      mockFetch({
-        status: 'success',
-        nudity: {},
-        weapon: 0.95,
-      });
-      const { moderateImageUrl } = await import('../moderation.service');
-      const res = await moderateImageUrl('https://x/img.jpg');
-      expect(res.safe).toBe(false);
-      expect(res.reason).toMatch(/weapon/);
-    });
-
-    it('returns safe with scores when below thresholds', async () => {
-      mockFetch({
-        status: 'success',
-        nudity: { sexual_activity: 0.1 },
-        offensive: { prob: 0.1 },
-        weapon: 0.1,
-        recreational_drug: { prob: 0.1 },
-      });
-      const { moderateImageUrl } = await import('../moderation.service');
-      const res = await moderateImageUrl('https://x/img.jpg');
-      expect(res.safe).toBe(true);
-      expect(res.scores).toBeDefined();
-    });
-
-    it('catches fetch exceptions and returns safe', async () => {
-      (global as any).fetch = vi.fn().mockRejectedValue(new Error('network'));
-      const { moderateImageUrl } = await import('../moderation.service');
-      const res = await moderateImageUrl('https://x/img.jpg');
-      expect(res.safe).toBe(true);
+describe('moderation.service (NSFWJS)', () => {
+  describe('containsExplicitText', () => {
+    it('flags explicit words and leet-speak, ignores clean text', async () => {
+      const { containsExplicitText } = await import('../moderation.service');
+      expect(containsExplicitText('check out my p0rn')).toBe(true);
+      expect(containsExplicitText('hello there friend')).toBe(false);
+      expect(containsExplicitText('a classic story')).toBe(false); // "ass" substring not flagged
     });
   });
 
-  describe('moderateVideoUrl', () => {
-    it('returns safe when no API key configured', async () => {
-      process.env = { ...originalEnv };
-      delete process.env.SIGHTENGINE_API_USER;
-      delete process.env.SIGHTENGINE_API_SECRET;
-      const { moderateVideoUrl } = await import('../moderation.service');
-      const res = await moderateVideoUrl('https://x/v.mp4');
-      expect(res.safe).toBe(true);
+  describe('moderateImageBuffer', () => {
+    it('passes safe (neutral) images', async () => {
+      h.classifyReturn = preds({ neutral: 0.98 });
+      const { moderateImageBuffer } = await import('../moderation.service');
+      expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(true);
     });
 
-    it('returns safe on API error', async () => {
-      mockFetch({}, false);
-      const { moderateVideoUrl } = await import('../moderation.service');
-      const res = await moderateVideoUrl('https://x/v.mp4');
-      expect(res.safe).toBe(true);
+    it('blocks Porn over the threshold', async () => {
+      h.classifyReturn = preds({ porn: 0.92 });
+      const { moderateImageBuffer } = await import('../moderation.service');
+      const r = await moderateImageBuffer(Buffer.from('x'));
+      expect(r.safe).toBe(false);
+      expect(r.reason).toMatch(/nudity|sexual/i);
     });
 
-    it('returns safe on non-success status', async () => {
-      mockFetch({ status: 'failed' });
-      const { moderateVideoUrl } = await import('../moderation.service');
-      const res = await moderateVideoUrl('https://x/v.mp4');
-      expect(res.safe).toBe(true);
+    it('blocks Hentai over the threshold', async () => {
+      h.classifyReturn = preds({ hentai: 0.8 });
+      const { moderateImageBuffer } = await import('../moderation.service');
+      expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(false);
     });
 
-    it('flags video nudity', async () => {
-      mockFetch({
-        status: 'success',
-        data: { frames: [{ nudity: { sexual_activity: 0.95 } }] },
-      });
-      const { moderateVideoUrl } = await import('../moderation.service');
-      const res = await moderateVideoUrl('https://x/v.mp4');
-      expect(res.safe).toBe(false);
-      expect(res.reason).toMatch(/nudity/);
+    it('does NOT block merely "Sexy" images (bikini/cleavage false-positives)', async () => {
+      h.classifyReturn = preds({ sexy: 0.95, neutral: 0.05 });
+      const { moderateImageBuffer } = await import('../moderation.service');
+      expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(true);
     });
 
-    it('flags video offensive', async () => {
-      mockFetch({
-        status: 'success',
-        data: { frames: [{ nudity: {}, offensive: { prob: 0.95 } }] },
-      });
-      const { moderateVideoUrl } = await import('../moderation.service');
-      const res = await moderateVideoUrl('https://x/v.mp4');
-      expect(res.safe).toBe(false);
-      expect(res.reason).toMatch(/offensive/);
+    it('respects the 0.7 threshold boundary', async () => {
+      const { moderateImageBuffer } = await import('../moderation.service');
+      h.classifyReturn = preds({ porn: 0.69 });
+      expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(true);
+      h.classifyReturn = preds({ porn: 0.71 });
+      expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(false);
+    });
+  });
+
+  describe('moderateVideoBuffer', () => {
+    it('takes the worst frame across the sampled frames', async () => {
+      h.framesReturn = [Buffer.from('a'), Buffer.from('b'), Buffer.from('c')];
+      h.classifyQueue = [preds({ neutral: 1 }), preds({ porn: 0.9 }), preds({ neutral: 1 })];
+      const { moderateVideoBuffer } = await import('../moderation.service');
+      expect((await moderateVideoBuffer(Buffer.from('vid'))).safe).toBe(false);
     });
 
-    it('flags video weapons', async () => {
-      mockFetch({
-        status: 'success',
-        data: { frames: [{ nudity: {}, weapon: 0.9 }] },
-      });
-      const { moderateVideoUrl } = await import('../moderation.service');
-      const res = await moderateVideoUrl('https://x/v.mp4');
-      expect(res.safe).toBe(false);
-      expect(res.reason).toMatch(/weapon/);
+    it('passes a clean video', async () => {
+      h.framesReturn = [Buffer.from('a'), Buffer.from('b')];
+      h.classifyReturn = preds({ neutral: 1 });
+      const { moderateVideoBuffer } = await import('../moderation.service');
+      expect((await moderateVideoBuffer(Buffer.from('vid'))).safe).toBe(true);
     });
 
-    it('returns safe with no frames', async () => {
-      mockFetch({ status: 'success', data: { frames: [] } });
-      const { moderateVideoUrl } = await import('../moderation.service');
-      const res = await moderateVideoUrl('https://x/v.mp4');
-      expect(res.safe).toBe(true);
+    it('reports unavailable when frames exist but none classify (model outage)', async () => {
+      process.env.NODE_ENV = 'test';
+      h.framesReturn = [Buffer.from('a'), Buffer.from('b')];
+      h.classifyThrows = true;
+      const { moderateVideoBuffer } = await import('../moderation.service');
+      const r = await moderateVideoBuffer(Buffer.from('vid'));
+      expect(r.unavailable).toBe(true);
+      expect(r.safe).toBe(true); // non-prod fail-open
     });
 
-    it('catches video fetch exceptions', async () => {
-      (global as any).fetch = vi.fn().mockRejectedValue(new Error('network'));
-      const { moderateVideoUrl } = await import('../moderation.service');
-      const res = await moderateVideoUrl('https://x/v.mp4');
-      expect(res.safe).toBe(true);
+    it('returns unavailable (fail-OPEN in non-prod) when no frames decode', async () => {
+      process.env.NODE_ENV = 'test';
+      h.framesReturn = [];
+      const { moderateVideoBuffer } = await import('../moderation.service');
+      const r = await moderateVideoBuffer(Buffer.from('vid'));
+      expect(r.unavailable).toBe(true);
+      expect(r.safe).toBe(true);
+    });
+
+    it('fails CLOSED on unavailable in production', async () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.MODERATION_FAIL_OPEN;
+      h.framesReturn = [];
+      const { moderateVideoBuffer } = await import('../moderation.service');
+      const r = await moderateVideoBuffer(Buffer.from('vid'));
+      expect(r.unavailable).toBe(true);
+      expect(r.safe).toBe(false);
     });
   });
 });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { containsExplicitText } from '../../shared/moderation.service';
+import { containsExplicitText } from '../../shared/text-moderation.service';
 
 /**
  * Server-side mirror of the frontend's _isReadableText gate (see

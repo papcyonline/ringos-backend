@@ -6,7 +6,7 @@ import { isPro } from '../../shared/usage.service';
 import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { deleteFromR2 } from '../../shared/r2.service';
-import { moderateImageBuffer, moderateVideoUrl } from '../../shared/moderation.service';
+import { moderateImageBuffer, moderateVideoBuffer } from '../../shared/moderation.service';
 import { checkCaptionLinks } from '../../shared/urlSafety';
 import { getOrCreateDirectConversation, sendMessage } from '../chat/chat.service';
 import { notifyFollowersOfNewStory, notifyStoryOwnerOfView, checkStoryMilestone } from './story.notify';
@@ -140,8 +140,8 @@ export async function createStory(
 
   // ── Content moderation (pre-upload) ─────────────────────────
   // Image/text slides are checked BEFORE upload so explicit bytes never
-  // reach storage. Video slides need a public URL for Sightengine's frame
-  // API, so they're checked post-upload below (and deleted if unsafe).
+  // reach storage. Video slides are frame-sampled in the BACKGROUND after
+  // creation (see below) so a slow decode never blocks the post.
   for (let i = 0; i < files.length; i++) {
     const slideType = slidesMetadata?.[i]?.type ?? 'IMAGE';
     if (slideType === 'VIDEO') continue;
@@ -209,10 +209,9 @@ export async function createStory(
   );
 
   // NOTE: images are moderated BEFORE upload (above). Videos are moderated in
-  // the BACKGROUND after the story is created (see below) — Sightengine's
-  // synchronous video analysis is slow/unbounded and blocking the upload here
-  // caused legit video posts to time out and fail. The story is auto-removed
-  // if a video turns out unsafe.
+  // the BACKGROUND after the story is created (see below) — frame-sampling a
+  // whole clip is slow, so blocking the upload on it made legit video posts
+  // time out and fail. The story is auto-removed if a video turns out unsafe.
 
   const story = await prisma.story.create({
     data: {
@@ -234,12 +233,34 @@ export async function createStory(
   // Background video moderation (fire-and-forget). The post already succeeded;
   // if any video slide is unsafe, the whole story is removed. Keeps the upload
   // request fast + reliable while still enforcing nudity blocking on video.
-  const videoUrls = uploads.filter((u) => u.type === 'VIDEO').map((u) => u.mediaUrl);
-  if (videoUrls.length > 0) {
+  // We moderate the ORIGINAL uploaded buffer (sampling frames locally) rather
+  // than the stored URL — no third-party fetch of our R2 objects, which is what
+  // used to fail and delete legit stories.
+  const videoModerationInputs = files
+    .map((file, index) => ({ file, type: slidesMetadata?.[index]?.type ?? 'IMAGE' }))
+    .filter((x) => x.type === 'VIDEO')
+    .map((x) => ({
+      buffer: x.file.buffer,
+      ext: x.file.originalname?.match(/\.[a-z0-9]{2,5}$/i)?.[0] || '.mp4',
+    }));
+  if (videoModerationInputs.length > 0) {
     void (async () => {
       try {
-        for (const url of videoUrls) {
-          const verdict = await moderateVideoUrl(url);
+        for (const input of videoModerationInputs) {
+          const verdict = await moderateVideoBuffer(input.buffer, input.ext);
+          // Only remove the story when the video is GENUINELY unsafe. An
+          // `unavailable` verdict (a codec ffmpeg couldn't decode, or the model
+          // failing to load) is NOT a content decision — in production moderation
+          // fails CLOSED, so treating `unavailable` as unsafe here would silently
+          // delete legit video stories whenever moderation hiccups. Keep the
+          // story and log loudly instead of destroying a good post.
+          if (!verdict.safe && verdict.unavailable) {
+            logger.warn(
+              { storyId: story.id, userId, reason: verdict.reason },
+              'Story video moderation unavailable — keeping story (not deleting)',
+            );
+            continue;
+          }
           if (!verdict.safe) {
             logger.warn(
               { storyId: story.id, userId, reason: verdict.reason },

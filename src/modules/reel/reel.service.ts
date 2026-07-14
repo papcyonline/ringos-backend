@@ -6,7 +6,7 @@ import {
   uploadToR2WithKey,
   deleteFromR2,
 } from '../../shared/r2.service';
-import { moderateVideoUrl } from '../../shared/moderation.service';
+import { moderateVideoBuffer } from '../../shared/moderation.service';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
 import { ensureWebSafeH264, extractPosterFrame } from '../../shared/video.service';
 import * as cache from '../../shared/redis.service';
@@ -62,13 +62,13 @@ export async function createReel(
     'video/mp4',
   );
 
-  // Sightengine moderation — sample frames for nudity/offensive/weapon content.
-  // If unsafe, delete the just-uploaded object so we don't leak storage.
+  // Local NSFW moderation — sample frames from the normalized buffer (no URL
+  // fetch). If unsafe, delete the just-uploaded object so we don't leak storage.
   // Block only on a genuine "unsafe" verdict. If moderation was merely
-  // unavailable (API down/timeout, or a codec it couldn't decode), let the reel
+  // unavailable (a codec it couldn't decode / model load failure), let the reel
   // through rather than showing the user a false guidelines rejection — the
   // video is already normalized to H.264, so this is a rare fallback.
-  const moderation = await moderateVideoUrl(upload.url);
+  const moderation = await moderateVideoBuffer(normalized, '.mp4');
   if (!moderation.safe && !moderation.unavailable) {
     await deleteFromR2(upload.key).catch(() => {});
     const err: any = new BadRequestError(

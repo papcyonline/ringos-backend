@@ -89,6 +89,86 @@ export async function extractPosterFrame(input: Buffer, ext = '.mp4'): Promise<B
   }
 }
 
+/**
+ * Best-effort probe of a clip's duration (seconds) by parsing ffmpeg's stderr.
+ * Returns null if it can't be determined. ffmpeg-static has no ffprobe, so we
+ * run `ffmpeg -i` (which exits non-zero with no output but prints "Duration:").
+ */
+export async function probeDurationSec(input: Buffer, ext = '.mp4'): Promise<number | null> {
+  if (!ffmpegPath) return null;
+  const dir = os.tmpdir();
+  const id = randomUUID();
+  const safeExt = /^\.[a-z0-9]{1,5}$/i.test(ext) ? ext : '.mp4';
+  const inPath = path.join(dir, `dur-${id}${safeExt}`);
+  try {
+    await fs.writeFile(inPath, input);
+    const stderr = await new Promise<string>((resolve) => {
+      const proc = spawn(ffmpegPath!, ['-i', inPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let out = '';
+      proc.stderr.on('data', (d) => (out += d.toString()));
+      proc.on('close', () => resolve(out));
+      proc.on('error', () => resolve(out));
+    });
+    const m = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+    if (!m) return null;
+    const secs = Number(m[1]) * 3600 + Number(m[2]) * 60 + parseFloat(m[3]);
+    return secs > 0 ? secs : null;
+  } catch {
+    return null;
+  } finally {
+    await fs.rm(inPath, { force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Sample up to `maxFrames` JPEG frames spread evenly across the WHOLE video,
+ * each downscaled to <=224px wide (the classifier input size). Used to feed
+ * local NSFW moderation — we check the worst frame. Coverage matters: sampling
+ * only the first N seconds would let a clip that turns explicit later slip by.
+ *
+ * Fail-safe: returns [] if ffmpeg is missing/errors, so callers can treat an
+ * empty result as "couldn't decode" (moderation unavailable) rather than unsafe.
+ */
+export async function extractFrames(
+  input: Buffer,
+  { maxFrames = 16, ext = '.mp4' }: { maxFrames?: number; ext?: string } = {},
+): Promise<Buffer[]> {
+  if (!ffmpegPath) {
+    logger.warn('extractFrames: ffmpeg binary unavailable');
+    return [];
+  }
+  // Spread maxFrames across the full duration (never more than 1 frame/sec). If
+  // duration is unknown, assume 60s so a full-length reel/story is still covered.
+  const duration = (await probeDurationSec(input, ext)) ?? 60;
+  const fps = Math.min(maxFrames / duration, 1);
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'modframes-'));
+  const id = randomUUID();
+  const safeExt = /^\.[a-z0-9]{1,5}$/i.test(ext) ? ext : '.mp4';
+  const inPath = path.join(dir, `in-${id}${safeExt}`);
+  const outPattern = path.join(dir, 'frame-%03d.jpg');
+  try {
+    await fs.writeFile(inPath, input);
+    await runFfmpeg([
+      '-y',
+      '-i', inPath,
+      '-vf', `fps=${fps.toFixed(4)},scale='min(224,iw)':-2`,
+      '-frames:v', String(maxFrames),
+      '-q:v', '5',
+      '-f', 'image2',
+      outPattern,
+    ]);
+    const names = (await fs.readdir(dir)).filter((n) => n.startsWith('frame-') && n.endsWith('.jpg'));
+    const frames = await Promise.all(names.sort().map((n) => fs.readFile(path.join(dir, n))));
+    return frames.filter((b) => b.length > 0);
+  } catch (err) {
+    logger.warn({ err }, 'extractFrames failed');
+    return [];
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function faststartRemux(input: Buffer, ext = '.mp4'): Promise<Buffer> {
   if (!ffmpegPath) {
     logger.warn('faststartRemux: ffmpeg binary unavailable, returning original buffer');
