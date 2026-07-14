@@ -113,7 +113,7 @@ router.post(
             // false guidelines rejection — the upload is already H.264. Images
             // keep their existing fail-closed behavior.
             if (!result.safe && !(item.type === 'VIDEO' && result.unavailable)) {
-              console.warn(`[PostUpload] Rejected media: ${result.reason}`, result.scores);
+              console.warn(`[PostUpload] Rejected media: ${result.reason}`, result.categories);
               // Best-effort cleanup of uploaded media (fire and forget)
               for (const m of media) {
                 if (m.cloudinaryId) {

@@ -196,7 +196,7 @@ export async function fileToAvatarUrl(file: Express.Multer.File, userId: string)
   const verdict = await moderateImageBuffer(resized, `avatar-${userId}.jpg`);
   if (!verdict.safe) {
     logger.warn(
-      { userId, reason: verdict.reason, scores: verdict.scores },
+      { userId, reason: verdict.reason, categories: verdict.categories },
       'Avatar upload rejected by moderation',
     );
     throw new ForbiddenError(
@@ -234,7 +234,7 @@ export async function fileToCoverUrl(file: Express.Multer.File, userId: string):
   const verdict = await moderateImageBuffer(resized, `cover-${userId}.jpg`);
   if (!verdict.safe) {
     logger.warn(
-      { userId, reason: verdict.reason, scores: verdict.scores },
+      { userId, reason: verdict.reason, categories: verdict.categories },
       'Cover upload rejected by moderation',
     );
     throw new ForbiddenError(
@@ -276,7 +276,7 @@ export async function fileToGroupAvatarUrl(file: Express.Multer.File, ownerKey: 
 
   const verdict = await moderateImageBuffer(resized, `group-avatar-${ownerKey}.jpg`);
   if (!verdict.safe) {
-    logger.warn({ ownerKey, reason: verdict.reason, scores: verdict.scores }, 'Group avatar upload rejected by moderation');
+    logger.warn({ ownerKey, reason: verdict.reason, categories: verdict.categories }, 'Group avatar upload rejected by moderation');
     throw new ForbiddenError(verdict.reason ?? 'This image was rejected by our content policy');
   }
 
@@ -312,7 +312,7 @@ export async function fileToGroupBannerUrl(file: Express.Multer.File, ownerKey: 
 
   const verdict = await moderateImageBuffer(resized, `group-banner-${ownerKey}.jpg`);
   if (!verdict.safe) {
-    logger.warn({ ownerKey, reason: verdict.reason, scores: verdict.scores }, 'Group banner upload rejected by moderation');
+    logger.warn({ ownerKey, reason: verdict.reason, categories: verdict.categories }, 'Group banner upload rejected by moderation');
     throw new ForbiddenError(verdict.reason ?? 'This image was rejected by our content policy');
   }
 

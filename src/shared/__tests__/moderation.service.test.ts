@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  createResult: [] as any[],
-  createQueue: [] as any[][],
-  createThrows: false,
+  flags: { nudity: false, weapons: false, drugs: false, violence: false } as Record<string, boolean>,
+  queue: [] as Record<string, boolean>[],
+  throws: false,
   framesReturn: [] as Buffer[],
 }));
 
@@ -15,11 +15,14 @@ vi.mock('../../config/env', () => ({ env: { OPENAI_API_KEY: 'test-key' } }));
 
 vi.mock('../../config/openai', () => ({
   createOpenAIClient: () => ({
-    moderations: {
-      create: vi.fn(async () => {
-        if (h.createThrows) throw new Error('api down');
-        return { results: h.createQueue.length ? h.createQueue.shift() : h.createResult };
-      }),
+    chat: {
+      completions: {
+        create: vi.fn(async () => {
+          if (h.throws) throw new Error('api down');
+          const flags = h.queue.length ? h.queue.shift() : h.flags;
+          return { choices: [{ message: { content: JSON.stringify(flags) } }] };
+        }),
+      },
     },
   }),
 }));
@@ -28,6 +31,7 @@ vi.mock('sharp', () => {
   const chain: any = {
     rotate: () => chain,
     flatten: () => chain,
+    resize: () => chain,
     jpeg: () => chain,
     toBuffer: async () => Buffer.from('jpeg-bytes'),
   };
@@ -38,23 +42,20 @@ vi.mock('../video.service', () => ({
   extractFrames: vi.fn(async () => h.framesReturn),
 }));
 
-const result = (o: { sexual?: number; graphic?: number; minors?: number }) => ({
-  flagged: false,
-  categories: {},
-  category_scores: {
-    sexual: o.sexual ?? 0,
-    'violence/graphic': o.graphic ?? 0,
-    'sexual/minors': o.minors ?? 0,
-  },
+const F = (o: Partial<Record<string, boolean>>) => ({
+  nudity: !!o.nudity,
+  weapons: !!o.weapons,
+  drugs: !!o.drugs,
+  violence: !!o.violence,
 });
 
 const originalEnv = process.env;
 beforeEach(() => {
   vi.resetModules();
   process.env = { ...originalEnv };
-  h.createResult = [result({ sexual: 0 })];
-  h.createQueue = [];
-  h.createThrows = false;
+  h.flags = F({});
+  h.queue = [];
+  h.throws = false;
   h.framesReturn = [Buffer.from('frame')];
   vi.clearAllMocks();
 });
@@ -62,7 +63,7 @@ afterEach(() => {
   process.env = originalEnv;
 });
 
-describe('moderation.service (OpenAI)', () => {
+describe('moderation.service (GPT-4o-mini vision)', () => {
   describe('containsExplicitText', () => {
     it('flags explicit + leet-speak, ignores clean text', async () => {
       const { containsExplicitText } = await import('../moderation.service');
@@ -73,43 +74,39 @@ describe('moderation.service (OpenAI)', () => {
   });
 
   describe('moderateImageBuffer', () => {
-    it('passes safe images', async () => {
-      h.createResult = [result({ sexual: 0.02 })];
+    it('passes clean images', async () => {
+      h.flags = F({});
       const { moderateImageBuffer } = await import('../moderation.service');
       expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(true);
     });
 
-    it('blocks sexual content over threshold', async () => {
-      h.createResult = [result({ sexual: 0.92 })];
+    it('blocks nudity', async () => {
+      h.flags = F({ nudity: true });
       const { moderateImageBuffer } = await import('../moderation.service');
       const r = await moderateImageBuffer(Buffer.from('x'));
       expect(r.safe).toBe(false);
-      expect(r.reason).toMatch(/nudity|sexual/i);
+      expect(r.categories).toContain('nudity');
     });
 
-    it('blocks sexual/minors even below the adult sexual threshold', async () => {
-      h.createResult = [result({ minors: 0.5, sexual: 0.1 })];
+    it('blocks weapons', async () => {
+      h.flags = F({ weapons: true });
       const { moderateImageBuffer } = await import('../moderation.service');
+      const r = await moderateImageBuffer(Buffer.from('x'));
+      expect(r.safe).toBe(false);
+      expect(r.categories).toContain('weapons');
+    });
+
+    it('blocks drugs and violence', async () => {
+      const { moderateImageBuffer } = await import('../moderation.service');
+      h.flags = F({ drugs: true });
       expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(false);
-    });
-
-    it('blocks graphic violence over threshold', async () => {
-      h.createResult = [result({ graphic: 0.9 })];
-      const { moderateImageBuffer } = await import('../moderation.service');
-      expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(false);
-    });
-
-    it('respects the sexual 0.7 boundary', async () => {
-      const { moderateImageBuffer } = await import('../moderation.service');
-      h.createResult = [result({ sexual: 0.69 })];
-      expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(true);
-      h.createResult = [result({ sexual: 0.71 })];
+      h.flags = F({ violence: true });
       expect((await moderateImageBuffer(Buffer.from('x'))).safe).toBe(false);
     });
 
     it('unavailable (fail-OPEN in non-prod) when the API errors', async () => {
       process.env.NODE_ENV = 'test';
-      h.createThrows = true;
+      h.throws = true;
       const { moderateImageBuffer } = await import('../moderation.service');
       const r = await moderateImageBuffer(Buffer.from('x'));
       expect(r.unavailable).toBe(true);
@@ -119,7 +116,7 @@ describe('moderation.service (OpenAI)', () => {
     it('fails CLOSED in production when the API errors', async () => {
       process.env.NODE_ENV = 'production';
       delete process.env.MODERATION_FAIL_OPEN;
-      h.createThrows = true;
+      h.throws = true;
       const { moderateImageBuffer } = await import('../moderation.service');
       const r = await moderateImageBuffer(Buffer.from('x'));
       expect(r.unavailable).toBe(true);
@@ -128,16 +125,18 @@ describe('moderation.service (OpenAI)', () => {
   });
 
   describe('moderateVideoBuffer', () => {
-    it('takes the worst frame (one request per frame)', async () => {
+    it('flags the video if ANY frame is prohibited', async () => {
       h.framesReturn = [Buffer.from('a'), Buffer.from('b')];
-      h.createQueue = [[result({ sexual: 0.01 })], [result({ sexual: 0.95 })]];
+      h.queue = [F({}), F({ weapons: true })];
       const { moderateVideoBuffer } = await import('../moderation.service');
-      expect((await moderateVideoBuffer(Buffer.from('vid'))).safe).toBe(false);
+      const r = await moderateVideoBuffer(Buffer.from('vid'));
+      expect(r.safe).toBe(false);
+      expect(r.categories).toContain('weapons');
     });
 
     it('passes a clean video', async () => {
       h.framesReturn = [Buffer.from('a'), Buffer.from('b')];
-      h.createResult = [result({ sexual: 0.01 }), result({ sexual: 0.02 })];
+      h.flags = F({});
       const { moderateVideoBuffer } = await import('../moderation.service');
       expect((await moderateVideoBuffer(Buffer.from('vid'))).safe).toBe(true);
     });
@@ -146,8 +145,7 @@ describe('moderation.service (OpenAI)', () => {
       process.env.NODE_ENV = 'test';
       h.framesReturn = [];
       const { moderateVideoBuffer } = await import('../moderation.service');
-      const r = await moderateVideoBuffer(Buffer.from('vid'));
-      expect(r.unavailable).toBe(true);
+      expect((await moderateVideoBuffer(Buffer.from('vid'))).unavailable).toBe(true);
     });
   });
 });
