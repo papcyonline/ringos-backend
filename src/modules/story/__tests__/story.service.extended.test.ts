@@ -75,10 +75,6 @@ vi.mock('../../spotlight/spotlight.service', () => ({
   getBlockedUserIds: vi.fn().mockResolvedValue(new Set()),
 }));
 vi.mock('../../../shared/usage.service', () => ({ isPro: vi.fn().mockResolvedValue(false) }));
-vi.mock('../../../shared/moderation.service', () => ({
-  moderateImageBuffer: vi.fn().mockResolvedValue({ safe: true }),
-  moderateVideoBuffer: vi.fn().mockResolvedValue({ safe: true }),
-}));
 vi.mock('../../../shared/upload', () => ({
   fileToStoryImageUrl: vi.fn().mockResolvedValue({
     secureUrl: 'https://cdn/img.jpg', publicId: 'pid-img', thumbnailUrl: null,

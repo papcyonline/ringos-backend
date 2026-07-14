@@ -56,7 +56,7 @@ vi.mock('../../../shared/r2.service', () => ({
   deleteFromR2: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../../../shared/moderation.service', () => ({
-  moderateVideoBuffer: vi.fn().mockResolvedValue({ safe: true }),
+  moderateVideoUrl: vi.fn().mockResolvedValue({ safe: true }),
 }));
 vi.mock('../../../shared/cloudinary.service', () => ({
   isCloudinaryConfigured: false,
@@ -115,7 +115,7 @@ describe('createReel', () => {
     const r2 = await import('../../../shared/r2.service');
     (r2.uploadToR2WithKey as any).mockResolvedValueOnce({ url: 'https://r2/x.mp4', key: 'reels/u/x.mp4' });
     const mod = await import('../../../shared/moderation.service');
-    (mod.moderateVideoBuffer as any).mockResolvedValueOnce({ safe: false, reason: 'nudity' });
+    (mod.moderateVideoUrl as any).mockResolvedValueOnce({ safe: false, reason: 'nudity' });
 
     await expect(createReel('user-1', file())).rejects.toMatchObject({
       message: 'nudity',
