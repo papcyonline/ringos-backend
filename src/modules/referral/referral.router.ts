@@ -3,7 +3,7 @@ import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { AuthRequest } from '../../shared/types';
 import * as referralService from './referral.service';
-import { redeemReferralSchema } from './referral.schema';
+import { redeemReferralSchema, setCodeSchema } from './referral.schema';
 
 const router = Router();
 
@@ -15,6 +15,21 @@ router.get(
     try {
       const summary = await referralService.getReferralSummary(req.user!.userId);
       res.json(summary);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Set a custom (vanity) invite code.
+router.put(
+  '/code',
+  authenticate,
+  validate(setCodeSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const code = await referralService.setCustomCode(req.user!.userId, req.body.code);
+      res.json({ code });
     } catch (err) {
       next(err);
     }

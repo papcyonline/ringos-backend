@@ -45,6 +45,34 @@ export async function grantProDays(userId: string, days: number): Promise<Date> 
   return proUntil;
 }
 
+// Custom (vanity) code rules.
+const CODE_MIN = 4;
+const CODE_MAX = 16;
+const CODE_RE = /^[A-Z0-9]+$/;
+
+/** Let a user pick their own vanity referral code. Returns the saved code. */
+export async function setCustomCode(userId: string, rawCode: string): Promise<string> {
+  const code = rawCode.trim().toUpperCase();
+  if (code.length < CODE_MIN || code.length > CODE_MAX) {
+    throw new BadRequestError(`Code must be ${CODE_MIN}–${CODE_MAX} characters`);
+  }
+  if (!CODE_RE.test(code)) {
+    throw new BadRequestError('Use letters and numbers only');
+  }
+
+  const owner = await prisma.user.findUnique({
+    where: { referralCode: code },
+    select: { id: true },
+  });
+  if (owner && owner.id !== userId) {
+    throw new BadRequestError('That code is already taken');
+  }
+
+  await prisma.user.update({ where: { id: userId }, data: { referralCode: code } });
+  logger.info({ userId }, 'Custom referral code set');
+  return code;
+}
+
 /** Ensure the user has a unique referral code, generating one on first need. */
 export async function ensureReferralCode(userId: string): Promise<string> {
   const existing = await prisma.user.findUnique({
