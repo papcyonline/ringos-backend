@@ -35,7 +35,14 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response, next: Next
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 50));
     const rawQ = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
     const q = rawQ.length > 0 ? rawQ : undefined;
-    const result = await userService.listUsers(req.user!.userId, page, limit, q);
+    // Tab filters: ?location=<country> (Nearby) and ?following=true (Friends).
+    const rawLoc = typeof req.query.location === 'string' ? req.query.location.trim().slice(0, 100) : '';
+    const location = rawLoc.length > 0 ? rawLoc : undefined;
+    const following = req.query.following === 'true';
+    const result = await userService.listUsers(req.user!.userId, page, limit, q, {
+      location,
+      following,
+    });
     res.json(result);
   } catch (err) {
     next(err);

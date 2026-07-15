@@ -274,12 +274,16 @@ export async function listUsers(
   page = 1,
   limit = 50,
   q?: string,
+  opts: { location?: string; following?: boolean } = {},
 ) {
   // Cache only the hot path: first page, no search query, keyed per viewer.
   // Self-expiring (30s) so no explicit invalidation is needed, and it no-ops
   // cleanly when Redis isn't configured (cache.get returns null → cache miss).
   const trimmedQ = q?.trim() ?? '';
-  const cacheable = page === 1 && trimmedQ.length === 0;
+  // Only the unfiltered first page is cached; the Nearby/Friends tabs and
+  // search bypass the cache (lower volume, and they'd need their own keys).
+  const cacheable =
+    page === 1 && trimmedQ.length === 0 && !opts.location && !opts.following;
   const cacheKey = userListCacheKey(currentUserId, limit);
   if (cacheable) {
     const cached = await cache.get<{
@@ -326,6 +330,15 @@ export async function listUsers(
       { displayName: { contains: trimmedQ, mode: 'insensitive' } },
       { bio: { contains: trimmedQ, mode: 'insensitive' } },
     ];
+  }
+  // Tab filters (AND with the base visibility rules above):
+  //  • Nearby  — same location/country as the viewer.
+  //  • Friends — only people the viewer follows.
+  if (opts.location) {
+    userWhere.location = opts.location;
+  }
+  if (opts.following) {
+    userWhere.followsReceived = { some: { followerId: currentUserId } };
   }
 
   const [users, total] = await Promise.all([
