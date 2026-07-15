@@ -332,10 +332,29 @@ export async function listUsers(
     ];
   }
   // Tab filters (AND with the base visibility rules above):
-  //  • Nearby  — same location/country as the viewer.
-  //  • Friends — only people the viewer follows.
+  //  • Nearby    — same COUNTRY as the viewer. location is a free-text
+  //    "City, Country" string; the country is its last comma-separated
+  //    segment (see frontend countryFlag). Match case-insensitively either
+  //    an exact country ("Nigeria") or "..., Country" ("Lagos, Nigeria").
+  //    Anchoring on ", " avoids "Guinea" matching "Papua New Guinea".
+  //  • Following — only people the viewer follows.
   if (opts.location) {
-    userWhere.location = opts.location;
+    const parts = opts.location
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const country = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+    if (country) {
+      userWhere.AND = [
+        ...(userWhere.AND ?? []),
+        {
+          OR: [
+            { location: { equals: country, mode: 'insensitive' } },
+            { location: { endsWith: `, ${country}`, mode: 'insensitive' } },
+          ],
+        },
+      ];
+    }
   }
   if (opts.following) {
     userWhere.followsReceived = { some: { followerId: currentUserId } };
