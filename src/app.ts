@@ -7,6 +7,7 @@ import { errorHandler } from './middleware/errorHandler';
 import { rateLimiter } from './middleware/rateLimiter';
 import { authRouter } from './modules/auth/auth.router';
 import { userRouter } from './modules/user/user.router';
+import { referralRouter } from './modules/referral/referral.router';
 import { aiRouter } from './modules/ai/ai.router';
 import { matchingRouter } from './modules/matching/matching.router';
 import { chatRouter } from './modules/chat/chat.router';
@@ -94,6 +95,7 @@ if (env.NODE_ENV !== 'production') {
 
 app.use('/api/auth', authRouter);
 app.use('/api/users', userRouter);
+app.use('/api/referrals', referralRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/matching', matchingRouter);
 app.use('/api/chat', chatRouter);

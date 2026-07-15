@@ -44,18 +44,25 @@ export async function getLimits(userId: string) {
 
 // ─── Pro Check ───────────────────────────────────────────────────────────────
 
-/** Check whether a user is Pro (verified OR has active subscription). */
+/**
+ * Check whether a user is Pro: verified, an active subscription, OR a live
+ * referral Pro grant (proUntil in the future). proUntil is a badge-free
+ * entitlement earned via the referral program; it expires on its own the
+ * moment the timestamp passes — no cron needed.
+ */
 export async function isPro(userId: string): Promise<boolean> {
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
         isVerified: true,
+        proUntil: true,
         subscription: { select: { status: true } },
       },
     });
     if (!user) return false;
     if (user.isVerified) return true;
+    if (user.proUntil && user.proUntil.getTime() > Date.now()) return true;
     // Check for active subscription (updated via store webhooks / client receipt validation)
     const subStatus = user.subscription?.status;
     return subStatus === 'active' || subStatus === 'trialing';

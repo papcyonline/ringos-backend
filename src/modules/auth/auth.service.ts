@@ -10,6 +10,7 @@ import { prisma } from '../../config/database';
 import { env } from '../../config/env';
 import { logger } from '../../shared/logger';
 import { UnauthorizedError, BadRequestError, ForbiddenError, NotFoundError } from '../../shared/errors';
+import * as referralService from '../referral/referral.service';
 import { checkBanStatus } from '../safety/safety.service';
 import { logSecurityEvent } from '../../shared/audit.service';
 import { isReservedUsername } from '../../shared/reserved-usernames';
@@ -675,6 +676,16 @@ export async function setUsername(
   }
 
   logger.info({ userId, username }, 'Username set');
+
+  // Referral program: give the newly-onboarded user their own invite code, and
+  // qualify any invite code they redeemed (rewards their referrer). Best-effort
+  // — never let it break onboarding.
+  referralService.ensureReferralCode(userId).catch((err) => {
+    logger.error({ err, userId }, 'Failed to ensure referral code');
+  });
+  referralService.qualifyReferral(userId).catch((err) => {
+    logger.error({ err, userId }, 'Failed to qualify referral');
+  });
 
   return user;
 }

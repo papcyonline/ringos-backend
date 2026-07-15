@@ -246,6 +246,14 @@ model User {
   // verificationExpiry job auto-clears isVerified once it passes. NULL =
   // permanent (e.g. subscription-driven verification) — never auto-expired.
   verifiedUntil DateTime?
+  // Referral program (invite friends → referrer earns free Pro time).
+  // proUntil grants Pro entitlement independent of a purchase; isPro() honours
+  // it and it expires live (no badge, no cron). referralCode is this user's own
+  // shareable code; referralRewardTier is the highest friend-count milestone
+  // already paid out (0 / 5 / 10 / 30).
+  proUntil           DateTime?
+  referralCode       String?   @unique
+  referralRewardTier Int       @default(0)
   isProfilePublic Boolean @default(true)
   hideOnlineStatus Boolean @default(false)
   hideReadReceipts Boolean @default(false)
@@ -312,8 +320,29 @@ model User {
   polls            Poll[]
   pollVotes        PollVote[]
   reEngagementPushes ReEngagementPush[]
+  referralsMade    Referral[] @relation("ReferralsMade")
+  referralReceived Referral?  @relation("ReferralReceived")
 
   @@index([isOnline, lastSeenAt])
+}
+
+// One row per invited friend. refereeId is unique, so a user can only ever be
+// referred once (set at redeem, immutable). status: pending → qualified (counts
+// toward the referrer's milestones) or rejected (fraud). Referrer rewards are
+// granted at friend-count tiers via User.referralRewardTier + User.proUntil.
+model Referral {
+  id           String    @id @default(uuid())
+  referrerId   String
+  refereeId    String    @unique
+  status       String    @default("pending") // pending | qualified | rejected
+  rejectReason String?
+  createdAt    DateTime  @default(now())
+  qualifiedAt  DateTime?
+
+  referrer User @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
+  referee  User @relation("ReferralReceived", fields: [refereeId], references: [id], onDelete: Cascade)
+
+  @@index([referrerId, status])
 }
 
 model UserModeration {
