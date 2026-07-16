@@ -308,6 +308,7 @@ model User {
   reelLikes           ReelLike[]
   reelComments        ReelComment[]
   reelReposts         ReelRepost[]
+  reelBookmarks       ReelBookmark[]
   reelViews           ReelView[]
   reelReactions       ReelReaction[]
   streaksAsA          MessageStreak[] @relation("StreakUserA")
@@ -1183,6 +1184,7 @@ model Reel {
   createdAt    DateTime @default(now())
 
   repostCount Int @default(0)
+  bookmarkCount Int @default(0)
   /// Per-reel viewer-side video edits (filter / overlays / speed) stored
   /// as JSON. Applied at playback by the FE — no server bake.
   videoEdits  Json?
@@ -1191,11 +1193,26 @@ model Reel {
   likes     ReelLike[]
   comments  ReelComment[]
   reposts   ReelRepost[]
+  bookmarks ReelBookmark[]
   views     ReelView[]
   reactions ReelReaction[]
 
   @@index([userId, createdAt])
   @@index([createdAt])
+}
+
+model ReelBookmark {
+  id        String   @id @default(uuid())
+  reelId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  reel Reel @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reelId, userId])
+  @@index([reelId])
+  @@index([userId, createdAt])
 }
 
 model ReelReaction {

@@ -9,6 +9,9 @@ import {
   getUserReels,
   likeReel,
   unlikeReel,
+  bookmarkReel,
+  unbookmarkReel,
+  getSavedReels,
   repostReel,
   unrepostReel,
   markReelViewed,
@@ -175,6 +178,42 @@ router.delete('/:id/like', authenticate, async (req: AuthRequest, res: Response)
   } catch (error) {
     logger.error({ error }, 'Error unliking reel');
     res.status(500).json({ error: 'Failed to unlike reel' });
+  }
+});
+
+// ─── POST /api/reels/:id/bookmark (save) ────────────────────
+
+router.post('/:id/bookmark', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    await bookmarkReel(req.params.id as string, req.user!.userId);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error({ error }, 'Error bookmarking reel');
+    res.status(500).json({ error: 'Failed to save reel' });
+  }
+});
+
+// ─── DELETE /api/reels/:id/bookmark ─────────────────────────
+
+router.delete('/:id/bookmark', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    await unbookmarkReel(req.params.id as string, req.user!.userId);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error({ error }, 'Error unbookmarking reel');
+    res.status(500).json({ error: 'Failed to unsave reel' });
+  }
+});
+
+// ─── GET /api/reels/saved ───────────────────────────────────
+
+router.get('/saved', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await getSavedReels(req.user!.userId);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Error fetching saved reels');
+    res.status(500).json({ error: 'Failed to fetch saved reels' });
   }
 });
 

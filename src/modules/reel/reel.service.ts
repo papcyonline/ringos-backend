@@ -12,6 +12,44 @@ import { ensureWebSafeH264, extractPosterFrame } from '../../shared/video.servic
 import * as cache from '../../shared/redis.service';
 import path from 'path';
 
+// ─── Serialization ─────────────────────────────────────────
+// One shape for a reel sent to the client. `likes`/`reposts`/`bookmarks` are
+// the per-viewer relation includes (filtered to the requester in the query);
+// when absent (e.g. right after create) the *is\** flags default to false.
+function serializeReel(r: any) {
+  return {
+    id: r.id,
+    videoUrl: r.videoUrl,
+    thumbnailUrl: r.thumbnailUrl,
+    caption: r.caption,
+    musicTitle: r.musicTitle,
+    musicPreviewUrl: r.musicPreviewUrl,
+    musicArtist: r.musicArtist,
+    musicArtwork: r.musicArtwork,
+    videoVolume: r.videoVolume,
+    musicVolume: r.musicVolume,
+    durationSec: r.durationSec,
+    viewCount: r.viewCount,
+    likeCount: r.likeCount,
+    commentCount: r.commentCount,
+    repostCount: r.repostCount,
+    bookmarkCount: r.bookmarkCount,
+    createdAt: r.createdAt,
+    videoEdits: r.videoEdits,
+    isLiked: (r.likes?.length ?? 0) > 0,
+    isReposted: (r.reposts?.length ?? 0) > 0,
+    isBookmarked: (r.bookmarks?.length ?? 0) > 0,
+    user: r.user,
+  };
+}
+
+/// Per-viewer relation includes for the *is\** flags, filtered to [userId].
+const reelStateInclude = (userId: string) => ({
+  likes: { where: { userId }, select: { id: true } },
+  reposts: { where: { userId }, select: { id: true } },
+  bookmarks: { where: { userId }, select: { id: true } },
+});
+
 // ─── Create Reel ───────────────────────────────────────────
 
 export async function createReel(
@@ -129,28 +167,7 @@ export async function createReel(
   await invalidateReelFeedCache(userId).catch(() => {});
 
   logger.info({ reelId: reel.id, userId }, 'Reel created');
-  return {
-    id: reel.id,
-    videoUrl: reel.videoUrl,
-    thumbnailUrl: reel.thumbnailUrl,
-    caption: reel.caption,
-    musicTitle: reel.musicTitle,
-    musicPreviewUrl: reel.musicPreviewUrl,
-    musicArtist: reel.musicArtist,
-    musicArtwork: reel.musicArtwork,
-    videoVolume: reel.videoVolume,
-    musicVolume: reel.musicVolume,
-    durationSec: reel.durationSec,
-    viewCount: reel.viewCount,
-    likeCount: reel.likeCount,
-    commentCount: reel.commentCount,
-    repostCount: reel.repostCount,
-    createdAt: reel.createdAt,
-    videoEdits: reel.videoEdits,
-    isLiked: false,
-    isReposted: false,
-    user: reel.user,
-  };
+  return serializeReel(reel);
 }
 
 // ─── Feed ──────────────────────────────────────────────────
@@ -212,32 +229,12 @@ export async function getUserReels(
       },
       likes: { where: { userId: requesterId }, select: { id: true } },
       reposts: { where: { userId: requesterId }, select: { id: true } },
+      bookmarks: { where: { userId: requesterId }, select: { id: true } },
     },
   });
 
   return {
-    reels: rows.map((r) => ({
-      id: r.id,
-      videoUrl: r.videoUrl,
-      thumbnailUrl: r.thumbnailUrl,
-      caption: r.caption,
-      musicTitle: r.musicTitle,
-      musicPreviewUrl: r.musicPreviewUrl,
-      musicArtist: r.musicArtist,
-      musicArtwork: r.musicArtwork,
-      videoVolume: r.videoVolume,
-      musicVolume: r.musicVolume,
-      durationSec: r.durationSec,
-      viewCount: r.viewCount,
-      likeCount: r.likeCount,
-      commentCount: r.commentCount,
-      repostCount: r.repostCount,
-      createdAt: r.createdAt,
-      videoEdits: r.videoEdits,
-      isLiked: r.likes.length > 0,
-      isReposted: r.reposts.length > 0,
-      user: r.user,
-    })),
+    reels: rows.map(serializeReel),
     nextCursor: null,
   };
 }
@@ -304,31 +301,11 @@ export async function getReelFeed(
         },
         likes: { where: { userId: requesterId }, select: { id: true } },
         reposts: { where: { userId: requesterId }, select: { id: true } },
+        bookmarks: { where: { userId: requesterId }, select: { id: true } },
       },
     });
     const result = {
-      reels: mine.map((r) => ({
-        id: r.id,
-        videoUrl: r.videoUrl,
-        thumbnailUrl: r.thumbnailUrl,
-        caption: r.caption,
-        musicTitle: r.musicTitle,
-        musicPreviewUrl: r.musicPreviewUrl,
-        musicArtist: r.musicArtist,
-        musicArtwork: r.musicArtwork,
-        videoVolume: r.videoVolume,
-        musicVolume: r.musicVolume,
-        durationSec: r.durationSec,
-        viewCount: r.viewCount,
-        likeCount: r.likeCount,
-        commentCount: r.commentCount,
-        repostCount: r.repostCount,
-        createdAt: r.createdAt,
-        videoEdits: r.videoEdits,
-        isLiked: r.likes.length > 0,
-        isReposted: r.reposts.length > 0,
-        user: r.user,
-      })),
+      reels: mine.map(serializeReel),
       nextCursor: null,
     };
     if (!cursor) await cache.set(cacheKey, result, REEL_FEED_CACHE_TTL_SEC);
@@ -367,6 +344,10 @@ export async function getReelFeed(
         select: { id: true },
       },
       reposts: {
+        where: { userId: requesterId },
+        select: { id: true },
+      },
+      bookmarks: {
         where: { userId: requesterId },
         select: { id: true },
       },
@@ -414,28 +395,7 @@ export async function getReelFeed(
   }
 
   const result = {
-    reels: ordered.map((r) => ({
-      id: r.id,
-      videoUrl: r.videoUrl,
-      thumbnailUrl: r.thumbnailUrl,
-      caption: r.caption,
-      musicTitle: r.musicTitle,
-      musicPreviewUrl: r.musicPreviewUrl,
-      musicArtist: r.musicArtist,
-      musicArtwork: r.musicArtwork,
-      videoVolume: r.videoVolume,
-      musicVolume: r.musicVolume,
-      durationSec: r.durationSec,
-      viewCount: r.viewCount,
-      likeCount: r.likeCount,
-      commentCount: r.commentCount,
-      repostCount: r.repostCount,
-      createdAt: r.createdAt,
-      videoEdits: r.videoEdits,
-      isLiked: r.likes.length > 0,
-      isReposted: r.reposts.length > 0,
-      user: r.user,
-    })),
+    reels: ordered.map(serializeReel),
     // Sentinel — FE just calls feed again for more; backend re-ranks
     // and excludes recently-viewed reels naturally.
     nextCursor: ordered.length === limit ? 'more' : null,
@@ -507,6 +467,61 @@ export async function unlikeReel(reelId: string, userId: string) {
       data: { likeCount: { decrement: 1 } },
     });
   });
+}
+
+// ─── Bookmark / Unbookmark (save) ──────────────────────────
+
+export async function bookmarkReel(reelId: string, userId: string) {
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.reelBookmark.findUnique({
+      where: { reelId_userId: { reelId, userId } },
+    });
+    if (existing) return;
+    await tx.reelBookmark.create({ data: { reelId, userId } });
+    await tx.reel.update({
+      where: { id: reelId },
+      data: { bookmarkCount: { increment: 1 } },
+    });
+  });
+}
+
+export async function unbookmarkReel(reelId: string, userId: string) {
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.reelBookmark.findUnique({
+      where: { reelId_userId: { reelId, userId } },
+    });
+    if (!existing) return;
+    await tx.reelBookmark.delete({ where: { id: existing.id } });
+    await tx.reel.update({
+      where: { id: reelId },
+      data: { bookmarkCount: { decrement: 1 } },
+    });
+  });
+}
+
+/// Reels the user has saved, newest save first.
+export async function getSavedReels(userId: string, limit = 30) {
+  const rows = await prisma.reelBookmark.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' },
+    take: Math.min(Math.max(limit, 1), 60),
+    select: {
+      reel: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              displayName: true,
+              avatarUrl: true,
+              isVerified: true,
+            },
+          },
+          ...reelStateInclude(userId),
+        },
+      },
+    },
+  });
+  return { reels: rows.map((b) => serializeReel(b.reel)), nextCursor: null };
 }
 
 // ─── Repost / Unrepost ─────────────────────────────────────
