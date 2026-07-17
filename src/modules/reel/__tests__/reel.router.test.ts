@@ -12,6 +12,8 @@ const { mockReelService, mockStatsService } = vi.hoisted(() => ({
     unrepostReel: vi.fn().mockResolvedValue(undefined),
     markReelViewed: vi.fn().mockResolvedValue(undefined),
     updateReel: vi.fn().mockResolvedValue({ id: 'r-1', caption: 'edited' }),
+    pinReel: vi.fn().mockResolvedValue(undefined),
+    unpinReel: vi.fn().mockResolvedValue(undefined),
     deleteReel: vi.fn().mockResolvedValue(undefined),
     addReelComment: vi.fn().mockResolvedValue({ id: 'c-1' }),
     getReelComments: vi.fn().mockResolvedValue({ comments: [], nextCursor: null }),
@@ -139,6 +141,26 @@ describe('reel.router', () => {
     expect(mockReelService.updateReel).toHaveBeenCalledWith('r-1', 'user-1', {
       caption: 'edited',
     });
+  });
+
+  it('POST /reels/:id/pin', async () => {
+    const res = await request(makeApp()).post('/reels/r-1/pin');
+    expect(res.status).toBe(200);
+    expect(mockReelService.pinReel).toHaveBeenCalledWith('r-1', 'user-1');
+  });
+
+  it('DELETE /reels/:id/pin', async () => {
+    const res = await request(makeApp()).delete('/reels/r-1/pin');
+    expect(res.status).toBe(200);
+    expect(mockReelService.unpinReel).toHaveBeenCalledWith('r-1', 'user-1');
+  });
+
+  it('POST /reels/:id/pin surfaces 400 (pin cap)', async () => {
+    mockReelService.pinReel.mockRejectedValueOnce(
+      Object.assign(new Error('You can pin up to 3 reels'), { statusCode: 400 }),
+    );
+    const res = await request(makeApp()).post('/reels/r-1/pin');
+    expect(res.status).toBe(400);
   });
 
   it('DELETE /reels/:id', async () => {

@@ -16,6 +16,8 @@ import {
   unrepostReel,
   markReelViewed,
   updateReel,
+  pinReel,
+  unpinReel,
   deleteReel,
   addReelComment,
   getReelComments,
@@ -382,6 +384,41 @@ router.put('/:id', authenticate, async (req: AuthRequest, res: Response) => {
     }
     logger.error({ error }, 'Error updating reel');
     res.status(500).json({ error: 'Failed to update reel' });
+  }
+});
+
+router.post('/:id/pin', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    await pinReel(req.params.id as string, req.user!.userId);
+    res.json({ success: true });
+  } catch (error: any) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ error: error.message });
+    }
+    if (error?.statusCode === 403) {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error?.statusCode === 404) {
+      return res.status(404).json({ error: error.message });
+    }
+    logger.error({ error }, 'Error pinning reel');
+    res.status(500).json({ error: 'Failed to pin reel' });
+  }
+});
+
+router.delete('/:id/pin', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    await unpinReel(req.params.id as string, req.user!.userId);
+    res.json({ success: true });
+  } catch (error: any) {
+    if (error?.statusCode === 403) {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error?.statusCode === 404) {
+      return res.status(404).json({ error: error.message });
+    }
+    logger.error({ error }, 'Error unpinning reel');
+    res.status(500).json({ error: 'Failed to unpin reel' });
   }
 });
 

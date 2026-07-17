@@ -35,6 +35,8 @@ function serializeReel(r: any) {
     repostCount: r.repostCount,
     bookmarkCount: r.bookmarkCount,
     createdAt: r.createdAt,
+    pinnedAt: r.pinnedAt ?? null,
+    isPinned: r.pinnedAt != null,
     videoEdits: r.videoEdits,
     isLiked: (r.likes?.length ?? 0) > 0,
     isReposted: (r.reposts?.length ?? 0) > 0,
@@ -221,7 +223,12 @@ export async function getUserReels(
 
   const rows = await prisma.reel.findMany({
     where: { userId: targetUserId },
-    orderBy: { createdAt: 'desc' },
+    // Pinned reels first (most-recently-pinned first), then newest. nulls:last
+    // so un-pinned reels (null pinnedAt) don't sort to the top on Postgres.
+    orderBy: [
+      { pinnedAt: { sort: 'desc', nulls: 'last' } },
+      { createdAt: 'desc' },
+    ],
     take: Math.min(Math.max(limit, 1), 60),
     include: {
       user: {
@@ -746,6 +753,54 @@ export async function updateReel(
   });
   await invalidateReelFeedCache(userId).catch(() => {});
   return serializeReel(updated);
+}
+
+// ─── Pin ───────────────────────────────────────────────────
+
+const MAX_PINNED_REELS = 3;
+
+/// Pin a reel to the top of the author's profile. Ownership-checked. Capped at
+/// [MAX_PINNED_REELS] pins per user (BadRequest when exceeded). Idempotent — a
+/// reel that's already pinned keeps its original pin time.
+export async function pinReel(reelId: string, userId: string) {
+  const reel = await prisma.reel.findUnique({
+    where: { id: reelId },
+    select: { userId: true, pinnedAt: true },
+  });
+  if (!reel) throw new NotFoundError('Reel not found');
+  if (reel.userId !== userId) throw new ForbiddenError('Not your reel');
+  if (reel.pinnedAt) return; // already pinned — no-op
+
+  const pinnedCount = await prisma.reel.count({
+    where: { userId, pinnedAt: { not: null } },
+  });
+  if (pinnedCount >= MAX_PINNED_REELS) {
+    throw new BadRequestError(
+      `You can pin up to ${MAX_PINNED_REELS} reels`,
+    );
+  }
+
+  await prisma.reel.update({
+    where: { id: reelId },
+    data: { pinnedAt: new Date() },
+  });
+  await invalidateReelFeedCache(userId).catch(() => {});
+}
+
+/// Unpin a reel. Ownership-checked. Idempotent.
+export async function unpinReel(reelId: string, userId: string) {
+  const reel = await prisma.reel.findUnique({
+    where: { id: reelId },
+    select: { userId: true },
+  });
+  if (!reel) throw new NotFoundError('Reel not found');
+  if (reel.userId !== userId) throw new ForbiddenError('Not your reel');
+
+  await prisma.reel.update({
+    where: { id: reelId },
+    data: { pinnedAt: null },
+  });
+  await invalidateReelFeedCache(userId).catch(() => {});
 }
 
 // ─── Delete ────────────────────────────────────────────────
