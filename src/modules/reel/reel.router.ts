@@ -15,6 +15,7 @@ import {
   repostReel,
   unrepostReel,
   markReelViewed,
+  updateReel,
   deleteReel,
   addReelComment,
   getReelComments,
@@ -364,6 +365,25 @@ router.delete(
 );
 
 // ─── DELETE /api/reels/:id ──────────────────────────────────
+
+router.put('/:id', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const { caption } = req.body ?? {};
+    const reel = await updateReel(req.params.id as string, req.user!.userId, {
+      caption,
+    });
+    res.json({ reel });
+  } catch (error: any) {
+    if (error?.statusCode === 403) {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error?.statusCode === 404) {
+      return res.status(404).json({ error: error.message });
+    }
+    logger.error({ error }, 'Error updating reel');
+    res.status(500).json({ error: 'Failed to update reel' });
+  }
+});
 
 router.delete('/:id', authenticate, async (req: AuthRequest, res: Response) => {
   try {

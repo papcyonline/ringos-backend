@@ -11,6 +11,7 @@ const { mockReelService, mockStatsService } = vi.hoisted(() => ({
     repostReel: vi.fn().mockResolvedValue(undefined),
     unrepostReel: vi.fn().mockResolvedValue(undefined),
     markReelViewed: vi.fn().mockResolvedValue(undefined),
+    updateReel: vi.fn().mockResolvedValue({ id: 'r-1', caption: 'edited' }),
     deleteReel: vi.fn().mockResolvedValue(undefined),
     addReelComment: vi.fn().mockResolvedValue({ id: 'c-1' }),
     getReelComments: vi.fn().mockResolvedValue({ comments: [], nextCursor: null }),
@@ -127,6 +128,17 @@ describe('reel.router', () => {
   it('DELETE /reels/comments/:commentId', async () => {
     const res = await request(makeApp()).delete('/reels/comments/c-1');
     expect(res.status).toBe(200);
+  });
+
+  it('PUT /reels/:id updates the caption', async () => {
+    const res = await request(makeApp())
+        .put('/reels/r-1')
+        .send({ caption: 'edited' });
+    expect(res.status).toBe(200);
+    expect(res.body.reel).toEqual({ id: 'r-1', caption: 'edited' });
+    expect(mockReelService.updateReel).toHaveBeenCalledWith('r-1', 'user-1', {
+      caption: 'edited',
+    });
   });
 
   it('DELETE /reels/:id', async () => {
@@ -277,6 +289,28 @@ describe('reel.router', () => {
       );
       const res = await request(makeApp()).delete('/reels/comments/c-1');
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe('update reel errors', () => {
+    it('surfaces 403', async () => {
+      mockReelService.updateReel.mockRejectedValueOnce(
+        Object.assign(new Error('Not your reel'), { statusCode: 403 }),
+      );
+      const res = await request(makeApp())
+          .put('/reels/r-1')
+          .send({ caption: 'x' });
+      expect(res.status).toBe(403);
+    });
+
+    it('surfaces 404', async () => {
+      mockReelService.updateReel.mockRejectedValueOnce(
+        Object.assign(new Error('Missing'), { statusCode: 404 }),
+      );
+      const res = await request(makeApp())
+          .put('/reels/r-1')
+          .send({ caption: 'x' });
+      expect(res.status).toBe(404);
     });
   });
 

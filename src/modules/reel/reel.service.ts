@@ -706,6 +706,48 @@ export async function deleteReelComment(commentId: string, userId: string) {
   });
 }
 
+// ─── Update ────────────────────────────────────────────────
+
+/// Edit an existing reel's caption. Ownership-checked (403 if not the author).
+/// Returns the reel serialized for [userId] (the owner).
+export async function updateReel(
+  reelId: string,
+  userId: string,
+  data: { caption?: string | null }
+) {
+  const reel = await prisma.reel.findUnique({
+    where: { id: reelId },
+    select: { userId: true },
+  });
+  if (!reel) throw new NotFoundError('Reel not found');
+  if (reel.userId !== userId) throw new ForbiddenError('Not your reel');
+
+  const updateData: { caption?: string | null } = {};
+  if (data.caption !== undefined) {
+    const trimmed = (data.caption ?? '').trim();
+    // Cap defensively (Instagram-style limit); the client also enforces this.
+    updateData.caption = trimmed.length ? trimmed.slice(0, 2200) : null;
+  }
+
+  const updated = await prisma.reel.update({
+    where: { id: reelId },
+    data: updateData,
+    include: {
+      user: {
+        select: {
+          id: true,
+          displayName: true,
+          avatarUrl: true,
+          isVerified: true,
+        },
+      },
+      ...reelStateInclude(userId),
+    },
+  });
+  await invalidateReelFeedCache(userId).catch(() => {});
+  return serializeReel(updated);
+}
+
 // ─── Delete ────────────────────────────────────────────────
 
 export async function deleteReel(reelId: string, userId: string) {
