@@ -557,22 +557,36 @@ describe('setDisappearingMessages', () => {
 // ─── searchMessages ──────────────────────────────────────────────────
 
 describe('searchMessages', () => {
-  it('passes query (case-insensitive contains) and excludes user-deleted', async () => {
+  it('scans candidates, filters by decrypted content, excludes user-deleted', async () => {
     mockPrisma.conversationParticipant.findUnique.mockResolvedValue(activeParticipant());
-    mockPrisma.message.findMany.mockResolvedValue([{ id: 'm1' }]);
+    // 1st call = candidate scan (id + content); 2nd = fetch matched ids.
+    mockPrisma.message.findMany
+      .mockResolvedValueOnce([
+        { id: 'm1', content: 'hello world' },
+        { id: 'm2', content: 'nothing here' },
+      ])
+      .mockResolvedValueOnce([{ id: 'm1', content: 'hello world' }]);
 
     const res = await searchMessages('conv-1', 'user-1', 'hello');
 
     expect(res).toHaveLength(1);
-    expect(mockPrisma.message.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        conversationId: 'conv-1',
-        deletedAt: null,
-        NOT: { deletedFor: { has: 'user-1' } },
-        content: { contains: 'hello', mode: 'insensitive' },
+    // First call = candidate scan selecting only id + content.
+    expect(mockPrisma.message.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          conversationId: 'conv-1',
+          deletedAt: null,
+          NOT: { deletedFor: { has: 'user-1' } },
+        }),
+        select: { id: true, content: true },
       }),
-      take: 50,
-    }));
+    );
+    // Second call = fetch the matched ids with full includes.
+    expect(mockPrisma.message.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ where: { id: { in: ['m1'] } } }),
+    );
   });
 
   it('respects clearedAt when participant has cleared history', async () => {

@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../shared/logger';
 import { env } from './env';
+import { encryptContent, decryptContent } from '../shared/message-crypto';
 
 // Append connection pool params if not already in the URL.
 //
@@ -27,6 +28,64 @@ export const prisma = new PrismaClient({
     { level: 'error', emit: 'event' },
     { level: 'warn', emit: 'event' },
   ],
+});
+
+// ─── Message encryption-at-rest middleware ─────────────────
+// Transparently encrypts Message.content on write and decrypts it on read
+// (including messages nested under Conversation includes and inside interactive
+// transactions). Marker-gated, so legacy plaintext rows pass through untouched
+// and it's a full no-op until MESSAGE_ENC_KEY is set. See shared/message-crypto.
+const _WRITE_ACTIONS = new Set([
+  'create',
+  'update',
+  'upsert',
+  'createMany',
+  'updateMany',
+]);
+
+function _encryptWriteData(data: unknown): void {
+  if (!data || typeof data !== 'object') return;
+  if (Array.isArray(data)) {
+    for (const d of data) _encryptWriteData(d);
+    return;
+  }
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.content === 'string') obj.content = encryptContent(obj.content);
+  // upsert carries create/update sub-objects.
+  if (obj.create) _encryptWriteData(obj.create);
+  if (obj.update) _encryptWriteData(obj.update);
+}
+
+function _decryptRead(node: unknown, depth = 0): void {
+  if (!node || typeof node !== 'object' || depth > 6) return;
+  if (Array.isArray(node)) {
+    for (const n of node) _decryptRead(n, depth + 1);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  if (typeof obj.content === 'string') obj.content = decryptContent(obj.content);
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v && typeof v === 'object') _decryptRead(v, depth + 1);
+  }
+}
+
+prisma.$use(async (params, next) => {
+  if (
+    params.model === 'Message' &&
+    params.action &&
+    _WRITE_ACTIONS.has(params.action) &&
+    params.args?.data
+  ) {
+    _encryptWriteData(params.args.data);
+  }
+  const result = await next(params);
+  // Decrypt content on reads of Message (direct) and Conversation (nested
+  // messages). Marker-gated, so non-message content strings pass through.
+  if (params.model === 'Message' || params.model === 'Conversation') {
+    _decryptRead(result);
+  }
+  return result;
 });
 
 prisma.$on('error', (e) => {

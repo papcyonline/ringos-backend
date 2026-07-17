@@ -1762,37 +1762,55 @@ router.get(
           metadata: { path: ['isDocument'], equals: true },
         };
       } else if (type === 'links') {
-        where = {
-          conversationId,
-          deletedAt: null,
-          content: { contains: 'http', mode: 'insensitive' },
-        };
+        // Content is encrypted at rest, so a SQL `content contains 'http'`
+        // can't match. Scan recent messages, decrypt (DB middleware) and filter
+        // for URLs in code below.
+        where = { conversationId, deletedAt: null };
       } else {
         return res.status(400).json({ message: 'Invalid type' });
       }
 
-      const [items, total] = await Promise.all([
-        prisma.message.findMany({
+      const mediaSelect = {
+        id: true,
+        senderId: true,
+        content: true,
+        imageUrl: true,
+        imageUrls: true,
+        videoUrl: true,
+        videoThumbnailUrl: true,
+        videoDuration: true,
+        metadata: true,
+        createdAt: true,
+        sender: { select: { displayName: true, avatarUrl: true } },
+      } as const;
+
+      let items: any[];
+      let total: number;
+      if (type === 'links') {
+        const scanned = await prisma.message.findMany({
           where,
           orderBy: { createdAt: 'desc' },
-          skip: (page - 1) * limit,
-          take: limit,
-          select: {
-            id: true,
-            senderId: true,
-            content: true,
-            imageUrl: true,
-            imageUrls: true,
-            videoUrl: true,
-            videoThumbnailUrl: true,
-            videoDuration: true,
-            metadata: true,
-            createdAt: true,
-            sender: { select: { displayName: true, avatarUrl: true } },
-          },
-        }),
-        prisma.message.count({ where }),
-      ]);
+          take: 5000,
+          select: mediaSelect,
+        });
+        const links = scanned.filter(
+          (m) =>
+            typeof m.content === 'string' && /https?:\/\//i.test(m.content),
+        );
+        total = links.length;
+        items = links.slice((page - 1) * limit, (page - 1) * limit + limit);
+      } else {
+        [items, total] = await Promise.all([
+          prisma.message.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip: (page - 1) * limit,
+            take: limit,
+            select: mediaSelect,
+          }),
+          prisma.message.count({ where }),
+        ]);
+      }
 
       // Drop document uploads (which can carry an imageUrl thumbnail) from the
       // media tab — done in code so null-metadata images aren't lost.

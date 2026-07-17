@@ -2485,6 +2485,33 @@ export async function getMessageInfo(messageId: string, userId: string) {
 }
 
 // ─── Search Messages ──────────────────────────────────────────
+//
+// Message content is encrypted at rest, so we can't filter with a SQL
+// `content contains` (that would only match legacy plaintext). Instead we scan
+// the most recent messages that pass the non-content filters — content is
+// decrypted transparently on read (see config/database middleware) — and match
+// in app code. Trade-off: matches older than the scan window aren't returned.
+const MESSAGE_SEARCH_SCAN_LIMIT = 5000;
+const MESSAGE_SEARCH_RESULT_LIMIT = 50;
+
+/// Scan recent messages matching [where], decrypt, and return the ids of up to
+/// [MESSAGE_SEARCH_RESULT_LIMIT] whose content contains [q] (already lowered).
+async function _matchMessageIds(where: any, q: string): Promise<string[]> {
+  const rows = await prisma.message.findMany({
+    where,
+    select: { id: true, content: true },
+    orderBy: [{ createdAt: 'desc' }],
+    take: MESSAGE_SEARCH_SCAN_LIMIT,
+  });
+  const ids: string[] = [];
+  for (const r of rows) {
+    if (typeof r.content === 'string' && r.content.toLowerCase().includes(q)) {
+      ids.push(r.id);
+      if (ids.length >= MESSAGE_SEARCH_RESULT_LIMIT) break;
+    }
+  }
+  return ids;
+}
 
 /**
  * Search messages across ALL conversations the user participates in.
@@ -2493,6 +2520,9 @@ export async function searchMessagesGlobal(
   userId: string,
   query: string,
 ) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+
   // Get all conversation IDs the user is part of, along with their per-user
   // clearedAt floor so we can honor "Clear chat history".
   const participations = await prisma.conversationParticipant.findMany({
@@ -2513,16 +2543,21 @@ export async function searchMessagesGlobal(
     convOr.push({ conversationId: p.conversationId, createdAt: { gt: p.clearedAt! } });
   }
 
-  const messages = await prisma.message.findMany({
-    where: {
+  const ids = await _matchMessageIds(
+    {
       AND: [
         { conversationId: { in: conversationIds } },
         { deletedAt: null },
         { NOT: { deletedFor: { has: userId } } },
-        { content: { contains: query, mode: 'insensitive' } },
         { OR: convOr },
       ],
     },
+    q,
+  );
+  if (ids.length === 0) return [];
+
+  const messages = await prisma.message.findMany({
+    where: { id: { in: ids } },
     include: {
       ...messageInclude,
       conversation: {
@@ -2539,7 +2574,6 @@ export async function searchMessagesGlobal(
       },
     },
     orderBy: [{ createdAt: 'desc' }],
-    take: 50,
   });
 
   return messages;
@@ -2554,18 +2588,24 @@ export async function searchMessages(
   query: string,
 ) {
   const participant = await verifyParticipant(conversationId, userId);
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
 
-  const messages = await prisma.message.findMany({
-    where: {
+  const ids = await _matchMessageIds(
+    {
       conversationId,
       deletedAt: null,
       NOT: { deletedFor: { has: userId } },
-      content: { contains: query, mode: 'insensitive' },
       ...(participant.clearedAt ? { createdAt: { gt: participant.clearedAt } } : {}),
     },
+    q,
+  );
+  if (ids.length === 0) return [];
+
+  const messages = await prisma.message.findMany({
+    where: { id: { in: ids } },
     include: messageInclude,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: 50,
   });
 
   return messages;

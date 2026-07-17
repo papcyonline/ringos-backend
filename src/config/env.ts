@@ -8,6 +8,11 @@ const envSchema = z.object({
   // Database
   DATABASE_URL: z.string(),
 
+  // Message encryption-at-rest key (any string; hashed to a 32-byte AES key).
+  // Optional — when unset, message content stays plaintext (no-op). Once set,
+  // it must be backed up and never changed or messages become unreadable.
+  MESSAGE_ENC_KEY: z.string().optional(),
+
   // JWT — current secrets used to sign new tokens
   JWT_SECRET: z.string(),
   JWT_REFRESH_SECRET: z.string(),
