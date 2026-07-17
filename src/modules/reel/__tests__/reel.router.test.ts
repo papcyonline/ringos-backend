@@ -18,6 +18,9 @@ const { mockReelService, mockStatsService } = vi.hoisted(() => ({
     deleteReel: vi.fn().mockResolvedValue(undefined),
     addReelComment: vi.fn().mockResolvedValue({ id: 'c-1' }),
     getReelComments: vi.fn().mockResolvedValue({ comments: [], nextCursor: null }),
+    getReelCommentReplies: vi.fn().mockResolvedValue({ comments: [], nextCursor: null }),
+    likeReelComment: vi.fn().mockResolvedValue(undefined),
+    unlikeReelComment: vi.fn().mockResolvedValue(undefined),
     deleteReelComment: vi.fn().mockResolvedValue(undefined),
     countReelsCreatedSince: vi.fn().mockResolvedValue(0),
     reactToReel: vi.fn().mockResolvedValue({ emoji: '❤️' }),
@@ -131,6 +134,36 @@ describe('reel.router', () => {
   it('DELETE /reels/comments/:commentId', async () => {
     const res = await request(makeApp()).delete('/reels/comments/c-1');
     expect(res.status).toBe(200);
+  });
+
+  it('GET /reels/comments/:commentId/replies', async () => {
+    const res = await request(makeApp()).get('/reels/comments/c-1/replies');
+    expect(res.status).toBe(200);
+    expect(mockReelService.getReelCommentReplies).toHaveBeenCalledWith(
+      'c-1', 'user-1', undefined, expect.any(Number),
+    );
+  });
+
+  it('POST /reels/comments/:commentId/like', async () => {
+    const res = await request(makeApp()).post('/reels/comments/c-1/like');
+    expect(res.status).toBe(200);
+    expect(mockReelService.likeReelComment).toHaveBeenCalledWith('c-1', 'user-1');
+  });
+
+  it('DELETE /reels/comments/:commentId/like', async () => {
+    const res = await request(makeApp()).delete('/reels/comments/c-1/like');
+    expect(res.status).toBe(200);
+    expect(mockReelService.unlikeReelComment).toHaveBeenCalledWith('c-1', 'user-1');
+  });
+
+  it('POST /reels/:id/comments forwards parentId (reply)', async () => {
+    const res = await request(makeApp())
+        .post('/reels/r-1/comments')
+        .send({ content: 'nice', parentId: 'c-1' });
+    expect(res.status).toBe(200);
+    expect(mockReelService.addReelComment).toHaveBeenCalledWith(
+      'r-1', 'user-1', 'nice', 'c-1',
+    );
   });
 
   it('PUT /reels/:id updates the caption', async () => {

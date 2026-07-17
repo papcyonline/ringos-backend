@@ -624,10 +624,33 @@ export async function countReelsCreatedSince(
 
 // ─── Comments ──────────────────────────────────────────────
 
+const commentUserSelect = {
+  id: true,
+  displayName: true,
+  avatarUrl: true,
+  isVerified: true,
+} as const;
+
+/// One shape for a comment sent to the client. `likes` is the per-viewer
+/// include (filtered to the requester); absent → isLiked false.
+function serializeComment(c: any) {
+  return {
+    id: c.id,
+    content: c.content,
+    createdAt: c.createdAt,
+    parentId: c.parentId ?? null,
+    likeCount: c.likeCount ?? 0,
+    replyCount: c.replyCount ?? 0,
+    isLiked: (c.likes?.length ?? 0) > 0,
+    user: c.user,
+  };
+}
+
 export async function addReelComment(
   reelId: string,
   userId: string,
   content: string,
+  parentId?: string | null,
 ) {
   const trimmed = content.trim();
   if (!trimmed) throw new BadRequestError('Comment is required');
@@ -639,45 +662,51 @@ export async function addReelComment(
   });
   if (!reel) throw new NotFoundError('Reel not found');
 
+  // Replies are one level deep: a reply to a reply is re-parented to the
+  // top-level comment of the thread (Instagram/FB style).
+  let resolvedParentId: string | null = null;
+  if (parentId) {
+    const parent = await prisma.reelComment.findUnique({
+      where: { id: parentId },
+      select: { id: true, reelId: true, parentId: true },
+    });
+    if (!parent || parent.reelId !== reelId) {
+      throw new NotFoundError('Parent comment not found');
+    }
+    resolvedParentId = parent.parentId ?? parent.id;
+  }
+
   const comment = await prisma.$transaction(async (tx) => {
     const c = await tx.reelComment.create({
-      data: { reelId, userId, content: trimmed },
-      include: {
-        user: {
-          select: {
-            id: true,
-            displayName: true,
-            avatarUrl: true,
-            isVerified: true,
-          },
-        },
-      },
+      data: { reelId, userId, content: trimmed, parentId: resolvedParentId },
+      include: { user: { select: commentUserSelect } },
     });
     await tx.reel.update({
       where: { id: reelId },
       data: { commentCount: { increment: 1 } },
     });
+    if (resolvedParentId) {
+      await tx.reelComment.update({
+        where: { id: resolvedParentId },
+        data: { replyCount: { increment: 1 } },
+      });
+    }
     return c;
   });
-  return comment;
+  return serializeComment(comment);
 }
 
 export async function getReelComments(
   reelId: string,
+  userId: string,
   cursor?: string,
   limit = 30,
 ) {
   const comments = await prisma.reelComment.findMany({
-    where: { reelId },
+    where: { reelId, parentId: null }, // top-level only
     include: {
-      user: {
-        select: {
-          id: true,
-          displayName: true,
-          avatarUrl: true,
-          isVerified: true,
-        },
-      },
+      user: { select: commentUserSelect },
+      likes: { where: { userId }, select: { id: true } },
     },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
@@ -686,30 +715,94 @@ export async function getReelComments(
   const hasMore = comments.length > limit;
   const items = hasMore ? comments.slice(0, limit) : comments;
   return {
-    comments: items.map((c) => ({
-      id: c.id,
-      content: c.content,
-      createdAt: c.createdAt,
-      user: c.user,
-    })),
+    comments: items.map(serializeComment),
     nextCursor: hasMore ? items[items.length - 1].id : null,
   };
+}
+
+export async function getReelCommentReplies(
+  commentId: string,
+  userId: string,
+  cursor?: string,
+  limit = 30,
+) {
+  const replies = await prisma.reelComment.findMany({
+    where: { parentId: commentId },
+    include: {
+      user: { select: commentUserSelect },
+      likes: { where: { userId }, select: { id: true } },
+    },
+    orderBy: { createdAt: 'asc' }, // replies read oldest-first (FB style)
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+  const hasMore = replies.length > limit;
+  const items = hasMore ? replies.slice(0, limit) : replies;
+  return {
+    comments: items.map(serializeComment),
+    nextCursor: hasMore ? items[items.length - 1].id : null,
+  };
+}
+
+export async function likeReelComment(commentId: string, userId: string) {
+  const c = await prisma.reelComment.findUnique({
+    where: { id: commentId },
+    select: { id: true },
+  });
+  if (!c) throw new NotFoundError('Comment not found');
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.reelCommentLike.create({ data: { commentId, userId } });
+      await tx.reelComment.update({
+        where: { id: commentId },
+        data: { likeCount: { increment: 1 } },
+      });
+    });
+  } catch {
+    // Unique violation = already liked; idempotent no-op.
+  }
+}
+
+export async function unlikeReelComment(commentId: string, userId: string) {
+  const existing = await prisma.reelCommentLike.findUnique({
+    where: { commentId_userId: { commentId, userId } },
+  });
+  if (!existing) return;
+  await prisma.$transaction(async (tx) => {
+    await tx.reelCommentLike.delete({
+      where: { commentId_userId: { commentId, userId } },
+    });
+    await tx.reelComment.update({
+      where: { id: commentId },
+      data: { likeCount: { decrement: 1 } },
+    });
+  });
 }
 
 export async function deleteReelComment(commentId: string, userId: string) {
   const c = await prisma.reelComment.findUnique({
     where: { id: commentId },
-    select: { userId: true, reelId: true },
+    select: { userId: true, reelId: true, parentId: true, replyCount: true },
   });
   if (!c) throw new NotFoundError('Comment not found');
   if (c.userId !== userId) throw new ForbiddenError('Not your comment');
 
   await prisma.$transaction(async (tx) => {
+    // Deleting a top-level comment cascades its replies (FK onDelete), so the
+    // reel's total drops by the comment + its replies. A reply drops just 1 and
+    // decrements its parent's replyCount.
+    const removed = 1 + (c.parentId ? 0 : c.replyCount);
     await tx.reelComment.delete({ where: { id: commentId } });
     await tx.reel.update({
       where: { id: c.reelId },
-      data: { commentCount: { decrement: 1 } },
+      data: { commentCount: { decrement: removed } },
     });
+    if (c.parentId) {
+      await tx.reelComment.update({
+        where: { id: c.parentId },
+        data: { replyCount: { decrement: 1 } },
+      });
+    }
   });
 }
 

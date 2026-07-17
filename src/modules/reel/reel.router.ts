@@ -22,6 +22,9 @@ import {
   deleteReel,
   addReelComment,
   getReelComments,
+  getReelCommentReplies,
+  likeReelComment,
+  unlikeReelComment,
   deleteReelComment,
   countReelsCreatedSince,
   reactToReel,
@@ -318,6 +321,7 @@ router.get('/:id/comments', authenticate, async (req: AuthRequest, res: Response
     const limit = parseInt((req.query.limit as string) || '30', 10);
     const data = await getReelComments(
       req.params.id as string,
+      req.user!.userId,
       cursor,
       Math.min(Math.max(limit, 1), 50),
     );
@@ -328,13 +332,42 @@ router.get('/:id/comments', authenticate, async (req: AuthRequest, res: Response
   }
 });
 
+// ─── GET /api/reels/comments/:commentId/replies ─────────────
+
+router.get(
+  '/comments/:commentId/replies',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const cursor = req.query.cursor as string | undefined;
+      const limit = parseInt((req.query.limit as string) || '30', 10);
+      const data = await getReelCommentReplies(
+        req.params.commentId as string,
+        req.user!.userId,
+        cursor,
+        Math.min(Math.max(limit, 1), 50),
+      );
+      res.json(data);
+    } catch (error) {
+      logger.error({ error }, 'Error fetching comment replies');
+      res.status(500).json({ error: 'Failed to fetch replies' });
+    }
+  },
+);
+
 // ─── POST /api/reels/:id/comments ───────────────────────────
 
 router.post('/:id/comments', authenticate, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.userId;
     const content = (req.body?.content as string | undefined) ?? '';
-    const comment = await addReelComment(req.params.id as string, userId, content);
+    const parentId = (req.body?.parentId as string | undefined) ?? null;
+    const comment = await addReelComment(
+      req.params.id as string,
+      userId,
+      content,
+      parentId,
+    );
     res.json({ comment });
   } catch (error: any) {
     if (error?.statusCode === 400 || error?.statusCode === 404) {
@@ -344,6 +377,39 @@ router.post('/:id/comments', authenticate, async (req: AuthRequest, res: Respons
     res.status(500).json({ error: 'Failed to create comment' });
   }
 });
+
+// ─── Comment likes ──────────────────────────────────────────
+
+router.post(
+  '/comments/:commentId/like',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      await likeReelComment(req.params.commentId as string, req.user!.userId);
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error?.statusCode === 404) {
+        return res.status(404).json({ error: error.message });
+      }
+      logger.error({ error }, 'Error liking comment');
+      res.status(500).json({ error: 'Failed to like comment' });
+    }
+  },
+);
+
+router.delete(
+  '/comments/:commentId/like',
+  authenticate,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      await unlikeReelComment(req.params.commentId as string, req.user!.userId);
+      res.json({ success: true });
+    } catch (error) {
+      logger.error({ error }, 'Error unliking comment');
+      res.status(500).json({ error: 'Failed to unlike comment' });
+    }
+  },
+);
 
 // ─── DELETE /api/reels/comments/:commentId ──────────────────
 

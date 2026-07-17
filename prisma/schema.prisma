@@ -307,6 +307,7 @@ model User {
   reels               Reel[]
   reelLikes           ReelLike[]
   reelComments        ReelComment[]
+  reelCommentLikes    ReelCommentLike[]
   reelReposts         ReelRepost[]
   reelBookmarks       ReelBookmark[]
   reelViews           ReelView[]
@@ -1253,13 +1254,34 @@ model ReelComment {
   reelId    String
   userId    String
   content   String
+  // Null = top-level comment; set = a reply to that comment (2-level threading).
+  parentId   String?
+  likeCount  Int      @default(0)
+  replyCount Int      @default(0)
   createdAt DateTime @default(now())
 
   reel Reel @relation(fields: [reelId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent  ReelComment?      @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies ReelComment[]     @relation("CommentReplies")
+  likes   ReelCommentLike[]
 
   @@index([reelId, createdAt])
+  @@index([parentId, createdAt])
   @@index([userId])
+}
+
+model ReelCommentLike {
+  id        String   @id @default(uuid())
+  commentId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  comment ReelComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId])
+  @@index([commentId])
 }
 
 model ReelRepost {

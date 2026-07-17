@@ -396,7 +396,7 @@ describe('getReelComments', () => {
       { id: 'c3', content: 'c', createdAt: new Date(), user: { id: 'u3', displayName: 'C' } },
     ]);
 
-    const res = await getReelComments('reel-1', undefined, 2);
+    const res = await getReelComments('reel-1', 'viewer-1', undefined, 2);
 
     expect(res.comments).toHaveLength(2);
     expect(res.nextCursor).toBe('c2');
@@ -407,7 +407,7 @@ describe('getReelComments', () => {
       { id: 'c1', content: 'a', createdAt: new Date(), user: { id: 'u1', displayName: 'A' } },
     ]);
 
-    const res = await getReelComments('reel-1', undefined, 30);
+    const res = await getReelComments('reel-1', 'viewer-1', undefined, 30);
 
     expect(res.comments).toHaveLength(1);
     expect(res.nextCursor).toBeNull();
@@ -427,13 +427,33 @@ describe('deleteReelComment', () => {
   });
 
   it('deletes and decrements commentCount when caller is author', async () => {
-    mockPrisma.reelComment.findUnique.mockResolvedValue({ userId: 'user-1', reelId: 'reel-1' });
+    mockPrisma.reelComment.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      reelId: 'reel-1',
+      parentId: null,
+      replyCount: 0,
+    });
 
     await deleteReelComment('c1', 'user-1');
 
     expect(mockPrisma.reelComment.delete).toHaveBeenCalledWith({ where: { id: 'c1' } });
     expect(mockPrisma.reel.update).toHaveBeenCalledWith(expect.objectContaining({
       data: { commentCount: { decrement: 1 } },
+    }));
+  });
+
+  it('a top-level comment with replies drops itself + its replies from the count', async () => {
+    mockPrisma.reelComment.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      reelId: 'reel-1',
+      parentId: null,
+      replyCount: 3,
+    });
+
+    await deleteReelComment('c1', 'user-1');
+
+    expect(mockPrisma.reel.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { commentCount: { decrement: 4 } },
     }));
   });
 });
