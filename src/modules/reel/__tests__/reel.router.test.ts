@@ -11,6 +11,7 @@ const { mockReelService, mockStatsService } = vi.hoisted(() => ({
     repostReel: vi.fn().mockResolvedValue(undefined),
     unrepostReel: vi.fn().mockResolvedValue(undefined),
     markReelViewed: vi.fn().mockResolvedValue(undefined),
+    getReelById: vi.fn().mockResolvedValue({ id: 'r-1', videoUrl: 'v.mp4' }),
     updateReel: vi.fn().mockResolvedValue({ id: 'r-1', caption: 'edited' }),
     pinReel: vi.fn().mockResolvedValue(undefined),
     unpinReel: vi.fn().mockResolvedValue(undefined),
@@ -141,6 +142,21 @@ describe('reel.router', () => {
     expect(mockReelService.updateReel).toHaveBeenCalledWith('r-1', 'user-1', {
       caption: 'edited',
     });
+  });
+
+  it('GET /reels/:id returns a single reel (public)', async () => {
+    const res = await request(makeApp()).get('/reels/r-1');
+    expect(res.status).toBe(200);
+    expect(res.body.reel).toEqual({ id: 'r-1', videoUrl: 'v.mp4' });
+    expect(mockReelService.getReelById).toHaveBeenCalledWith('r-1');
+  });
+
+  it('GET /reels/:id surfaces 404', async () => {
+    mockReelService.getReelById.mockRejectedValueOnce(
+      Object.assign(new Error('Reel not found'), { statusCode: 404 }),
+    );
+    const res = await request(makeApp()).get('/reels/missing');
+    expect(res.status).toBe(404);
   });
 
   it('POST /reels/:id/pin', async () => {

@@ -15,6 +15,7 @@ import {
   repostReel,
   unrepostReel,
   markReelViewed,
+  getReelById,
   updateReel,
   pinReel,
   unpinReel,
@@ -367,6 +368,23 @@ router.delete(
 );
 
 // ─── DELETE /api/reels/:id ──────────────────────────────────
+
+// Public single-reel fetch — used by shared links (the web page) and the
+// in-app deep-link viewer. No auth so yomeet.app/reels/:id can render it.
+// Registered after the literal GET routes (/feed, /saved, /user/:id) so it
+// doesn't shadow them.
+router.get('/:id', async (req, res: Response) => {
+  try {
+    const reel = await getReelById(req.params.id as string);
+    res.json({ reel });
+  } catch (error: any) {
+    if (error?.statusCode === 404) {
+      return res.status(404).json({ error: error.message });
+    }
+    logger.error({ error }, 'Error fetching reel');
+    res.status(500).json({ error: 'Failed to fetch reel' });
+  }
+});
 
 router.put('/:id', authenticate, async (req: AuthRequest, res: Response) => {
   try {

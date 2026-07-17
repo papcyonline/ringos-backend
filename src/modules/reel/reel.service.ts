@@ -713,6 +713,29 @@ export async function deleteReelComment(commentId: string, userId: string) {
   });
 }
 
+// ─── Single reel ───────────────────────────────────────────
+
+/// Fetch one reel by id (public — used by shared links / the web page and the
+/// in-app deep-link viewer). Non-personalized: the per-viewer is* flags default
+/// to false. Throws NotFound if missing.
+export async function getReelById(reelId: string) {
+  const reel = await prisma.reel.findUnique({
+    where: { id: reelId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          displayName: true,
+          avatarUrl: true,
+          isVerified: true,
+        },
+      },
+    },
+  });
+  if (!reel) throw new NotFoundError('Reel not found');
+  return serializeReel(reel);
+}
+
 // ─── Update ────────────────────────────────────────────────
 
 /// Edit an existing reel's caption. Ownership-checked (403 if not the author).
