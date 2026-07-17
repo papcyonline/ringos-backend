@@ -7,6 +7,10 @@ import {
   deleteFromR2,
 } from '../../shared/r2.service';
 import { moderateVideoBuffer } from '../../shared/moderation.service';
+import {
+  createNotification,
+  sendPushToUser,
+} from '../notification/notification.service';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
 import { ensureWebSafeH264, extractPosterFrame } from '../../shared/video.service';
 import * as cache from '../../shared/redis.service';
@@ -646,6 +650,58 @@ function serializeComment(c: any) {
   };
 }
 
+// Match @handles in comment text. displayName is the app's unique handle.
+const MENTION_RE = /@([a-zA-Z0-9_.]{2,40})/g;
+
+/// Notify users @mentioned in a reel comment (in-app + push). Fire-and-forget —
+/// never blocks posting the comment. Because a reply prefills @author, this also
+/// covers "someone replied to your comment".
+async function notifyReelCommentMentions(
+  reelId: string,
+  commentId: string,
+  authorId: string,
+  content: string,
+): Promise<void> {
+  const handles = [
+    ...new Set([...content.matchAll(MENTION_RE)].map((m) => m[1])),
+  ];
+  if (handles.length === 0) return;
+
+  const users = await prisma.user.findMany({
+    where: { displayName: { in: handles } },
+    select: { id: true },
+  });
+  const targets = users.map((u) => u.id).filter((id) => id !== authorId);
+  if (targets.length === 0) return;
+
+  const author = await prisma.user.findUnique({
+    where: { id: authorId },
+    select: { displayName: true, avatarUrl: true },
+  });
+  const authorName = author?.displayName ?? 'Someone';
+  const authorAvatar = author?.avatarUrl ?? undefined;
+  const snippet =
+    content.length > 80 ? `${content.slice(0, 77)}…` : content;
+  const title = `${authorName} mentioned you`;
+
+  for (const uid of targets) {
+    createNotification({
+      userId: uid,
+      type: 'REEL_COMMENT_MENTION',
+      title,
+      body: snippet,
+      imageUrl: authorAvatar,
+      data: { reelId, commentId, authorId },
+    }).catch(() => {});
+    sendPushToUser(uid, {
+      title,
+      body: snippet,
+      imageUrl: authorAvatar,
+      data: { type: 'REEL_COMMENT_MENTION', reelId, commentId },
+    }).catch(() => {});
+  }
+}
+
 export async function addReelComment(
   reelId: string,
   userId: string,
@@ -693,6 +749,8 @@ export async function addReelComment(
     }
     return c;
   });
+  // Notify @mentioned users (fire-and-forget — never blocks the response).
+  notifyReelCommentMentions(reelId, comment.id, userId, trimmed).catch(() => {});
   return serializeComment(comment);
 }
 
