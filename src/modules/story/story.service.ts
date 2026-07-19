@@ -1,9 +1,10 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import { BadRequestError, ForbiddenError } from '../../shared/errors';
 import { getBlockedUserIds } from '../spotlight/spotlight.service';
 import { isPro } from '../../shared/usage.service';
-import { fileToStoryImageUrl, fileToStoryVideoUrl } from '../../shared/upload';
+import { fileToStoryImageUrl, fileToStoryVideoUrl, ensureBuffer } from '../../shared/upload';
 import * as cloudinaryService from '../../shared/cloudinary.service';
 import { deleteFromR2 } from '../../shared/r2.service';
 import { moderateImageBuffer, moderateVideoBuffer } from '../../shared/moderation.service';
@@ -146,12 +147,16 @@ export async function createStory(
   // like reels, so a bad clip is rejected before the story exists.
   for (let i = 0; i < files.length; i++) {
     const isVideo = (slidesMetadata?.[i]?.type ?? 'IMAGE') === 'VIDEO';
+    // Large story videos land on disk (multer diskStorage) to avoid OOM, so
+    // read each file's bytes just-in-time. The buffer is a per-iteration local
+    // and the loop is sequential, so at most one slide is in memory here.
+    const buf = await ensureBuffer(files[i]);
     const verdict = isVideo
       ? await moderateVideoBuffer(
-          files[i].buffer,
+          buf,
           files[i].originalname?.match(/\.[a-z0-9]{2,5}$/i)?.[0] || '.mp4',
         )
-      : await moderateImageBuffer(files[i].buffer, files[i].originalname);
+      : await moderateImageBuffer(buf, files[i].originalname);
     // Videos additionally let an `unavailable` verdict through (a codec we
     // couldn't decode / API hiccup) rather than falsely rejecting a legit clip;
     // images fail closed.
@@ -163,60 +168,63 @@ export async function createStory(
     }
   }
 
+  // Upload slides SEQUENTIALLY (not Promise.all): with large videos on disk,
+  // parallel transcode+upload would load every slide's buffer into memory at
+  // once and OOM the instance. One slide at a time keeps peak RAM ~one video.
   let videoCount = 0;
-  const uploads = await Promise.all(
-    files.map(async (file, index) => {
-      const meta = slidesMetadata?.[index];
-      const slideType = meta?.type ?? 'IMAGE';
-      const position = meta?.position ?? index;
+  const uploads: Prisma.StorySlideCreateWithoutStoryInput[] = [];
+  for (let index = 0; index < files.length; index++) {
+    const file = files[index];
+    const meta = slidesMetadata?.[index];
+    const slideType = meta?.type ?? 'IMAGE';
+    const position = meta?.position ?? index;
 
-      // Prisma JSON fields require `undefined` for "no value" (not null).
-      // Pack music + videoEdits into the same JSON blob so the slide row
-      // round-trips both for the viewer.
-      const metaBlob: Record<string, any> = {};
-      if (meta?.music) metaBlob.music = meta.music;
-      if (meta?.videoEdits) metaBlob.videoEdits = meta.videoEdits;
-      if (meta?.textStory) metaBlob.textStory = meta.textStory;
-      const slideMetadata: Record<string, any> | undefined =
-          Object.keys(metaBlob).length > 0 ? metaBlob : undefined;
-      if (slideType === 'VIDEO') {
-        const result = await fileToStoryVideoUrl(file, userId);
-        // Use client-provided thumbnail when R2 can't generate one server-side.
-        // thumbnailFiles is indexed by video order (not slide order), so use
-        // a dedicated counter rather than the overall slide index.
-        let thumbnailUrl = result.thumbnailUrl || null;
-        const thumbFile = options?.thumbnailFiles?.[videoCount];
-        videoCount++;
-        if (!thumbnailUrl && thumbFile) {
-          const thumbResult = await fileToStoryImageUrl(thumbFile, userId);
-          thumbnailUrl = thumbResult.secureUrl;
-        }
-        return {
-          type: 'VIDEO' as const,
-          mediaUrl: result.secureUrl,
-          cloudinaryId: result.publicId,
-          thumbnailUrl,
-          caption: meta?.caption ?? null,
-          duration: meta?.duration ?? null,
-          position,
-          metadata: slideMetadata ?? undefined,
-        };
-      } else {
-        // IMAGE or TEXT — both use image upload
-        const result = await fileToStoryImageUrl(file, userId);
-        return {
-          type: slideType as 'IMAGE' | 'TEXT',
-          mediaUrl: result.secureUrl,
-          cloudinaryId: result.publicId,
-          thumbnailUrl: null,
-          caption: meta?.caption ?? null,
-          duration: meta?.duration ?? null,
-          position,
-          metadata: slideMetadata ?? undefined,
-        };
+    // Prisma JSON fields require `undefined` for "no value" (not null).
+    // Pack music + videoEdits into the same JSON blob so the slide row
+    // round-trips both for the viewer.
+    const metaBlob: Record<string, any> = {};
+    if (meta?.music) metaBlob.music = meta.music;
+    if (meta?.videoEdits) metaBlob.videoEdits = meta.videoEdits;
+    if (meta?.textStory) metaBlob.textStory = meta.textStory;
+    const slideMetadata: Record<string, any> | undefined =
+        Object.keys(metaBlob).length > 0 ? metaBlob : undefined;
+    if (slideType === 'VIDEO') {
+      const result = await fileToStoryVideoUrl(file, userId);
+      // Use client-provided thumbnail when R2 can't generate one server-side.
+      // thumbnailFiles is indexed by video order (not slide order), so use
+      // a dedicated counter rather than the overall slide index.
+      let thumbnailUrl = result.thumbnailUrl || null;
+      const thumbFile = options?.thumbnailFiles?.[videoCount];
+      videoCount++;
+      if (!thumbnailUrl && thumbFile) {
+        const thumbResult = await fileToStoryImageUrl(thumbFile, userId);
+        thumbnailUrl = thumbResult.secureUrl;
       }
-    })
-  );
+      uploads.push({
+        type: 'VIDEO' as const,
+        mediaUrl: result.secureUrl,
+        cloudinaryId: result.publicId,
+        thumbnailUrl,
+        caption: meta?.caption ?? null,
+        duration: meta?.duration ?? null,
+        position,
+        metadata: slideMetadata ?? undefined,
+      });
+    } else {
+      // IMAGE or TEXT — both use image upload
+      const result = await fileToStoryImageUrl(file, userId);
+      uploads.push({
+        type: slideType as 'IMAGE' | 'TEXT',
+        mediaUrl: result.secureUrl,
+        cloudinaryId: result.publicId,
+        thumbnailUrl: null,
+        caption: meta?.caption ?? null,
+        duration: meta?.duration ?? null,
+        position,
+        metadata: slideMetadata ?? undefined,
+      });
+    }
+  }
 
   // NOTE: images are moderated BEFORE upload (above). Videos are moderated in
   // the BACKGROUND after the story is created (see below) — Sightengine's

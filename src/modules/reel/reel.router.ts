@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
-import { storyMediaUpload } from '../../shared/upload';
+import { reelVideoUpload } from '../../shared/upload';
 import {
   createReel,
   getReelFeed,
@@ -83,7 +83,7 @@ router.get('/user/:userId', authenticate, async (req: AuthRequest, res: Response
 router.post(
   '/',
   authenticate,
-  storyMediaUpload.single('video'),
+  reelVideoUpload.single('video'),
   async (req: AuthRequest, res: Response) => {
     try {
       const userId = req.user!.userId;

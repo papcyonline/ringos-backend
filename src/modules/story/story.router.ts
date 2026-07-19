@@ -2,7 +2,7 @@ import { Router, Response, NextFunction } from 'express';
 import { authenticate } from '../../middleware/auth';
 import { AuthRequest } from '../../shared/types';
 import { logger } from '../../shared/logger';
-import { storyMediaUpload } from '../../shared/upload';
+import { storyMediaUpload, cleanupTempFile } from '../../shared/upload';
 import { getLimits } from '../../shared/usage.service';
 import {
   createStory,
@@ -289,6 +289,16 @@ router.post(
       }
       logger.error({ error }, 'Error creating story');
       res.status(500).json({ error: 'Failed to create story' });
+    } finally {
+      // Story media uses multer diskStorage — remove every temp file on every
+      // path (success, validation reject, moderation reject, crash) so temp
+      // videos never accumulate on disk.
+      const uploaded = req.files as Record<string, Express.Multer.File[]> | undefined;
+      if (uploaded) {
+        for (const group of Object.values(uploaded)) {
+          for (const f of group) await cleanupTempFile(f);
+        }
+      }
     }
   }
 );

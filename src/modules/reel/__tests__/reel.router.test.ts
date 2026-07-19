@@ -43,7 +43,7 @@ vi.mock('../../../middleware/auth', () => ({
   },
 }));
 vi.mock('../../../shared/upload', () => ({
-  storyMediaUpload: {
+  reelVideoUpload: {
     single: () => (req: any, _res: any, next: any) => {
       // Inject a fake file when the test sets a marker header
       if (req.headers?.['x-with-file'] === '1') {

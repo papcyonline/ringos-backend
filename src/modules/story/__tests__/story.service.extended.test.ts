@@ -86,6 +86,7 @@ vi.mock('../../../shared/upload', () => ({
   fileToStoryVideoUrl: vi.fn().mockResolvedValue({
     secureUrl: 'https://cdn/vid.mp4', publicId: 'pid-vid', thumbnailUrl: 'https://cdn/vid.jpg',
   }),
+  ensureBuffer: vi.fn(async (f: any) => f?.buffer ?? Buffer.from('x')),
 }));
 vi.mock('../story.notify', () => ({
   notifyFollowersOfNewStory: vi.fn().mockResolvedValue(undefined),

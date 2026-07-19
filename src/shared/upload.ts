@@ -1,6 +1,7 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
 import * as cloudinaryService from './cloudinary.service';
@@ -26,6 +27,36 @@ import { logger } from './logger';
 
 // Use memory storage — files live in buffer until uploaded to Cloudinary
 const memoryStorage = multer.memoryStorage();
+
+// Disk storage for large story videos. Buffering 250MB × up to 10 slides in
+// memory would OOM the web instance, so story media lands on a temp disk file
+// and is streamed to R2 one slide at a time. story.service.ts reads each file
+// from disk into a buffer just before moderation/transcode, then unlinks it.
+const storyDiskStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+  filename: (_req, file, cb) =>
+    cb(null, `story_${uuidv4()}${path.extname(file.originalname || '')}`),
+});
+
+/**
+ * Return an uploaded file's bytes as a Buffer. memoryStorage files already
+ * carry `.buffer`; diskStorage files (large story media) carry `.path` instead,
+ * so read them from the temp file on demand. Callers own temp-file cleanup
+ * (story.router unlinks every temp file in a finally block).
+ */
+export async function ensureBuffer(file: Express.Multer.File): Promise<Buffer> {
+  if (file.buffer) return file.buffer;
+  if (file.path) return fs.promises.readFile(file.path);
+  throw new Error('Uploaded file has neither buffer nor path');
+}
+
+/** Best-effort unlink of a temp upload file; never throws. */
+export async function cleanupTempFile(file?: Express.Multer.File): Promise<void> {
+  if (!file?.path) return;
+  try {
+    await fs.promises.unlink(file.path);
+  } catch { /* already gone / never written */ }
+}
 
 // Fallback: save buffer to local disk and return local URL
 function saveToDisk(buffer: Buffer, dir: string, urlPrefix: string, ext: string): string {
@@ -474,8 +505,17 @@ export const storyImageUpload = multer({
 });
 
 export const storyMediaUpload = multer({
+  storage: storyDiskStorage,
+  limits: { fileSize: 260 * 1024 * 1024 }, // 260MB hard cap (250MB tier + headroom); per-tier limit enforced in story router
+  fileFilter: storyMediaFilter,
+});
+
+// Reels use memory storage (single video ≤100MB, buffer consumed directly by
+// reel.service). Kept separate from storyMediaUpload so the story disk-storage
+// change doesn't strip reels' expected `file.buffer`.
+export const reelVideoUpload = multer({
   storage: memoryStorage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max (Pro); free limit enforced in story router
+  limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: storyMediaFilter,
 });
 
@@ -486,9 +526,10 @@ export async function fileToStoryImageUrl(
   // 1. Try R2. publicId here is the R2 key — story.service.ts cleanup
   // discriminates by the `yomeet/` vs `stories/` prefix to route deletes
   // to the right backend (lazy migration: old slides stay on Cloudinary).
+  const buffer = await ensureBuffer(file);
   if (isR2Configured) {
     try {
-      const resized = await sharp(file.buffer)
+      const resized = await sharp(buffer)
         .rotate()
         .resize(1080, 1920, { fit: 'inside', withoutEnlargement: true })
         .jpeg({ quality: 90 })
@@ -504,7 +545,7 @@ export async function fileToStoryImageUrl(
   }
   // 2. Fallback to Cloudinary
   if (cloudinaryService.isCloudinaryConfigured) {
-    const result = await cloudinaryService.uploadBuffer(file.buffer, {
+    const result = await cloudinaryService.uploadBuffer(buffer, {
       folder: `yomeet/stories/${userId}`,
       transformation: {
         width: 1080,
@@ -515,7 +556,7 @@ export async function fileToStoryImageUrl(
     });
     if (result) return { secureUrl: result.secureUrl, publicId: result.publicId };
   }
-  const url = saveToDisk(file.buffer, 'uploads/stories', '/uploads/stories', path.extname(file.originalname) || '.jpg');
+  const url = saveToDisk(buffer, 'uploads/stories', '/uploads/stories', path.extname(file.originalname) || '.jpg');
   return { secureUrl: url, publicId: '' };
 }
 
@@ -526,7 +567,7 @@ export async function fileToStoryVideoUrl(
   // Normalize to a web-safe H.264 MP4 (transcodes iPhone HEVC/HDR/4K) so the
   // stored story plays on every device. Fail-open → original buffer.
   const normalized = await ensureWebSafeH264(
-    file.buffer,
+    await ensureBuffer(file),
     path.extname(file.originalname || '') || '.mp4',
   );
   // 1. Try R2. Frontend renders the first frame as poster (no server thumbnail).
