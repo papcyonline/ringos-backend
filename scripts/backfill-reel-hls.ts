@@ -21,6 +21,9 @@
  *
  * Optional: cap how many to process in one run with --limit=N.
  */
+// Load .env for R2_* creds when run locally (dotenv doesn't override an
+// already-set env var, so an inline DATABASE_URL="<external>" still wins).
+import 'dotenv/config';
 import { prisma } from '../src/config/database';
 import { fileToReelHls } from '../src/shared/upload';
 
