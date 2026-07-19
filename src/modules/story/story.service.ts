@@ -1441,36 +1441,52 @@ export async function deleteStory(storyId: string, userId: string) {
 // ─── Cleanup Expired Stories ────────────────────────────────
 
 export async function cleanupExpiredStories(): Promise<number> {
-  const now = new Date();
+  const BATCH = 200;
+  // Safety valve: cap the work per run (20k stories) so a pathological state
+  // can never spin forever. The next scheduled run picks up any remainder.
+  const MAX_BATCHES = 100;
 
-  // Process in batches to avoid loading thousands of stories at once
-  const expired = await prisma.story.findMany({
-    where: { expiresAt: { lte: now }, isPermanent: false },
-    include: { slides: { select: { cloudinaryId: true, type: true } } },
-    take: 200,
-  });
+  let total = 0;
 
-  if (expired.length === 0) return 0;
+  // Drain ALL expired stories this run, in bounded batches — one findMany of
+  // thousands would spike memory. Each deleteMany removes the rows we just
+  // handled, so the next findMany returns the following batch until none remain.
+  for (let i = 0; i < MAX_BATCHES; i++) {
+    const now = new Date();
+    const expired = await prisma.story.findMany({
+      where: { expiresAt: { lte: now }, isPermanent: false },
+      include: { slides: { select: { cloudinaryId: true, type: true } } },
+      take: BATCH,
+    });
 
-  // Delete media assets (R2 or Cloudinary) — fire concurrently per story to avoid serial N+1
-  await Promise.allSettled(
-    expired.flatMap((story) =>
-      story.slides
-        .filter((slide) => slide.cloudinaryId)
-        .map((slide) =>
-          deleteSlideMedia(slide.cloudinaryId!, slide.type as 'IMAGE' | 'VIDEO' | 'TEXT'),
-        ),
-    ),
-  );
+    if (expired.length === 0) break;
 
-  const expiredIds = expired.map((s) => s.id);
-  const result = await prisma.story.deleteMany({
-    where: { id: { in: expiredIds } },
-  });
+    // Delete media assets (R2 or Cloudinary) — fire concurrently per story to avoid serial N+1
+    await Promise.allSettled(
+      expired.flatMap((story) =>
+        story.slides
+          .filter((slide) => slide.cloudinaryId)
+          .map((slide) =>
+            deleteSlideMedia(slide.cloudinaryId!, slide.type as 'IMAGE' | 'VIDEO' | 'TEXT'),
+          ),
+      ),
+    );
 
-  if (result.count > 0) {
+    const expiredIds = expired.map((s) => s.id);
+    const result = await prisma.story.deleteMany({
+      where: { id: { in: expiredIds } },
+    });
+    total += result.count;
+
+    // Found rows but deleted none — bail rather than re-find the same rows forever.
+    if (result.count === 0) break;
+    // Last batch was partial → nothing left to drain.
+    if (expired.length < BATCH) break;
+  }
+
+  if (total > 0) {
     invalidateFeedCache(); // Expired stories removed, refresh all feeds
   }
 
-  return result.count;
+  return total;
 }

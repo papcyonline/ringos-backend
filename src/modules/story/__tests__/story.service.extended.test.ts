@@ -584,4 +584,41 @@ describe('cleanupExpiredStories', () => {
       where: { id: { in: ['s-1', 's-2'] } },
     });
   });
+
+  it('drains multiple batches in one run (full batch → partial → done)', async () => {
+    const fullBatch = Array.from({ length: 200 }, (_, i) => ({
+      id: `a-${i}`,
+      slides: [],
+    }));
+    const partialBatch = Array.from({ length: 50 }, (_, i) => ({
+      id: `b-${i}`,
+      slides: [],
+    }));
+    // First findMany returns a full batch (loop continues), second a partial
+    // one (loop ends after it).
+    mockPrisma.story.findMany
+      .mockResolvedValueOnce(fullBatch)
+      .mockResolvedValueOnce(partialBatch);
+    mockPrisma.story.deleteMany
+      .mockResolvedValueOnce({ count: 200 })
+      .mockResolvedValueOnce({ count: 50 });
+
+    const res = await cleanupExpiredStories();
+
+    expect(res).toBe(250);
+    expect(mockPrisma.story.findMany).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.story.deleteMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops if a batch is found but nothing gets deleted (no infinite loop)', async () => {
+    mockPrisma.story.findMany.mockResolvedValue(
+      Array.from({ length: 200 }, (_, i) => ({ id: `c-${i}`, slides: [] })),
+    );
+    mockPrisma.story.deleteMany.mockResolvedValue({ count: 0 });
+
+    const res = await cleanupExpiredStories();
+
+    expect(res).toBe(0);
+    expect(mockPrisma.story.deleteMany).toHaveBeenCalledTimes(1);
+  });
 });
