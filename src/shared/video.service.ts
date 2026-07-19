@@ -33,6 +33,20 @@ export interface HlsFile {
  * Fail-open: returns null if ffmpeg is missing / errors / times out, so the
  * caller can fall back to a single-MP4 upload and the post still succeeds.
  */
+/** True if the file at [inPath] has at least one audio stream (parses `ffmpeg -i`). */
+async function probeHasAudio(inPath: string): Promise<boolean> {
+  if (!ffmpegPath) return false;
+  const stderr = await new Promise<string>((resolve) => {
+    const proc = spawn(ffmpegPath!, ['-i', inPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let out = '';
+    proc.stderr.on('data', (d) => { out = (out + d.toString()).slice(-8000); });
+    const timer = setTimeout(() => { proc.kill('SIGKILL'); resolve(out); }, 15_000);
+    proc.on('error', () => { clearTimeout(timer); resolve(out); });
+    proc.on('close', () => { clearTimeout(timer); resolve(out); });
+  });
+  return /Stream #\d+:\d+.*: Audio:/i.test(stderr);
+}
+
 export async function transcodeToHls(input: Buffer, ext = '.mp4'): Promise<HlsFile[] | null> {
   if (!ffmpegPath) {
     logger.warn('transcodeToHls: ffmpeg binary unavailable');
@@ -45,6 +59,18 @@ export async function transcodeToHls(input: Buffer, ext = '.mp4'): Promise<HlsFi
   try {
     await fs.mkdir(outDir, { recursive: true });
     await fs.writeFile(inPath, input);
+
+    // Some reels have no audio track (muted clips). Mapping a:0 then would make
+    // ffmpeg fail ("Unable to map stream at a:0"), so probe first and build a
+    // video-only ladder when there's no audio.
+    const hasAudio = await probeHasAudio(inPath);
+    const audioMapArgs = hasAudio
+      ? ['-map', 'a:0', '-map', 'a:0', '-map', 'a:0', '-c:a', 'aac', '-b:a', '96k', '-ac', '2']
+      : [];
+    const varStreamMap = hasAudio
+      ? 'v:0,a:0 v:1,a:1 v:2,a:2'
+      : 'v:0 v:1 v:2';
+
     await runFfmpeg(
       [
         '-y',
@@ -61,14 +87,14 @@ export async function transcodeToHls(input: Buffer, ext = '.mp4'): Promise<HlsFi
         '-map', '[v2o]', '-c:v:1', 'libx264', '-b:v:1', '900k', '-maxrate:v:1', '1000k', '-bufsize:v:1', '1800k',
         // 720p ~2Mbps.
         '-map', '[v3o]', '-c:v:2', 'libx264', '-b:v:2', '2000k', '-maxrate:v:2', '2200k', '-bufsize:v:2', '4000k',
-        '-map', 'a:0?', '-map', 'a:0?', '-map', 'a:0?', '-c:a', 'aac', '-b:a', '96k', '-ac', '2',
+        ...audioMapArgs,
         // Fixed GOP + no scene-cut so segments align across renditions (clean ABR switching).
         '-preset', 'veryfast', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
         '-pix_fmt', 'yuv420p',
         '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod', '-hls_flags', 'independent_segments',
         '-hls_segment_filename', path.join(outDir, 'v%v_%03d.ts'),
         '-master_pl_name', 'master.m3u8',
-        '-var_stream_map', 'v:0,a:0 v:1,a:1 v:2,a:2',
+        '-var_stream_map', varStreamMap,
         path.join(outDir, 'v%v.m3u8'),
       ],
       HLS_TIMEOUT_MS,
