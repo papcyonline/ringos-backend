@@ -11,6 +11,94 @@ const REMUX_TIMEOUT_MS = 60_000;
 // so it gets a longer ceiling. Kept synchronous per-request for simplicity;
 // short social clips (reels ≤60s, stories, posts) fit comfortably.
 const TRANSCODE_TIMEOUT_MS = 90_000;
+// An HLS ladder re-encodes the clip into 3 renditions in one pass, so it needs
+// a bigger ceiling than a single transcode.
+const HLS_TIMEOUT_MS = 180_000;
+
+/** One output file of an HLS transcode (playlist or segment). */
+export interface HlsFile {
+  /** File name relative to the HLS directory (e.g. `master.m3u8`, `v0_000.ts`). */
+  name: string;
+  buffer: Buffer;
+  contentType: string;
+}
+
+/**
+ * Transcode a video into an adaptive-bitrate HLS ladder (240p / 480p / 720p),
+ * so the client player can drop to a light rendition on slow/2G networks and
+ * step up on wifi. Returns every generated file (master playlist, per-rendition
+ * playlists, and .ts segments) as in-memory buffers for the caller to upload
+ * under one storage prefix. `master.m3u8` is the entry point.
+ *
+ * Fail-open: returns null if ffmpeg is missing / errors / times out, so the
+ * caller can fall back to a single-MP4 upload and the post still succeeds.
+ */
+export async function transcodeToHls(input: Buffer, ext = '.mp4'): Promise<HlsFile[] | null> {
+  if (!ffmpegPath) {
+    logger.warn('transcodeToHls: ffmpeg binary unavailable');
+    return null;
+  }
+  const id = randomUUID();
+  const safeExt = /^\.[a-z0-9]{1,5}$/i.test(ext) ? ext : '.mp4';
+  const inPath = path.join(os.tmpdir(), `hls-in-${id}${safeExt}`);
+  const outDir = path.join(os.tmpdir(), `hls-out-${id}`);
+  try {
+    await fs.mkdir(outDir, { recursive: true });
+    await fs.writeFile(inPath, input);
+    await runFfmpeg(
+      [
+        '-y',
+        '-i', inPath,
+        // Split into 3 streams, scale each (keep aspect, even dims).
+        '-filter_complex',
+        '[0:v]split=3[v1][v2][v3];' +
+          "[v1]scale=w=426:h=240:force_original_aspect_ratio=decrease:force_divisible_by=2[v1o];" +
+          "[v2]scale=w=854:h=480:force_original_aspect_ratio=decrease:force_divisible_by=2[v2o];" +
+          "[v3]scale=w=1280:h=720:force_original_aspect_ratio=decrease:force_divisible_by=2[v3o]",
+        // 240p ~300kbps — light enough for 2G/EDGE.
+        '-map', '[v1o]', '-c:v:0', 'libx264', '-b:v:0', '300k', '-maxrate:v:0', '350k', '-bufsize:v:0', '600k',
+        // 480p ~900kbps.
+        '-map', '[v2o]', '-c:v:1', 'libx264', '-b:v:1', '900k', '-maxrate:v:1', '1000k', '-bufsize:v:1', '1800k',
+        // 720p ~2Mbps.
+        '-map', '[v3o]', '-c:v:2', 'libx264', '-b:v:2', '2000k', '-maxrate:v:2', '2200k', '-bufsize:v:2', '4000k',
+        '-map', 'a:0?', '-map', 'a:0?', '-map', 'a:0?', '-c:a', 'aac', '-b:a', '96k', '-ac', '2',
+        // Fixed GOP + no scene-cut so segments align across renditions (clean ABR switching).
+        '-preset', 'veryfast', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
+        '-pix_fmt', 'yuv420p',
+        '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod', '-hls_flags', 'independent_segments',
+        '-hls_segment_filename', path.join(outDir, 'v%v_%03d.ts'),
+        '-master_pl_name', 'master.m3u8',
+        '-var_stream_map', 'v:0,a:0 v:1,a:1 v:2,a:2',
+        path.join(outDir, 'v%v.m3u8'),
+      ],
+      HLS_TIMEOUT_MS,
+    );
+
+    const names = await fs.readdir(outDir);
+    if (!names.includes('master.m3u8')) {
+      logger.warn('transcodeToHls: no master.m3u8 produced');
+      return null;
+    }
+    const files: HlsFile[] = [];
+    for (const name of names) {
+      const buffer = await fs.readFile(path.join(outDir, name));
+      files.push({
+        name,
+        buffer,
+        contentType: name.endsWith('.m3u8')
+          ? 'application/vnd.apple.mpegurl'
+          : 'video/mp2t',
+      });
+    }
+    return files;
+  } catch (err) {
+    logger.warn({ err }, 'transcodeToHls failed');
+    return null;
+  } finally {
+    await fs.rm(inPath, { force: true }).catch(() => {});
+    await fs.rm(outDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
 
 function runFfmpeg(args: string[], timeoutMs = REMUX_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {

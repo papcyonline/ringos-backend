@@ -5,7 +5,9 @@ import {
   isR2Configured,
   uploadToR2WithKey,
   deleteFromR2,
+  deleteR2Prefix,
 } from '../../shared/r2.service';
+import { fileToReelHls } from '../../shared/upload';
 import { moderateVideoBuffer } from '../../shared/moderation.service';
 import {
   createNotification,
@@ -24,6 +26,9 @@ function serializeReel(r: any) {
   return {
     id: r.id,
     videoUrl: r.videoUrl,
+    // Adaptive HLS master playlist (null for legacy/failed) — new clients
+    // prefer this; old clients ignore it and use videoUrl.
+    hlsUrl: r.hlsUrl ?? null,
     thumbnailUrl: r.thumbnailUrl,
     caption: r.caption,
     musicTitle: r.musicTitle,
@@ -99,21 +104,14 @@ export async function createReel(
     path.extname(file.originalname || '') || '.mp4',
   );
 
-  const upload = await uploadToR2WithKey(
-    normalized,
-    `reels/${userId}`,
-    'reel.mp4',
-    'video/mp4',
-  );
-
-  // Moderation — sample frames from the normalized buffer (no URL fetch) and
-  // check them via OpenAI. If unsafe, delete the just-uploaded object so we
-  // don't leak storage. Block only on a GENUINE "unsafe" verdict; if moderation
-  // was merely unavailable (API down/rate-limited, or a codec we couldn't
-  // decode), let the reel through rather than a false guidelines rejection.
+  // Moderation FIRST — sample frames from the normalized buffer (no URL fetch)
+  // and check them via OpenAI. Doing this before upload means an unsafe reel
+  // never lands the (many) HLS files in storage. Block only on a GENUINE
+  // "unsafe" verdict; if moderation was merely unavailable (API down/rate-
+  // limited, or a codec we couldn't decode), let the reel through rather than a
+  // false guidelines rejection.
   const moderation = await moderateVideoBuffer(normalized, '.mp4');
   if (!moderation.safe && !moderation.unavailable) {
-    await deleteFromR2(upload.key).catch(() => {});
     const err: any = new BadRequestError(
       moderation.reason || 'Video failed content moderation',
     );
@@ -121,7 +119,22 @@ export async function createReel(
     throw err;
   }
 
+  // Always store a progressive MP4 (videoUrl) so older app versions that can't
+  // play HLS keep working. ADDITIONALLY produce an adaptive HLS ladder
+  // (240p/480p/720p) so reels play on slow/2G networks — new clients prefer
+  // hlsUrl. HLS is best-effort: on failure the reel still posts (MP4 only).
+  const upload = await uploadToR2WithKey(
+    normalized,
+    `reels/${userId}`,
+    'reel.mp4',
+    'video/mp4',
+  );
   const videoUrl = upload.url;
+  const storageKey = upload.key;
+
+  const hls = await fileToReelHls(normalized, userId).catch(() => null);
+  const hlsUrl = hls?.url ?? null;
+  const hlsKey = hls?.key ?? null;
 
   // Generate a first-frame JPEG poster server-side (ffmpeg) and store it on R2,
   // so the profile reels grid can show a small still image per tile instead of
@@ -147,8 +160,11 @@ export async function createReel(
     data: {
       userId,
       videoUrl,
-      // Reusing this column to store the R2 storage key for cleanup.
-      cloudinaryId: upload.key,
+      // MP4 object key (ends in .mp4) — cleanup deletes this object.
+      cloudinaryId: storageKey,
+      hlsUrl,
+      // HLS directory PREFIX — cleanup deletes the whole prefix.
+      hlsKey,
       thumbnailUrl,
       caption: options.caption?.trim() || null,
       musicTitle: options.musicTitle?.trim() || null,
@@ -982,15 +998,21 @@ export async function unpinReel(reelId: string, userId: string) {
 export async function deleteReel(reelId: string, userId: string) {
   const reel = await prisma.reel.findUnique({
     where: { id: reelId },
-    select: { userId: true, cloudinaryId: true },
+    select: { userId: true, cloudinaryId: true, hlsKey: true },
   });
   if (!reel) throw new NotFoundError('Reel not found');
   if (reel.userId !== userId) throw new ForbiddenError('Not your reel');
 
   await prisma.reel.delete({ where: { id: reelId } });
+  // Clean up both the MP4 object and (if present) the whole HLS prefix.
   if (reel.cloudinaryId) {
     deleteFromR2(reel.cloudinaryId).catch((err) => {
-      logger.warn({ err, key: reel.cloudinaryId }, 'Failed to delete reel from R2');
+      logger.warn({ err, key: reel.cloudinaryId }, 'Failed to delete reel MP4 from R2');
+    });
+  }
+  if (reel.hlsKey) {
+    deleteR2Prefix(reel.hlsKey).catch((err) => {
+      logger.warn({ err, key: reel.hlsKey }, 'Failed to delete reel HLS from R2');
     });
   }
   await invalidateReelFeedCache(userId).catch(() => {});

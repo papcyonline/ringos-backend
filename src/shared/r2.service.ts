@@ -1,4 +1,10 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
+} from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
@@ -148,4 +154,35 @@ export async function deleteFromR2(key: string): Promise<void> {
     Bucket: bucketName,
     Key: key,
   }));
+}
+
+/**
+ * Delete every object under a key prefix (e.g. a reel's HLS directory, which
+ * holds the master playlist, per-rendition playlists, and all .ts segments).
+ * Lists then batch-deletes (1000 at a time). Best-effort.
+ */
+export async function deleteR2Prefix(prefix: string): Promise<void> {
+  if (!isR2Configured || !prefix) return;
+  const client = getClient();
+  // Normalise so a stored prefix key like "reels/u/uuid" only matches that
+  // directory's objects, not a sibling like "reels/u/uuid2/...".
+  const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
+  let token: string | undefined;
+  do {
+    const listed = await client.send(new ListObjectsV2Command({
+      Bucket: bucketName,
+      Prefix: normalized,
+      ContinuationToken: token,
+    }));
+    const objects = (listed.Contents ?? [])
+      .map((o) => o.Key)
+      .filter((k): k is string => !!k);
+    if (objects.length > 0) {
+      await client.send(new DeleteObjectsCommand({
+        Bucket: bucketName,
+        Delete: { Objects: objects.map((Key) => ({ Key })), Quiet: true },
+      }));
+    }
+    token = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (token);
 }

@@ -1164,8 +1164,15 @@ model StoryReaction {
 model Reel {
   id           String   @id @default(uuid())
   userId       String
+  // Progressive MP4 — the always-present fallback so older app versions (which
+  // can't play HLS) keep working. New clients prefer hlsUrl when present.
   videoUrl     String
   cloudinaryId String?
+  // Adaptive HLS master playlist (240p/480p/720p) so reels play on slow/2G.
+  // Null for legacy reels and when HLS transcode failed. hlsKey is the R2
+  // directory PREFIX for that reel's HLS files (delete the whole prefix).
+  hlsUrl       String?
+  hlsKey       String?
   thumbnailUrl String?
   caption      String?
   musicTitle       String?

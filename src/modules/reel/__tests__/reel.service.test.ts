@@ -54,6 +54,12 @@ vi.mock('../../../shared/r2.service', () => ({
   isR2Configured: true,
   uploadToR2WithKey: vi.fn(),
   deleteFromR2: vi.fn().mockResolvedValue(undefined),
+  deleteR2Prefix: vi.fn().mockResolvedValue(undefined),
+}));
+// HLS transcode → null so createReel takes the single-MP4 fallback path in
+// tests (no real ffmpeg). The HLS ladder itself is exercised separately.
+vi.mock('../../../shared/upload', () => ({
+  fileToReelHls: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('../../../shared/moderation.service', () => ({
   moderateVideoBuffer: vi.fn().mockResolvedValue({ safe: true }),
@@ -113,7 +119,6 @@ describe('createReel', () => {
 
   it('rejects with MODERATION_REJECTED when video fails moderation', async () => {
     const r2 = await import('../../../shared/r2.service');
-    (r2.uploadToR2WithKey as any).mockResolvedValueOnce({ url: 'https://r2/x.mp4', key: 'reels/u/x.mp4' });
     const mod = await import('../../../shared/moderation.service');
     (mod.moderateVideoBuffer as any).mockResolvedValueOnce({ safe: false, reason: 'nudity' });
 
@@ -121,7 +126,8 @@ describe('createReel', () => {
       message: 'nudity',
       code: 'MODERATION_REJECTED',
     });
-    expect(r2.deleteFromR2).toHaveBeenCalledWith('reels/u/x.mp4');
+    // Moderation runs BEFORE any upload now, so nothing is stored to clean up.
+    expect(r2.uploadToR2WithKey).not.toHaveBeenCalled();
   });
 
   it('persists reel and returns formatted DTO when moderation passes', async () => {
@@ -155,6 +161,35 @@ describe('createReel', () => {
     expect(res.isReposted).toBe(false);
     expect(mockPrisma.reel.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ caption: 'cap', durationSec: 30 }),
+    }));
+  });
+
+  it('stores BOTH the MP4 (videoUrl) and the HLS (hlsUrl/hlsKey) when HLS succeeds', async () => {
+    const r2 = await import('../../../shared/r2.service');
+    const uploadMod = await import('../../../shared/upload');
+    (r2.uploadToR2WithKey as any).mockResolvedValueOnce({ url: 'https://r2/reel.mp4', key: 'reels/u/reel.mp4' });
+    (uploadMod.fileToReelHls as any).mockResolvedValueOnce({
+      url: 'https://cdn/reels/u/abc/master.m3u8',
+      key: 'reels/u/abc',
+    });
+    mockPrisma.reel.create.mockResolvedValue({
+      id: 'reel-2', videoUrl: 'https://r2/reel.mp4', hlsUrl: 'https://cdn/reels/u/abc/master.m3u8',
+      thumbnailUrl: null, caption: null, musicTitle: null, musicPreviewUrl: null, musicArtist: null,
+      musicArtwork: null, videoVolume: null, musicVolume: null, durationSec: null, viewCount: 0,
+      likeCount: 0, commentCount: 0, repostCount: 0, createdAt: new Date(), videoEdits: null,
+      user: { id: 'user-1', displayName: 'Alice', avatarUrl: null, isVerified: false },
+    });
+
+    const res = await createReel('user-1', file());
+
+    expect(res.hlsUrl).toBe('https://cdn/reels/u/abc/master.m3u8');
+    expect(mockPrisma.reel.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        videoUrl: 'https://r2/reel.mp4',
+        cloudinaryId: 'reels/u/reel.mp4',
+        hlsUrl: 'https://cdn/reels/u/abc/master.m3u8',
+        hlsKey: 'reels/u/abc',
+      }),
     }));
   });
 });

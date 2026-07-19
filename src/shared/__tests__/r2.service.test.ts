@@ -8,7 +8,9 @@ vi.mock('@aws-sdk/client-s3', () => {
   }
   class PutObjectCommand { constructor(public input: any) {} }
   class DeleteObjectCommand { constructor(public input: any) {} }
-  return { S3Client, PutObjectCommand, DeleteObjectCommand };
+  class ListObjectsV2Command { constructor(public input: any) {} }
+  class DeleteObjectsCommand { constructor(public input: any) {} }
+  return { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteObjectsCommand };
 });
 vi.mock('uuid', () => ({ v4: () => 'uuid-x' }));
 
@@ -110,5 +112,48 @@ describe('r2.service', () => {
     const mod = await import('../r2.service');
     await mod.deleteFromR2('folder/foo');
     expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('deleteR2Prefix lists then batch-deletes every object under the prefix', async () => {
+    mockSend.mockReset();
+    // First call = ListObjectsV2 (2 objects, not truncated); second = DeleteObjects.
+    mockSend
+      .mockResolvedValueOnce({
+        Contents: [{ Key: 'reels/u/uuid/master.m3u8' }, { Key: 'reels/u/uuid/v0_000.ts' }],
+        IsTruncated: false,
+      })
+      .mockResolvedValueOnce({});
+    const mod = await import('../r2.service');
+    await mod.deleteR2Prefix('reels/u/uuid');
+
+    expect(mockSend).toHaveBeenCalledTimes(2);
+    const deleteArg = mockSend.mock.calls[1][0].input;
+    expect(deleteArg.Delete.Objects).toEqual([
+      { Key: 'reels/u/uuid/master.m3u8' },
+      { Key: 'reels/u/uuid/v0_000.ts' },
+    ]);
+    // Prefix must be normalised with a trailing slash so siblings aren't matched.
+    expect(mockSend.mock.calls[0][0].input.Prefix).toBe('reels/u/uuid/');
+  });
+
+  it('deleteR2Prefix follows pagination until not truncated', async () => {
+    mockSend.mockReset();
+    mockSend
+      .mockResolvedValueOnce({ Contents: [{ Key: 'p/a.ts' }], IsTruncated: true, NextContinuationToken: 't1' })
+      .mockResolvedValueOnce({}) // delete page 1
+      .mockResolvedValueOnce({ Contents: [{ Key: 'p/b.ts' }], IsTruncated: false })
+      .mockResolvedValueOnce({}); // delete page 2
+    const mod = await import('../r2.service');
+    await mod.deleteR2Prefix('p');
+    // 2 lists + 2 deletes.
+    expect(mockSend).toHaveBeenCalledTimes(4);
+  });
+
+  it('deleteR2Prefix skips delete when prefix is empty of objects', async () => {
+    mockSend.mockReset();
+    mockSend.mockResolvedValueOnce({ Contents: [], IsTruncated: false });
+    const mod = await import('../r2.service');
+    await mod.deleteR2Prefix('empty/');
+    expect(mockSend).toHaveBeenCalledTimes(1); // list only, no delete
   });
 });

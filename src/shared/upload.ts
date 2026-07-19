@@ -21,7 +21,7 @@ import {
   uploadVoiceNoteToSupabase,
 } from './supabase.service';
 import { moderateImageBuffer } from './moderation.service';
-import { ensureWebSafeH264 } from './video.service';
+import { ensureWebSafeH264, transcodeToHls } from './video.service';
 import { ForbiddenError } from './errors';
 import { logger } from './logger';
 
@@ -518,6 +518,40 @@ export const reelVideoUpload = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: storyMediaFilter,
 });
+
+/**
+ * Transcode a (web-safe H.264) reel into an adaptive HLS ladder and upload all
+ * of its files (master playlist, per-rendition playlists, .ts segments) under
+ * one R2 prefix. Returns the master playlist URL + the prefix key (stored for
+ * cleanup — delete the whole prefix on reel delete via deleteR2Prefix).
+ *
+ * Returns null if HLS transcode is unavailable/failed so the caller can fall
+ * back to a single-MP4 upload (the reel still posts, just non-adaptive).
+ */
+export async function fileToReelHls(
+  video: Buffer,
+  userId: string,
+): Promise<{ url: string; key: string } | null> {
+  if (!isR2Configured) return null;
+  const files = await transcodeToHls(video, '.mp4');
+  if (!files || files.length === 0) return null;
+
+  const prefix = `reels/${userId}/${uuidv4()}`;
+  let masterUrl: string | null = null;
+  // Segments are independent objects — upload concurrently.
+  await Promise.all(
+    files.map(async (f) => {
+      const { url } = await uploadToR2WithCustomKey(
+        f.buffer,
+        `${prefix}/${f.name}`,
+        f.contentType,
+      );
+      if (f.name === 'master.m3u8') masterUrl = url;
+    }),
+  );
+  if (!masterUrl) return null;
+  return { url: masterUrl, key: prefix };
+}
 
 export async function fileToStoryImageUrl(
   file: Express.Multer.File,

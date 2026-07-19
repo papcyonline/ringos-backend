@@ -106,6 +106,28 @@ export async function connectDatabase() {
   }
 }
 
+/**
+ * Idempotently ensure additive, nullable columns exist before the app serves
+ * traffic — a safety net so a code deploy is never ahead of its schema (Prisma
+ * would otherwise error writing to a not-yet-migrated column). Only ADD COLUMN
+ * IF NOT EXISTS on nullable columns belongs here (safe + reversible); anything
+ * structural must go through a real migration. Non-fatal: logs and continues.
+ */
+export async function ensureAdditiveColumns() {
+  const statements = [
+    // Adaptive HLS for reels (self-hosted on R2). See 20260719000001_add_reel_hls.
+    'ALTER TABLE "Reel" ADD COLUMN IF NOT EXISTS "hlsUrl" TEXT',
+    'ALTER TABLE "Reel" ADD COLUMN IF NOT EXISTS "hlsKey" TEXT',
+  ];
+  for (const sql of statements) {
+    try {
+      await prisma.$executeRawUnsafe(sql);
+    } catch (err) {
+      logger.warn({ err, sql }, 'ensureAdditiveColumns: statement failed (continuing)');
+    }
+  }
+}
+
 export async function disconnectDatabase() {
   await prisma.$disconnect();
   logger.info('Database disconnected');

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import http from 'http';
 import { app } from './app';
 import { env } from './config/env';
-import { connectDatabase } from './config/database';
+import { connectDatabase, ensureAdditiveColumns } from './config/database';
 import { initializeSocket } from './config/socket';
 import { initializeFirebase } from './config/firebase';
 import { registerChatHandlers } from './modules/chat/chat.gateway';
@@ -30,6 +30,9 @@ async function main() {
   initSentry();
 
   await connectDatabase();
+  // Safety net: make sure additive columns this build writes to exist, so the
+  // deploy is safe even if the migration hasn't been applied separately.
+  await ensureAdditiveColumns();
   initializeFirebase();
   initRedis();
   initGoogleDrive();
