@@ -39,7 +39,10 @@
   }
 
   var TOKEN_KEY = 'yomeet_widget_token_' + handle;
-  var POLL_MS = 4000;
+  // Adaptive polling: snappy while the chat is open, gentle in the background
+  // (so an owner's reply still surfaces as an unread badge + chime when closed).
+  var POLL_OPEN = 1200;
+  var POLL_CLOSED = 6000;
 
   var state = {
     token: null,
@@ -49,7 +52,8 @@
     started: false,
     config: null,
     pollTimer: null,
-    // Message ids already rendered, so the 4s poller can't re-add a message the
+    unread: 0,
+    // Message ids already rendered, so the poller can't re-add a message the
     // optimistic echo (or a previous poll) already showed.
     seen: {},
   };
@@ -112,11 +116,15 @@
       ':host{all:initial}' +
       '*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}' +
       '.wrap{position:fixed;bottom:20px;' + side + ':20px;z-index:2147483000}' +
-      '.bubble{width:60px;height:60px;border-radius:50%;background:' + accent + ';cursor:pointer;' +
+      '.bubble{position:relative;width:60px;height:60px;border-radius:50%;background:' + accent + ';cursor:pointer;' +
       'display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(0,0,0,.25);' +
       'border:none;transition:transform .15s ease}' +
       '.bubble:hover{transform:scale(1.06)}' +
       '.bubble svg{width:28px;height:28px;fill:#fff}' +
+      '.badge{position:absolute;top:-3px;right:-3px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;' +
+      'background:#ff3b30;color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;' +
+      'box-shadow:0 0 0 2px #fff;display:none}' +
+      '.badge.show{display:block}' +
       '.panel{position:absolute;bottom:74px;' + side + ':0;width:340px;max-width:calc(100vw - 40px);' +
       'height:460px;max-height:calc(100vh - 120px);background:#fff;border-radius:16px;overflow:hidden;' +
       'box-shadow:0 12px 40px rgba(0,0,0,.28);display:none;flex-direction:column}' +
@@ -164,11 +172,12 @@
     '    </form>' +
     '    <form class="foot"><input class="in" placeholder="Type a message…" autocomplete="off"/><button type="submit">&#10148;</button></form>' +
     '  </div>' +
-    '  <button class="bubble" aria-label="Chat">' + CHAT_ICON + '</button>' +
+    '  <button class="bubble" aria-label="Chat">' + CHAT_ICON + '<span class="badge"></span></button>' +
     '</div>';
 
   var el = {
     bubble: root.querySelector('.bubble'),
+    badge: root.querySelector('.badge'),
     panel: root.querySelector('.panel'),
     close: root.querySelector('.x'),
     av: root.querySelector('.av'),
@@ -244,15 +253,59 @@
     if (!state.token) return Promise.resolve();
     var q = state.lastId ? '?since=' + encodeURIComponent(state.lastId) : '';
     return api('GET', '/public/messages' + q).then(function (res) {
-      (res.messages || []).forEach(addMessage);
+      var ownerNew = 0;
+      (res.messages || []).forEach(function (m) {
+        var isNew = !(m.id && state.seen[m.id]);
+        addMessage(m); // dedupes via state.seen
+        if (isNew && !m.fromVisitor) ownerNew++; // a fresh reply from the owner
+      });
+      // Reply arrived while the panel is closed → badge + chime.
+      if (ownerNew > 0 && !state.open) {
+        state.unread += ownerNew;
+        updateBadge();
+        playChime();
+      }
     });
   }
 
+  function updateBadge() {
+    if (state.unread > 0) {
+      el.badge.textContent = state.unread > 9 ? '9+' : String(state.unread);
+      el.badge.classList.add('show');
+    } else {
+      el.badge.classList.remove('show');
+    }
+  }
+
+  // Short, soft notification chime via Web Audio — no asset, CSP-safe. Audio is
+  // unlocked once the visitor has interacted (they clicked the bubble to chat).
+  var audioCtx = null;
+  function playChime() {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audioCtx = audioCtx || new AC();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      var t = audioCtx.currentTime;
+      [660, 880].forEach(function (freq, i) {
+        var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.connect(g); g.connect(audioCtx.destination);
+        o.type = 'sine'; o.frequency.value = freq;
+        var start = t + i * 0.12;
+        g.gain.setValueAtTime(0.0001, start);
+        g.gain.exponentialRampToValueAtTime(0.12, start + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
+        o.start(start); o.stop(start + 0.2);
+      });
+    } catch (e) { /* ignore */ }
+  }
+
+  // One adaptive poll loop — fast when open, slow in the background when closed.
   function startPolling() {
     stopPolling();
     state.pollTimer = setInterval(function () {
-      if (state.open) loadMessages().catch(function () {});
-    }, POLL_MS);
+      loadMessages().catch(function () {});
+    }, state.open ? POLL_OPEN : POLL_CLOSED);
   }
   function stopPolling() {
     if (state.pollTimer) clearInterval(state.pollTimer);
@@ -263,12 +316,15 @@
     state.open = open;
     el.panel.classList.toggle('open', open);
     if (open) {
+      state.unread = 0;
+      updateBadge();
       ensureSession().then(startPolling).catch(function (e) {
         console.warn('[Yomeet widget]', e.message);
       });
       el.input.focus();
     } else {
-      stopPolling();
+      // Keep polling in the background (slower) so replies still chime + badge.
+      startPolling();
     }
   }
 
