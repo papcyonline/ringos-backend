@@ -65,6 +65,10 @@ app.get('/widget.js', (_req, res) => {
   res.set('Content-Type', 'application/javascript; charset=utf-8');
   res.set('Cache-Control', 'public, max-age=300');
   res.set('Access-Control-Allow-Origin', '*');
+  // The whole point of the loader is to be embedded cross-origin on customer
+  // sites. Helmet's global default is CORP: same-origin, which makes browsers
+  // REFUSE to load this <script> from any other domain. Override it here.
+  res.set('Cross-Origin-Resource-Policy', 'cross-origin');
   res.sendFile(path.join(process.cwd(), 'public', 'widget.js'));
 });
 
