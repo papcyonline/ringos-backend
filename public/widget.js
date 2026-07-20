@@ -93,7 +93,11 @@
   // ── UI (Shadow DOM) ────────────────────────────────────────────────
   var host = document.createElement('div');
   host.setAttribute('data-yomeet-widget', handle);
-  document.body.appendChild(host);
+  // Attach to <html>, not <body>. Frameworks that render into <body> (e.g.
+  // Next.js app router) reconcile its children on every re-render and would
+  // delete a node injected into <body>. <html> is never React-managed, so the
+  // widget survives. Fixed positioning renders identically either way.
+  document.documentElement.appendChild(host);
   var root = host.attachShadow({ mode: 'open' });
 
   var side = 'right';
