@@ -9,12 +9,20 @@
 (function () {
   'use strict';
 
-  var script =
-    document.currentScript ||
-    (function () {
-      var s = document.getElementsByTagName('script');
-      return s[s.length - 1];
-    })();
+  // Find our own <script> tag. document.currentScript works for a normal
+  // static embed, but is null when the script is injected dynamically (e.g. by
+  // Google Tag Manager) — so fall back to matching by src + data-handle rather
+  // than blindly grabbing the last script on the page.
+  var script = document.currentScript;
+  if (!script || !script.getAttribute('data-handle')) {
+    var cand = document.querySelectorAll('script[data-handle]');
+    for (var i = 0; i < cand.length; i++) {
+      if (/\/widget\.js(\?|$)/.test(cand[i].src || '')) {
+        script = cand[i];
+        break;
+      }
+    }
+  }
   if (!script) return;
 
   var handle = script.getAttribute('data-handle');
