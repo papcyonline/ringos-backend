@@ -75,7 +75,11 @@ router.post(
       });
       res.status(201).json(result);
     } catch (err) {
-      next(err);
+      // TEMP DEBUG — surface the real error to diagnose the 500, then revert.
+      res.status(500).json({
+        debug: String((err as Error)?.message),
+        stack: String((err as Error)?.stack || '').split('\n').slice(0, 4).join(' | '),
+      });
     }
   },
 );
