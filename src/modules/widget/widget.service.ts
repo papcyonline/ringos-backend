@@ -249,9 +249,10 @@ function shortUrl(u?: string | null): string | undefined {
 /** The context line shown at the top of the owner's WIDGET conversation. */
 function contextLine(v: {
   country?: string | null; city?: string | null; userAgent?: string | null;
-  pageUrl?: string | null; referrer?: string | null;
+  pageUrl?: string | null; referrer?: string | null; email?: string | null;
 }): string | null {
   const parts: string[] = [];
+  if (v.email) parts.push('✉️ ' + v.email);
   const loc = [v.city, v.country].filter(Boolean).join(', ');
   if (loc) parts.push('🌍 ' + loc);
   const dev = parseUA(v.userAgent);
@@ -400,6 +401,7 @@ async function ensureConversation(visitor: {
   userAgent?: string | null;
   pageUrl?: string | null;
   referrer?: string | null;
+  email?: string | null;
 }): Promise<string> {
   if (visitor.conversationId) return visitor.conversationId;
   const conversation = await prisma.conversation.create({
@@ -434,6 +436,7 @@ async function ensureConversation(visitor: {
         isSystem: true,
         metadata: {
           widgetContext: true,
+          email: visitor.email ?? null,
           country: visitor.country ?? null,
           city: visitor.city ?? null,
           pageUrl: visitor.pageUrl ?? null,
