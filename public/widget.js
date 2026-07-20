@@ -49,6 +49,9 @@
     started: false,
     config: null,
     pollTimer: null,
+    // Message ids already rendered, so the 4s poller can't re-add a message the
+    // optimistic echo (or a previous poll) already showed.
+    seen: {},
   };
   try {
     state.token = localStorage.getItem(TOKEN_KEY);
@@ -188,7 +191,11 @@
   }
 
   function addMessage(m) {
-    if (m.id) state.lastId = m.id;
+    if (m.id) {
+      if (state.seen[m.id]) return; // already rendered — skip the duplicate
+      state.seen[m.id] = 1;
+      state.lastId = m.id;
+    }
     var div = document.createElement('div');
     div.className = 'msg ' + (m.fromVisitor ? 'me' : 'them');
     div.innerHTML = esc(m.content);
@@ -281,7 +288,13 @@
         addMessage({ content: text, fromVisitor: true });
         return api('POST', '/public/messages', { content: text });
       })
-      .then(function () {
+      .then(function (msg) {
+        // Record the server id + advance the cursor so the poller never
+        // re-adds this just-sent message as a duplicate of the optimistic echo.
+        if (msg && msg.id) {
+          state.seen[msg.id] = 1;
+          state.lastId = msg.id;
+        }
         el.send.disabled = false;
       })
       .catch(function (err) {
