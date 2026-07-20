@@ -19,6 +19,7 @@ import { startScheduledPostsJob } from './jobs/scheduledPosts';
 import { startAbandonedSignupCleanupJob } from './jobs/abandonedSignupCleanup';
 import { startReEngagementCampaignJob } from './jobs/reengagementCampaign';
 import { startEngagementDigestJob } from './jobs/engagementDigest';
+import { startWidgetVisitorCleanupJob } from './jobs/widgetVisitorCleanup';
 import { electLeaderAndRun } from './jobs/leader';
 import { logger } from './shared/logger';
 import { initSentry } from './shared/sentry.service';
@@ -60,6 +61,7 @@ async function main() {
     startAbandonedSignupCleanupJob();
     startReEngagementCampaignJob();
     startEngagementDigestJob();
+    startWidgetVisitorCleanupJob();
   });
 
   server.listen(env.PORT, '0.0.0.0', () => {
