@@ -529,6 +529,12 @@ export async function uploadAvatar(userId: string, avatarUrl: string) {
     select: { id: true, avatarUrl: true },
   });
   await invalidateProfileCache(userId);
+  // The avatar is embedded in every viewer's cached story feed too, so flush
+  // those caches — otherwise stories keep showing the OLD picture for up to
+  // 60s. Same reasoning as the rename path in updateProfile. (Cover photo is
+  // NOT in the story payload, so uploadCover deliberately skips this.)
+  const { invalidateFeedCache } = await import('../story/story.service');
+  invalidateFeedCache();
   return updated;
 }
 
@@ -724,6 +730,16 @@ export async function updateProfile(userId: string, data: UpdateProfileInput) {
     },
   });
   await invalidateProfileCache(userId);
+  // A rename changes the name embedded in every viewer's cached story feed
+  // (serialized from a live join, but cached 60s per viewer). Those caches are
+  // keyed by viewer, not by this user, so flush them all — renames are rare
+  // (20-day cooldown), making a global flush cheap and correct. Without this
+  // the poster's stories keep showing the OLD name until each viewer's cache
+  // expires. Dynamic import avoids a user↔story circular import at load time.
+  if (isChangingName) {
+    const { invalidateFeedCache } = await import('../story/story.service');
+    invalidateFeedCache();
+  }
   return updated;
 }
 
