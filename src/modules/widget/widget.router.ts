@@ -11,6 +11,7 @@ import {
   leadSchema,
 } from './widget.schema';
 import * as widget from './widget.service';
+import { onWidgetEvent } from './widget.events';
 
 const router = Router();
 
@@ -102,6 +103,50 @@ router.post(
 router.get('/public/messages', async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await widget.visitorGetMessages(visitorToken(req), req.query.since as string | undefined));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /public/events?t=TOKEN — SSE stream: instant nudge on new message / owner
+// typing. EventSource can't set headers, so the token rides in the query (it's
+// the visitor's own token). The nudge just tells the widget to refresh — the
+// message serialization stays in /public/messages (DRY).
+router.get('/public/events', async (req: Request, res: Response) => {
+  const token = req.query.t;
+  let stream: { conversationId: string | null } | null = null;
+  try {
+    if (typeof token === 'string' && token.length >= 10) {
+      stream = await widget.resolveVisitorStream(token);
+    }
+  } catch {
+    stream = null;
+  }
+  if (!stream || !stream.conversationId) {
+    res.status(204).end(); // no session/conversation yet → widget falls back to polling
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': (req.headers.origin as string) || '*',
+  });
+  res.write('retry: 3000\n\n');
+  const send = (evt: unknown) => res.write(`data: ${JSON.stringify(evt)}\n\n`);
+  const off = onWidgetEvent(stream.conversationId, send);
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 25000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    off();
+  });
+});
+
+// POST /public/typing — visitor is typing → surfaced in the owner's app chat.
+router.post('/public/typing', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await widget.visitorTyping(visitorToken(req));
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

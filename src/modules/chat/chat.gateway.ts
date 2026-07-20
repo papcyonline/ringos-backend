@@ -3,6 +3,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../shared/logger';
 import * as chatService from './chat.service';
 import { broadcastAndNotifyMessage, formatMessagePayload } from './chat.utils';
+import { emitWidgetEvent } from '../widget/widget.events';
 import { notifyChatMessage, markConversationNotificationsAsRead } from '../notification/notification.service';
 
 /** Extract a user-facing error message from a caught error. */
@@ -489,6 +490,10 @@ export function registerChatHandlers(io: Server, socket: Socket): void {
         userId,
         activity: activity ?? 'typing',
       });
+
+      // Bridge to any website-widget SSE stream so a visitor sees the owner
+      // typing (no-op unless a visitor is watching this conversation).
+      emitWidgetEvent(conversationId, 'typing');
 
       // Clear previous timer for this conversation and set a new one
       const timerKey = conversationId;

@@ -5,6 +5,7 @@ import { logger } from '../../shared/logger';
 import { env } from '../../config/env';
 import { ForbiddenError, NotFoundError } from '../../shared/errors';
 import { checkRateLimit } from '../../shared/redis.service';
+import { getIO } from '../../config/socket';
 import * as chatService from '../chat/chat.service';
 import { broadcastAndNotifyMessage } from '../chat/chat.utils';
 
@@ -161,6 +162,25 @@ async function requireVisitor(token: string) {
   if (visitor.expiresAt < new Date()) throw new ForbiddenError('Session expired');
   if (!visitor.widgetConfig.enabled) throw new ForbiddenError('Widget is disabled');
   return visitor;
+}
+
+/** Resolve a visitor's live conversation for the SSE stream (throws if invalid). */
+export async function resolveVisitorStream(
+  token: string,
+): Promise<{ conversationId: string | null; shadowUserId: string }> {
+  const visitor = await requireVisitor(token);
+  return { conversationId: visitor.conversationId, shadowUserId: visitor.shadowUserId };
+}
+
+/** Visitor is typing → show it in the owner's app chat (reuses chat:typing). */
+export async function visitorTyping(token: string): Promise<void> {
+  const visitor = await requireVisitor(token);
+  if (!visitor.conversationId) return;
+  getIO().to(`conversation:${visitor.conversationId}`).emit('chat:typing', {
+    conversationId: visitor.conversationId,
+    userId: visitor.shadowUserId,
+    activity: 'typing',
+  });
 }
 
 // ── live-chat visitor context ────────────────────────────────────────

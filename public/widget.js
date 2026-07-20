@@ -53,6 +53,9 @@
     config: null,
     pollTimer: null,
     unread: 0,
+    es: null,      // EventSource (instant push); poll is the fallback
+    sseUp: false,
+    lastTyping: 0, // throttle for outbound typing pings
     // Message ids already rendered, so the poller can't re-add a message the
     // optimistic echo (or a previous poll) already showed.
     seen: {},
@@ -137,6 +140,10 @@
       '.body{flex:1;overflow-y:auto;padding:14px;background:#f5f6f8;display:flex;flex-direction:column;gap:8px}' +
       '.msg{max-width:80%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.35;word-wrap:break-word}' +
       '.msg.them{align-self:flex-start;background:#fff;color:#111;border:1px solid #ececec}' +
+      '.typing{align-self:flex-start;background:#fff;border:1px solid #ececec;border-radius:14px;padding:11px 14px;display:flex;gap:4px}' +
+      '.typing span{width:7px;height:7px;border-radius:50%;background:#bbb;display:inline-block;animation:ymtype 1.2s infinite}' +
+      '.typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}' +
+      '@keyframes ymtype{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}' +
       '.msg.me{align-self:flex-end;background:' + accent + ';color:#fff}' +
       '.foot{border-top:1px solid #ececec;padding:10px;display:flex;gap:8px;background:#fff}' +
       '.foot input{flex:1;border:1px solid #dcdcdc;border-radius:20px;padding:9px 14px;font-size:14px;outline:none}' +
@@ -205,6 +212,8 @@
       state.seen[m.id] = 1;
       state.lastId = m.id;
     }
+    var typing = el.body.querySelector('.typing');
+    if (typing) typing.remove(); // a real message means typing is over
     var div = document.createElement('div');
     div.className = 'msg ' + (m.fromVisitor ? 'me' : 'them');
     div.innerHTML = esc(m.content);
@@ -245,6 +254,7 @@
       state.started = true;
       state.conversationId = res.conversationId || null;
       if (res.visitorToken) saveToken(res.visitorToken);
+      if (state.conversationId) openStream(); // returning visitor with a thread
       return loadMessages();
     });
   }
@@ -300,16 +310,60 @@
     } catch (e) { /* ignore */ }
   }
 
-  // One adaptive poll loop — fast when open, slow in the background when closed.
+  // Poll cadence: SSE handles live delivery when up, so the poll drops to a
+  // slow safety net; otherwise it's snappy when open, gentle when closed.
+  function pollInterval() {
+    if (state.sseUp) return 20000;
+    return state.open ? POLL_OPEN : POLL_CLOSED;
+  }
   function startPolling() {
     stopPolling();
     state.pollTimer = setInterval(function () {
       loadMessages().catch(function () {});
-    }, state.open ? POLL_OPEN : POLL_CLOSED);
+    }, pollInterval());
   }
   function stopPolling() {
     if (state.pollTimer) clearInterval(state.pollTimer);
     state.pollTimer = null;
+  }
+
+  // Instant push via SSE. The server resolves the conversation from the token;
+  // events are just nudges → we refresh (message) or show typing. EventSource
+  // auto-reconnects, so onerror only flips us back to faster polling.
+  function openStream() {
+    if (state.es || !state.token) return;
+    try {
+      var es = new EventSource(API + '/api/widget/public/events?t=' + encodeURIComponent(state.token));
+      state.es = es;
+      es.onopen = function () { state.sseUp = true; startPolling(); };
+      es.onmessage = function (ev) {
+        var d = {};
+        try { d = JSON.parse(ev.data); } catch (e) { /* ignore */ }
+        if (d.type === 'typing') showOwnerTyping();
+        else loadMessages().catch(function () {});
+      };
+      es.onerror = function () {
+        if (state.sseUp) { state.sseUp = false; startPolling(); }
+      };
+    } catch (e) { /* SSE unsupported → polling covers it */ }
+  }
+
+  var typingHideTimer = null;
+  function showOwnerTyping() {
+    if (!state.open) return; // no point animating a hidden panel
+    var t = el.body.querySelector('.typing');
+    if (!t) {
+      t = document.createElement('div');
+      t.className = 'typing';
+      t.innerHTML = '<span></span><span></span><span></span>';
+      el.body.appendChild(t);
+      el.body.scrollTop = el.body.scrollHeight;
+    }
+    clearTimeout(typingHideTimer);
+    typingHideTimer = setTimeout(function () {
+      var x = el.body.querySelector('.typing');
+      if (x) x.remove();
+    }, 4000);
   }
 
   function togglePanel(open) {
@@ -336,6 +390,16 @@
     togglePanel(false);
   });
 
+  // Outbound typing → the owner's app shows "…is typing". Throttled to 1 ping /
+  // 2s (the server auto-clears after 5s), and only once a session exists.
+  el.input.addEventListener('input', function () {
+    var now = Date.now();
+    if (state.token && now - state.lastTyping > 2000) {
+      state.lastTyping = now;
+      api('POST', '/public/typing').catch(function () {});
+    }
+  });
+
   el.foot.addEventListener('submit', function (e) {
     e.preventDefault();
     var text = el.input.value.trim();
@@ -355,6 +419,7 @@
           state.seen[msg.id] = 1;
           state.lastId = msg.id;
         }
+        openStream(); // the conversation now exists → start instant push
         el.send.disabled = false;
       })
       .catch(function (err) {

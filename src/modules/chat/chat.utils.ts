@@ -4,6 +4,7 @@ import { getIO } from '../../config/socket';
 import { logger } from '../../shared/logger';
 import { notifyChatMessage } from '../notification/notification.service';
 import { translateMessage } from './translation.service';
+import { emitWidgetEvent } from '../widget/widget.events';
 
 /**
  * Shared utilities for the chat module.
@@ -178,4 +179,8 @@ export function broadcastAndNotifyMessage(
   if (message.content) {
     translateMessage(message.id, conversationId, message.content).catch(() => {});
   }
+
+  // 5. Nudge any website-widget SSE stream on this conversation so an owner's
+  //    reply reaches the visitor instantly (no-op unless a visitor is watching).
+  emitWidgetEvent(conversationId, 'message');
 }
