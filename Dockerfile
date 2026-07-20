@@ -26,6 +26,9 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY prisma ./prisma
+# Static assets served at /public (logo, social) and the widget loader at
+# /widget.js. Previously absent from the runtime image, so these 404'd.
+COPY public ./public
 
 EXPOSE 3000
 

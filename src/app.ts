@@ -58,6 +58,16 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Serve public static files (logo, etc.)
 app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
+// Website chat widget loader. Served at the root path the embed snippet points
+// at (WIDGET_PUBLIC_URL/widget.js). Publicly cacheable; it's the same file for
+// every site and reads its per-site handle from the <script data-handle>.
+app.get('/widget.js', (_req, res) => {
+  res.set('Content-Type', 'application/javascript; charset=utf-8');
+  res.set('Cache-Control', 'public, max-age=300');
+  res.set('Access-Control-Allow-Origin', '*');
+  res.sendFile(path.join(process.cwd(), 'public', 'widget.js'));
+});
+
 app.get('/health', async (_req, res) => {
   try {
     const { prisma } = await import('./config/database');
