@@ -8,6 +8,7 @@ import { checkRateLimit } from '../../shared/redis.service';
 import { getIO } from '../../config/socket';
 import * as chatService from '../chat/chat.service';
 import { broadcastAndNotifyMessage } from '../chat/chat.utils';
+import { createNotification, sendPushToUser } from '../notification/notification.service';
 
 // Visitor session length. Refreshed on activity; a cron prunes past this.
 const VISITOR_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -580,8 +581,37 @@ export async function captureLead(token: string, email: string, message: string)
       data: { email },
     }),
   ]);
-  logger.info({ visitorId: visitor.id }, 'Widget: offline lead captured');
+
+  // Alert the owner so an offline lead is actionable, not just stored. Both
+  // fire-and-forget — a notification failure must not fail the capture.
+  const ownerId = visitor.widgetConfig.userId;
+  const preview = message.length > 90 ? message.slice(0, 90) + '…' : message;
+  createNotification({
+    userId: ownerId,
+    type: 'SYSTEM',
+    title: 'New website lead',
+    body: `${email} — ${preview}`,
+    data: { kind: 'widget_lead' },
+  }).catch(() => {});
+  sendPushToUser(ownerId, {
+    title: '🌐 New website lead',
+    body: `${email}: ${preview}`,
+    data: { kind: 'widget_lead' },
+  }).catch(() => {});
+
+  logger.info({ visitorId: visitor.id, ownerId }, 'Widget: offline lead captured');
   return { ok: true };
+}
+
+/** Leads (offline email captures) for the owner's widget, newest first. */
+export async function listLeads(userId: string, limit = 100) {
+  const config = await getOrCreateConfig(userId);
+  return prisma.widgetLead.findMany({
+    where: { widgetConfigId: config.id },
+    orderBy: { createdAt: 'desc' },
+    take: Math.min(limit, 200),
+    select: { id: true, email: true, message: true, createdAt: true },
+  });
 }
 
 // ─── maintenance ─────────────────────────────────────────────────────

@@ -209,10 +209,19 @@ router.get('/me/embed', authenticate, async (req: AuthRequest, res: Response, ne
   }
 });
 
-// GET /me/visitors — list web visitors (analytics/leads).
+// GET /me/visitors — list web visitors (analytics).
 router.get('/me/visitors', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     res.json(await widget.listVisitors(req.user!.userId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /me/leads — offline lead captures (email + message).
+router.get('/me/leads', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json(await widget.listLeads(req.user!.userId));
   } catch (err) {
     next(err);
   }
