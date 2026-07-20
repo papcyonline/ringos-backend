@@ -47,6 +47,13 @@ const corsOrigin = env.CORS_ORIGIN === '*' ? '*' : env.CORS_ORIGIN.split(',').ma
 app.use(sentryRequestHandler);
 
 app.use(helmet());
+// The website chat widget's PUBLIC routes are embedded on arbitrary customer
+// sites, so they must accept ANY origin (the per-widget domain allow-list is
+// enforced in the service, not by CORS). Handle their CORS + preflight HERE,
+// before the global cors() below — otherwise the stricter global policy (pinned
+// to CORS_ORIGIN) answers the OPTIONS preflight without an Allow-Origin header
+// and the browser blocks every widget POST. No credentials (token is a header).
+app.use('/api/widget/public', cors({ origin: true, credentials: false }));
 app.use(cors({ origin: corsOrigin, credentials: true }));
 
 app.use(express.json({ limit: '10mb' }));
