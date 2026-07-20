@@ -115,6 +115,10 @@ const envSchema = z.object({
   APP_STORE_URL: z.string().optional(),
   PLAY_STORE_URL: z.string().optional(),
 
+  // Public origin the website chat widget's embed snippet points at (where
+  // /widget.js is served). Defaults to the Render backend URL.
+  WIDGET_PUBLIC_URL: z.string().default('https://yomeet-backend.onrender.com'),
+
   // Giphy (GIF picker — backend proxies all requests so the key stays server-side)
   GIPHY_API_KEY: z.string().optional(),
 });

@@ -43,6 +43,9 @@ enum ConversationType {
   HUMAN_MATCHED
   AI_HANDOFF
   GROUP
+  // A conversation bridged from an embeddable website chat widget: the owner
+  // (real user) on one side, a shadow user (anonymous web visitor) on the other.
+  WIDGET
 }
 
 enum ParticipantRole {
@@ -143,6 +146,9 @@ enum AuthProvider {
   APPLE
   PHONE
   ANONYMOUS
+  // Shadow users minted for anonymous website-widget visitors. Always paired
+  // with User.isWebVisitor = true so they can be excluded from people/search.
+  WIDGET
 }
 
 enum Gender {
@@ -228,6 +234,10 @@ model User {
   // Who can DM this user. See MessagePrivacy enum for semantics.
   messagePrivacy MessagePrivacy @default(EVERYONE)
   isAnonymous   Boolean   @default(true)
+  // True for shadow users minted to represent anonymous website-widget
+  // visitors. MUST be filtered out of people lists, search, matching, story
+  // feeds and follow suggestions — these are not real, discoverable accounts.
+  isWebVisitor  Boolean   @default(false)
   isOnline      Boolean   @default(false)
   lastSeenAt    DateTime?
   // When the user last opened their own followers list. Used so the
@@ -325,6 +335,10 @@ model User {
   reEngagementPushes ReEngagementPush[]
   referralsMade    Referral[] @relation("ReferralsMade")
   referralReceived Referral?  @relation("ReferralReceived")
+  // Website chat widget: a real user owns one config; a shadow user backs one
+  // web visitor. Both relations live on User but are mutually exclusive per row.
+  widgetConfig     WidgetConfig? @relation("WidgetOwner")
+  webVisitor       WebVisitor?   @relation("VisitorShadowUser")
 
   @@index([isOnline, lastSeenAt])
 }
@@ -1512,4 +1526,82 @@ model LegalConsent {
   appVersion String?
 
   @@index([userId])
+}
+
+// ─── Website chat widget ─────────────────────────────────────────────
+// Embeddable "chat with me" bubble a user drops on their own website.
+// Anonymous visitors are bridged into the owner's normal Yomeet inbox via a
+// shadow user (User.isWebVisitor). See src/modules/widget.
+
+// Per-owner widget settings. One row per user who enables the widget.
+model WidgetConfig {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  // Public, opaque slug used in the embed snippet (data-handle). Regenerating
+  // it revokes every previously-pasted embed.
+  handle         String   @unique
+  enabled        Boolean  @default(true)
+  // Origin allow-list. The widget only serves sessions whose Origin/Referer
+  // host is in this list. Empty = the widget is effectively off (deny all).
+  allowedDomains String[] @default([])
+  // Appearance/behaviour knobs kept as JSON so new options don't need columns:
+  // { bubbleColor, position: 'left'|'right', greeting, accent, ... }
+  theme          Json?
+  // When the owner is offline, ask the visitor for an email so the owner can
+  // follow up (captured as a WidgetLead).
+  offlineCapture Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user     User         @relation("WidgetOwner", fields: [userId], references: [id], onDelete: Cascade)
+  visitors WebVisitor[]
+  leads    WidgetLead[]
+
+  @@index([handle])
+}
+
+// One anonymous website visitor session. Bridged into chat via a shadow user.
+model WebVisitor {
+  id             String   @id @default(uuid())
+  widgetConfigId String
+  // The shadow User row (isWebVisitor=true) that stands in for this visitor as
+  // a chat participant / message sender. Unique = one visitor ↔ one shadow user.
+  shadowUserId   String   @unique
+  // The bridged WIDGET conversation (owner ↔ shadow user). Set on first message.
+  conversationId String?  @unique
+  // SHA-256 of the opaque token held in the visitor's browser localStorage.
+  // Never store the raw token. Rotated/refreshed on activity.
+  tokenHash      String   @unique
+  name           String?
+  email          String?
+  // Abuse / analytics context (all optional, best-effort).
+  ipHash         String?
+  userAgent      String?
+  originDomain   String?
+  blockedAt      DateTime?
+  createdAt      DateTime @default(now())
+  lastSeenAt     DateTime @default(now())
+  // Token lifetime; a cron prunes expired visitors + their shadow users.
+  expiresAt      DateTime
+
+  widgetConfig WidgetConfig @relation(fields: [widgetConfigId], references: [id], onDelete: Cascade)
+  shadowUser   User         @relation("VisitorShadowUser", fields: [shadowUserId], references: [id], onDelete: Cascade)
+
+  @@index([widgetConfigId])
+  @@index([expiresAt])
+}
+
+// Offline lead: a visitor's email + message captured when the owner isn't
+// around, so the owner can follow up later.
+model WidgetLead {
+  id             String   @id @default(uuid())
+  widgetConfigId String
+  visitorId      String
+  email          String
+  message        String
+  createdAt      DateTime @default(now())
+
+  widgetConfig WidgetConfig @relation(fields: [widgetConfigId], references: [id], onDelete: Cascade)
+
+  @@index([widgetConfigId])
 }

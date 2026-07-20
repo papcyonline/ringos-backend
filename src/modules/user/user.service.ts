@@ -323,6 +323,8 @@ export async function listUsers(
   const userWhere: any = {
     id: { notIn: [currentUserId, ...blockedIds] },
     isAnonymous: false,
+    // Website-widget shadow users are never discoverable accounts.
+    isWebVisitor: false,
     displayName: { not: '' },
   };
   if (trimmedQ.length > 0) {
