@@ -146,6 +146,12 @@ export async function getPublicConfig(handle: string, originHost?: string) {
       avatarUrl: owner?.avatarUrl ?? null,
       online: owner?.isOnline ?? false,
     },
+    // Device-aware "Powered by Yomeet" target (widget picks by user-agent).
+    stores: {
+      ios: env.APP_STORE_URL ?? 'https://yomeet.app',
+      android: env.PLAY_STORE_URL ?? 'https://yomeet.app',
+      web: 'https://yomeet.app',
+    },
   };
 }
 
@@ -264,20 +270,18 @@ function contextLine(v: {
  */
 async function createShadowUser(name?: string): Promise<string> {
   const base = (name?.trim() || 'Web visitor').slice(0, 40);
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    // Try the clean name first so a visitor who typed "John" shows as "John".
+    // Only on an actual collision do we disambiguate with a short suffix.
+    const displayName = attempt === 0 ? base : `${base} ${randomBytes(3).toString('hex')}`;
     try {
       const user = await prisma.user.create({
-        data: {
-          displayName: `${base} ${randomBytes(3).toString('hex')}`,
-          isWebVisitor: true,
-          isAnonymous: true,
-          authProvider: 'WIDGET',
-        },
+        data: { displayName, isWebVisitor: true, isAnonymous: true, authProvider: 'WIDGET' },
         select: { id: true },
       });
       return user.id;
     } catch (err) {
-      // P2002 = unique-constraint violation on displayName → new suffix, retry.
+      // P2002 = unique-constraint violation on displayName → suffix + retry.
       if ((err as { code?: string })?.code === 'P2002') continue;
       throw err;
     }

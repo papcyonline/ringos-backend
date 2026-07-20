@@ -39,6 +39,7 @@
   }
 
   var TOKEN_KEY = 'yomeet_widget_token_' + handle;
+  var NAME_KEY = 'yomeet_widget_name_' + handle;
   // Adaptive polling: snappy while the chat is open, gentle in the background
   // (so an owner's reply still surfaces as an unread badge + chime when closed).
   var POLL_OPEN = 1200;
@@ -46,6 +47,8 @@
 
   var state = {
     token: null,
+    name: null,    // visitor's typed name → shown in the owner's inbox
+    email: null,   // optional; captured as a lead
     conversationId: null,
     lastId: null,
     open: false,
@@ -62,8 +65,13 @@
   };
   try {
     state.token = localStorage.getItem(TOKEN_KEY);
+    state.name = localStorage.getItem(NAME_KEY);
   } catch (e) {
-    /* private mode — fall back to in-memory token */
+    /* private mode — fall back to in-memory values */
+  }
+  function saveName(n) {
+    state.name = n;
+    try { localStorage.setItem(NAME_KEY, n); } catch (e) { /* ignore */ }
   }
 
   // ── API helper ─────────────────────────────────────────────────────
@@ -138,28 +146,43 @@
       '.head .st{font-size:12px;opacity:.85}' +
       '.head .x{margin-' + (side === 'right' ? 'left' : 'right') + ':auto;cursor:pointer;font-size:20px;opacity:.9;background:none;border:none;color:#fff}' +
       '.body{flex:1;overflow-y:auto;padding:14px;background:#f5f6f8;display:flex;flex-direction:column;gap:8px}' +
-      '.msg{max-width:80%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.35;word-wrap:break-word}' +
-      '.msg.them{align-self:flex-start;background:#fff;color:#111;border:1px solid #ececec}' +
-      '.typing{align-self:flex-start;background:#fff;border:1px solid #ececec;border-radius:14px;padding:11px 14px;display:flex;gap:4px}' +
+      // Bubbles mirror the Yomeet app chat: 18px rounding with a small tail,
+      // brand-green outgoing, white incoming.
+      '.msg{max-width:80%;padding:9px 13px;border-radius:18px;font-size:14px;line-height:1.4;word-wrap:break-word}' +
+      '.msg.them{align-self:flex-start;background:#fff;color:#1a1a1a;border-radius:18px 18px 18px 5px;box-shadow:0 1px 2px rgba(0,0,0,.08)}' +
+      '.msg.me{align-self:flex-end;background:' + accent + ';color:#fff;border-radius:18px 18px 5px 18px}' +
+      '.typing{align-self:flex-start;background:#fff;border-radius:18px 18px 18px 5px;box-shadow:0 1px 2px rgba(0,0,0,.08);padding:12px 14px;display:flex;gap:4px}' +
       '.typing span{width:7px;height:7px;border-radius:50%;background:#bbb;display:inline-block;animation:ymtype 1.2s infinite}' +
       '.typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}' +
       '@keyframes ymtype{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}' +
-      '.msg.me{align-self:flex-end;background:' + accent + ';color:#fff}' +
-      '.foot{border-top:1px solid #ececec;padding:10px;display:flex;gap:8px;background:#fff}' +
-      '.foot input{flex:1;border:1px solid #dcdcdc;border-radius:20px;padding:9px 14px;font-size:14px;outline:none}' +
-      '.foot button{border:none;background:' + accent + ';color:#fff;border-radius:50%;width:38px;height:38px;cursor:pointer;font-size:16px}' +
+      '.foot{border-top:1px solid #ececec;padding:10px;display:flex;gap:8px;background:#fff;align-items:center}' +
+      '.foot input{flex:1;border:1px solid #dcdcdc;border-radius:22px;padding:10px 15px;font-size:14px;outline:none}' +
+      '.foot button{border:none;background:' + accent + ';color:#fff;border-radius:50%;width:40px;height:40px;min-width:40px;cursor:pointer;display:flex;align-items:center;justify-content:center}' +
+      '.foot button svg{width:19px;height:19px;fill:#fff;margin-left:1px}' +
       '.foot button:disabled{opacity:.5;cursor:default}' +
       '.greet{align-self:flex-start;color:#666;font-size:13px;padding:4px 2px}' +
+      // Pre-chat name step.
+      '.namebar{border-top:1px solid #ececec;padding:12px;background:#fff;display:none;flex-direction:column;gap:8px}' +
+      '.namebar.show{display:flex}' +
+      '.namebar label{font-size:13px;color:#333;font-weight:600}' +
+      '.namebar .row{display:flex;gap:8px}' +
+      '.namebar input{flex:1;border:1px solid #dcdcdc;border-radius:22px;padding:10px 15px;font-size:14px;outline:none}' +
+      '.namebar button{border:none;background:' + accent + ';color:#fff;border-radius:22px;padding:10px 18px;font-weight:600;cursor:pointer;white-space:nowrap}' +
       '.lead{padding:14px;display:none;flex-direction:column;gap:8px}' +
       '.lead.show{display:flex}' +
       '.lead p{margin:0;font-size:13px;color:#444}' +
       '.lead input,.lead textarea{border:1px solid #dcdcdc;border-radius:10px;padding:9px 12px;font-size:14px;font-family:inherit;outline:none}' +
-      '.lead button{border:none;background:' + accent + ';color:#fff;border-radius:10px;padding:10px;font-weight:600;cursor:pointer}'
+      '.lead button{border:none;background:' + accent + ';color:#fff;border-radius:10px;padding:10px;font-weight:600;cursor:pointer}' +
+      '.powered{text-align:center;font-size:11px;color:#9aa0a6;padding:6px;background:#fff;border-top:1px solid #f2f2f2}' +
+      '.powered a{color:' + accent + ';text-decoration:none;font-weight:600}'
     );
   }
 
   var CHAT_ICON =
     '<svg viewBox="0 0 24 24"><path d="M12 3C6.5 3 2 6.9 2 11.7c0 2.2.98 4.2 2.6 5.7L4 21l4.2-1.4c1.2.4 2.5.6 3.8.6 5.5 0 10-3.9 10-8.5S17.5 3 12 3z"/></svg>';
+  // Paper-plane send icon, matching the app's send button.
+  var SEND_ICON =
+    '<svg viewBox="0 0 24 24"><path d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.993.993 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z"/></svg>';
 
   root.innerHTML =
     '<style>' + css() + '</style>' +
@@ -177,7 +200,14 @@
     '      <textarea class="lead-msg" rows="3" placeholder="Your message" required></textarea>' +
     '      <button type="submit">Send</button>' +
     '    </form>' +
-    '    <form class="foot"><input class="in" placeholder="Type a message…" autocomplete="off"/><button type="submit">&#10148;</button></form>' +
+    '    <form class="namebar">' +
+    '      <label>Hi 👋 Let\'s get started</label>' +
+    '      <input class="name-in" placeholder="Your name" autocomplete="name" maxlength="60"/>' +
+    '      <input class="email-in" type="email" placeholder="Email (optional)" autocomplete="email" maxlength="160"/>' +
+    '      <button type="submit">Start chat</button>' +
+    '    </form>' +
+    '    <form class="foot"><input class="in" placeholder="Type a message…" autocomplete="off"/><button type="submit" aria-label="Send">' + SEND_ICON + '</button></form>' +
+    '    <div class="powered">Powered by <a class="pw-link" target="_blank" rel="noopener noreferrer">Yomeet</a></div>' +
     '  </div>' +
     '  <button class="bubble" aria-label="Chat">' + CHAT_ICON + '<span class="badge"></span></button>' +
     '</div>';
@@ -192,6 +222,10 @@
     st: root.querySelector('.st'),
     body: root.querySelector('.body'),
     foot: root.querySelector('.foot'),
+    namebar: root.querySelector('.namebar'),
+    nameIn: root.querySelector('.name-in'),
+    emailIn: root.querySelector('.email-in'),
+    pwLink: root.querySelector('.pw-link'),
     input: root.querySelector('.in'),
     send: root.querySelector('.foot button'),
     lead: root.querySelector('.lead'),
@@ -228,6 +262,12 @@
     el.nm.textContent = name;
     el.st.textContent = cfg.owner && cfg.owner.online ? 'Online' : 'Away';
     if (cfg.owner && cfg.owner.avatarUrl) el.av.src = cfg.owner.avatarUrl;
+    // "Powered by Yomeet" → the right store for the visitor's device.
+    var s = cfg.stores || {};
+    var ua = navigator.userAgent || '';
+    el.pwLink.href = /iPhone|iPad|iPod/i.test(ua) ? (s.ios || 'https://yomeet.app')
+      : /Android/i.test(ua) ? (s.android || 'https://yomeet.app')
+      : (s.web || 'https://yomeet.app');
     if (t.greeting) {
       var g = document.createElement('div');
       g.className = 'greet';
@@ -246,6 +286,8 @@
     if (state.started) return Promise.resolve();
     return api('POST', '/public/' + encodeURIComponent(handle) + '/session', {
       visitorToken: state.token || undefined,
+      name: state.name || undefined,
+      email: state.email || undefined,
       // Live-chat context the backend can't see (country/device come from
       // request headers server-side).
       pageUrl: location.href,
@@ -366,16 +408,31 @@
     }, 4000);
   }
 
+  // Begin (or resume) the chat: start the session, poll loop, and stream.
+  function startChat() {
+    ensureSession().then(startPolling).catch(function (e) {
+      console.warn('[Yomeet widget]', e.message);
+    });
+    el.input.focus();
+  }
+
   function togglePanel(open) {
     state.open = open;
     el.panel.classList.toggle('open', open);
     if (open) {
       state.unread = 0;
       updateBadge();
-      ensureSession().then(startPolling).catch(function (e) {
-        console.warn('[Yomeet widget]', e.message);
-      });
-      el.input.focus();
+      if (el.lead.classList.contains('show')) {
+        // Owner offline → the lead (email) form handles it; nothing to do.
+      } else if (!state.name) {
+        // Ask the visitor's name first (once), then reveal the message input.
+        el.namebar.classList.add('show');
+        el.foot.style.display = 'none';
+        el.nameIn.focus();
+      } else {
+        el.foot.style.display = 'flex';
+        startChat();
+      }
     } else {
       // Keep polling in the background (slower) so replies still chime + badge.
       startPolling();
@@ -388,6 +445,19 @@
   });
   el.close.addEventListener('click', function () {
     togglePanel(false);
+  });
+
+  // Pre-chat name → remembered, then reveal the message input and start.
+  el.namebar.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var n = el.nameIn.value.trim();
+    if (!n) return;
+    saveName(n);
+    var em = el.emailIn.value.trim();
+    if (em) state.email = em; // optional
+    el.namebar.classList.remove('show');
+    el.foot.style.display = 'flex';
+    startChat();
   });
 
   // Outbound typing → the owner's app shows "…is typing". Throttled to 1 ping /
