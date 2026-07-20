@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Yomeet Widget — Live Demo</title>
+  <style>
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+      background:#0e1116; color:#e7e9ee; }
+    .hero { max-width:720px; margin:0 auto; padding:80px 24px; }
+    h1 { font-size:34px; margin:0 0 12px; }
+    p { color:#9aa2b1; line-height:1.6; font-size:16px; }
+    .card { background:#171b22; border:1px solid #232a35; border-radius:16px; padding:24px; margin-top:28px; }
+    code { background:#0b0e13; padding:2px 6px; border-radius:6px; font-size:13px; }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h1>Acme Co. — Demo Page</h1>
+    <p>This is a plain test page standing in for a customer's website. The Yomeet
+       chat widget is embedded via the snippet below — look for the chat bubble in
+       the bottom-right corner.</p>
+    <div class="card">
+      <p style="margin-top:0"><strong>Embedded snippet:</strong></p>
+      <code>&lt;script src="https://widget.yomeet.app/widget.js" data-handle="…"&gt;&lt;/script&gt;</code>
+      <p>Click the bubble, type a message, and it lands in the owner's Yomeet inbox.</p>
+    </div>
+  </div>
+
+  <!-- The widget. data-handle is filled at deploy time / read from the page. -->
+  <script src="/widget.js" data-handle="rk-J7PLPrEmV" async></script>
+</body>
+</html>
