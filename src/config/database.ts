@@ -118,6 +118,11 @@ export async function ensureAdditiveColumns() {
     // Adaptive HLS for reels (self-hosted on R2). See 20260719000001_add_reel_hls.
     'ALTER TABLE "Reel" ADD COLUMN IF NOT EXISTS "hlsUrl" TEXT',
     'ALTER TABLE "Reel" ADD COLUMN IF NOT EXISTS "hlsKey" TEXT',
+    // Live-chat visitor context. See 20260720000002_add_widget_visitor_context.
+    'ALTER TABLE "WebVisitor" ADD COLUMN IF NOT EXISTS "country" TEXT',
+    'ALTER TABLE "WebVisitor" ADD COLUMN IF NOT EXISTS "city" TEXT',
+    'ALTER TABLE "WebVisitor" ADD COLUMN IF NOT EXISTS "pageUrl" TEXT',
+    'ALTER TABLE "WebVisitor" ADD COLUMN IF NOT EXISTS "referrer" TEXT',
   ];
   for (const sql of statements) {
     try {
