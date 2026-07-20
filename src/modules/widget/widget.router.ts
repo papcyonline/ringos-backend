@@ -65,8 +65,13 @@ router.post(
         visitorToken: req.body.visitorToken,
         name: req.body.name,
         email: req.body.email,
-        ip: req.ip,
+        // Behind Cloudflare→Render: CF-Connecting-IP is the real client IP, and
+        // CF-IPCountry the geo country. Fall back to req.ip when not proxied.
+        ip: (req.headers['cf-connecting-ip'] as string) || req.ip,
         userAgent: req.headers['user-agent'],
+        country: req.headers['cf-ipcountry'] as string | undefined,
+        pageUrl: req.body.pageUrl,
+        referrer: req.body.referrer,
       });
       res.status(201).json(result);
     } catch (err) {

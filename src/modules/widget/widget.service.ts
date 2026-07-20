@@ -91,6 +91,7 @@ export async function listVisitors(userId: string, limit = 100) {
     take: Math.min(limit, 200),
     select: {
       id: true, name: true, email: true, originDomain: true,
+      country: true, city: true, pageUrl: true, referrer: true,
       conversationId: true, blockedAt: true, createdAt: true, lastSeenAt: true,
     },
   });
@@ -162,6 +163,80 @@ async function requireVisitor(token: string) {
   return visitor;
 }
 
+// ── live-chat visitor context ────────────────────────────────────────
+
+/** CF-IPCountry 2-letter code → country name (built-in Intl, no dep/table). */
+function countryName(code?: string): string | undefined {
+  if (!code || code === 'XX' || code === 'T1') return undefined;
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region' }).of(code.toUpperCase()) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Best-effort city lookup by IP. Non-fatal, short timeout — never blocks a session. */
+async function lookupCity(ip?: string): Promise<string | undefined> {
+  if (!ip || ip === '127.0.0.1' || ip.startsWith('192.168.') || ip === '::1') return undefined;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    const r = await fetch(
+      `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,city`,
+      { signal: ctrl.signal },
+    );
+    clearTimeout(timer);
+    const d = (await r.json()) as { status?: string; city?: string };
+    return d.status === 'success' && d.city ? d.city : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Friendly "Chrome on Windows" from a user-agent. */
+function parseUA(ua?: string | null): string | undefined {
+  if (!ua) return undefined;
+  const os = /Windows/.test(ua) ? 'Windows'
+    : /iPhone|iPad|iOS/.test(ua) ? 'iOS'
+    : /Mac OS X|Macintosh/.test(ua) ? 'Mac'
+    : /Android/.test(ua) ? 'Android'
+    : /Linux/.test(ua) ? 'Linux' : '';
+  const br = /Edg\//.test(ua) ? 'Edge'
+    : /OPR\/|Opera/.test(ua) ? 'Opera'
+    : /Chrome\//.test(ua) ? 'Chrome'
+    : /Firefox\//.test(ua) ? 'Firefox'
+    : /Safari\//.test(ua) ? 'Safari' : '';
+  return br && os ? `${br} on ${os}` : (br || os || undefined);
+}
+
+/** Compact "site.com/pricing" from a URL. */
+function shortUrl(u?: string | null): string | undefined {
+  if (!u) return undefined;
+  try {
+    const x = new URL(u);
+    return (x.hostname + x.pathname).replace(/\/$/, '') || x.hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The context line shown at the top of the owner's WIDGET conversation. */
+function contextLine(v: {
+  country?: string | null; city?: string | null; userAgent?: string | null;
+  pageUrl?: string | null; referrer?: string | null;
+}): string | null {
+  const parts: string[] = [];
+  const loc = [v.city, v.country].filter(Boolean).join(', ');
+  if (loc) parts.push('🌍 ' + loc);
+  const dev = parseUA(v.userAgent);
+  if (dev) parts.push('💻 ' + dev);
+  const page = shortUrl(v.pageUrl);
+  if (page) parts.push('📄 ' + page);
+  const ref = shortUrl(v.referrer);
+  if (ref) parts.push('🔗 via ' + ref);
+  return parts.length ? '👋 New website visitor\n' + parts.join('  ·  ') : null;
+}
+
 /**
  * Start a new visitor session or resume an existing one. On first contact this
  * mints a shadow user (isWebVisitor) that stands in for the visitor in chat;
@@ -175,6 +250,9 @@ export async function startSession(input: {
   email?: string;
   ip?: string;
   userAgent?: string;
+  country?: string; // CF-IPCountry code
+  pageUrl?: string;
+  referrer?: string;
 }) {
   const config = await requireLiveConfig(input.handle, input.originHost);
 
@@ -185,6 +263,10 @@ export async function startSession(input: {
     SESSION_WINDOW_SEC,
   );
   if (!rl.allowed) throw new ForbiddenError('Too many attempts, please slow down');
+
+  // Resolve visitor context (best-effort; city lookup is capped + non-fatal).
+  const country = countryName(input.country);
+  const city = await lookupCity(input.ip);
 
   // Resume path.
   if (input.visitorToken) {
@@ -199,6 +281,10 @@ export async function startSession(input: {
           expiresAt: new Date(Date.now() + VISITOR_TTL_MS),
           ...(input.name && { name: input.name }),
           ...(input.email && { email: input.email }),
+          ...(country && { country }),
+          ...(city && { city }),
+          ...(input.pageUrl && { pageUrl: input.pageUrl.slice(0, 2000) }),
+          ...(input.referrer && { referrer: input.referrer.slice(0, 2000) }),
         },
       });
       return session(existing.id, input.visitorToken, existing.conversationId, config.userId);
@@ -226,6 +312,10 @@ export async function startSession(input: {
       ipHash: hashIp(input.ip) ?? null,
       userAgent: input.userAgent?.slice(0, 400) ?? null,
       originDomain: input.originHost ?? null,
+      country: country ?? null,
+      city: city ?? null,
+      pageUrl: input.pageUrl?.slice(0, 2000) ?? null,
+      referrer: input.referrer?.slice(0, 2000) ?? null,
       expiresAt: new Date(Date.now() + VISITOR_TTL_MS),
     },
   });
@@ -261,6 +351,11 @@ async function ensureConversation(visitor: {
   conversationId: string | null;
   shadowUserId: string;
   widgetConfig: { userId: string };
+  country?: string | null;
+  city?: string | null;
+  userAgent?: string | null;
+  pageUrl?: string | null;
+  referrer?: string | null;
 }): Promise<string> {
   if (visitor.conversationId) return visitor.conversationId;
   const conversation = await prisma.conversation.create({
@@ -280,6 +375,29 @@ async function ensureConversation(visitor: {
     where: { id: visitor.id },
     data: { conversationId: conversation.id },
   });
+
+  // Open the thread with a context line so the owner immediately sees where the
+  // visitor is, what device/page they're on, and how they got there. System
+  // message (isSystem) → rendered as a centred note, not a chat bubble. Created
+  // BEFORE the visitor's first message, so it sits at the top of the thread.
+  const line = contextLine(visitor);
+  if (line) {
+    await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        senderId: visitor.shadowUserId,
+        content: line,
+        isSystem: true,
+        metadata: {
+          widgetContext: true,
+          country: visitor.country ?? null,
+          city: visitor.city ?? null,
+          pageUrl: visitor.pageUrl ?? null,
+          referrer: visitor.referrer ?? null,
+        },
+      },
+    });
+  }
   return conversation.id;
 }
 

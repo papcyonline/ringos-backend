@@ -28,6 +28,9 @@ export const startSessionSchema = z.object({
   visitorToken: z.string().trim().min(10).max(200).optional(),
   name: z.string().trim().min(1).max(60).optional(),
   email: z.string().trim().email().max(160).optional(),
+  // Live-chat context supplied by the widget (the backend can't know these).
+  pageUrl: z.string().trim().max(2000).optional(),
+  referrer: z.string().trim().max(2000).optional(),
 });
 
 export const visitorMessageSchema = z.object({

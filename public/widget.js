@@ -228,6 +228,10 @@
     if (state.started) return Promise.resolve();
     return api('POST', '/public/' + encodeURIComponent(handle) + '/session', {
       visitorToken: state.token || undefined,
+      // Live-chat context the backend can't see (country/device come from
+      // request headers server-side).
+      pageUrl: location.href,
+      referrer: document.referrer || undefined,
     }).then(function (res) {
       state.started = true;
       state.conversationId = res.conversationId || null;
