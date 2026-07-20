@@ -238,6 +238,34 @@ function contextLine(v: {
 }
 
 /**
+ * Mint the shadow User that represents a visitor in chat. displayName is a
+ * GLOBALLY-unique username (case-insensitive), so anonymous visitors can't all
+ * be "Web visitor" — append a random suffix and retry on the rare collision.
+ */
+async function createShadowUser(name?: string): Promise<string> {
+  const base = (name?.trim() || 'Web visitor').slice(0, 40);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const user = await prisma.user.create({
+        data: {
+          displayName: `${base} ${randomBytes(3).toString('hex')}`,
+          isWebVisitor: true,
+          isAnonymous: true,
+          authProvider: 'WIDGET',
+        },
+        select: { id: true },
+      });
+      return user.id;
+    } catch (err) {
+      // P2002 = unique-constraint violation on displayName → new suffix, retry.
+      if ((err as { code?: string })?.code === 'P2002') continue;
+      throw err;
+    }
+  }
+  throw new Error('Could not allocate a unique visitor name');
+}
+
+/**
  * Start a new visitor session or resume an existing one. On first contact this
  * mints a shadow user (isWebVisitor) that stands in for the visitor in chat;
  * the WIDGET conversation itself is created lazily on the first message.
@@ -293,19 +321,11 @@ export async function startSession(input: {
 
   // Fresh session: shadow user + visitor row + new token.
   const token = newToken();
-  const shadow = await prisma.user.create({
-    data: {
-      displayName: input.name?.trim() || 'Web visitor',
-      isWebVisitor: true,
-      isAnonymous: true,
-      authProvider: 'WIDGET',
-    },
-    select: { id: true },
-  });
+  const shadowId = await createShadowUser(input.name);
   const visitor = await prisma.webVisitor.create({
     data: {
       widgetConfigId: config.id,
-      shadowUserId: shadow.id,
+      shadowUserId: shadowId,
       tokenHash: hashToken(token),
       name: input.name?.trim() || null,
       email: input.email?.trim() || null,
