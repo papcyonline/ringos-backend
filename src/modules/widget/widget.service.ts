@@ -344,6 +344,37 @@ export async function startSession(input: {
     }
   }
 
+  // Returning visitor on a NEW device (no valid token) but a known email →
+  // reattach to their existing thread and issue a fresh token, so the
+  // conversation continues cross-device instead of forking a new one.
+  if (input.email) {
+    const byEmail = await prisma.webVisitor.findFirst({
+      where: {
+        widgetConfigId: config.id,
+        email: { equals: input.email.trim(), mode: 'insensitive' },
+        blockedAt: null,
+      },
+      orderBy: { lastSeenAt: 'desc' },
+    });
+    if (byEmail) {
+      const token = newToken();
+      await prisma.webVisitor.update({
+        where: { id: byEmail.id },
+        data: {
+          tokenHash: hashToken(token), // rotate to this device (one active token)
+          lastSeenAt: new Date(),
+          expiresAt: new Date(Date.now() + VISITOR_TTL_MS),
+          ...(input.name && { name: input.name }),
+          ...(country && { country }),
+          ...(city && { city }),
+          ...(input.pageUrl && { pageUrl: input.pageUrl.slice(0, 2000) }),
+          ...(input.referrer && { referrer: input.referrer.slice(0, 2000) }),
+        },
+      });
+      return session(byEmail.id, token, byEmail.conversationId, config.userId);
+    }
+  }
+
   // Fresh session: shadow user + visitor row + new token.
   const token = newToken();
   const shadowId = await createShadowUser(input.name);

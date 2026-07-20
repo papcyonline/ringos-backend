@@ -40,6 +40,7 @@
 
   var TOKEN_KEY = 'yomeet_widget_token_' + handle;
   var NAME_KEY = 'yomeet_widget_name_' + handle;
+  var EMAIL_KEY = 'yomeet_widget_email_' + handle;
   // Adaptive polling: snappy while the chat is open, gentle in the background
   // (so an owner's reply still surfaces as an unread badge + chime when closed).
   var POLL_OPEN = 1200;
@@ -66,12 +67,17 @@
   try {
     state.token = localStorage.getItem(TOKEN_KEY);
     state.name = localStorage.getItem(NAME_KEY);
+    state.email = localStorage.getItem(EMAIL_KEY);
   } catch (e) {
     /* private mode — fall back to in-memory values */
   }
   function saveName(n) {
     state.name = n;
     try { localStorage.setItem(NAME_KEY, n); } catch (e) { /* ignore */ }
+  }
+  function saveEmail(em) {
+    state.email = em;
+    try { localStorage.setItem(EMAIL_KEY, em); } catch (e) { /* ignore */ }
   }
 
   // ── API helper ─────────────────────────────────────────────────────
@@ -454,7 +460,7 @@
     if (!n) return;
     saveName(n);
     var em = el.emailIn.value.trim();
-    if (em) state.email = em; // optional
+    if (em) saveEmail(em); // optional — remembered so returning visitors re-attach
     el.namebar.classList.remove('show');
     el.foot.style.display = 'flex';
     startChat();
