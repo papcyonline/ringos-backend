@@ -475,6 +475,9 @@ export async function visitorGetMessages(token: string, since?: string, limit = 
     where: {
       conversationId: visitor.conversationId,
       deletedAt: null,
+      // System messages (e.g. the owner-facing visitor-context line) are for the
+      // owner only — never surface them in the visitor's widget.
+      isSystem: false,
       ...(after && { createdAt: { gt: after } }),
     },
     orderBy: { createdAt: 'asc' },
