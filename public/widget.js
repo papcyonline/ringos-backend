@@ -169,8 +169,14 @@
       '.bubble{position:relative;width:60px;height:60px;border-radius:50%;background:' + accent + ';cursor:pointer;' +
       'display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(0,0,0,.25);' +
       'border:none;transition:transform .15s ease}' +
+      // Rotating two-colour gradient ring (brand green→blue) with a thin white
+      // gap so it reads as a distinct border line on any background.
+      '.bubble::before{content:"";position:absolute;inset:-5px;border-radius:50%;z-index:-2;' +
+      'background:conic-gradient(from 0deg,#3ba85a,#1f6fcc,#3ba85a,#1f6fcc,#3ba85a);animation:ymring 3s linear infinite}' +
+      '.bubble::after{content:"";position:absolute;inset:-2px;border-radius:50%;z-index:-1;background:#fff}' +
       '.bubble:hover{transform:scale(1.06)}' +
-      '.bubble svg{width:28px;height:28px;fill:#fff}' +
+      '.bubble svg{width:38px;height:38px}' +
+      '@keyframes ymring{to{transform:rotate(1turn)}}' +
       '.badge{position:absolute;top:-3px;right:-3px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;' +
       'background:#ff3b30;color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;' +
       'box-shadow:0 0 0 2px #fff;display:none}' +
@@ -265,8 +271,13 @@
     );
   }
 
+  // Friendly smiley face (white smile + dot) — the black circle from the source
+  // icon is the bubble itself. Sits on the accent bubble inside the animated ring.
   var CHAT_ICON =
-    '<svg viewBox="0 0 24 24"><path d="M12 3C6.5 3 2 6.9 2 11.7c0 2.2.98 4.2 2.6 5.7L4 21l4.2-1.4c1.2.4 2.5.6 3.8.6 5.5 0 10-3.9 10-8.5S17.5 3 12 3z"/></svg>';
+    '<svg viewBox="0 0 128 128" fill="none">' +
+    '<path d="M36 64C44 84 56 92 72 92C88 92 100 84 108 64" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"/>' +
+    '<circle cx="90" cy="44" r="6.5" fill="#fff"/>' +
+    '</svg>';
   // The app's Telegram-plane send icon (assets/icons/telegram-send.svg) so the
   // widget's send button matches the in-app composer.
   var SEND_ICON =
