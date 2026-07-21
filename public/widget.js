@@ -169,13 +169,16 @@
       '.bubble{position:relative;width:60px;height:60px;border-radius:50%;background:' + accent + ';cursor:pointer;' +
       'display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(0,0,0,.25);' +
       'border:none;transition:transform .15s ease}' +
-      // Rotating two-colour gradient ring (brand green→blue) with a thin white
-      // gap so it reads as a distinct border line on any background.
-      '.bubble::before{content:"";position:absolute;inset:-5px;border-radius:50%;z-index:-2;' +
-      'background:conic-gradient(from 0deg,#3ba85a,#1f6fcc,#3ba85a,#1f6fcc,#3ba85a);animation:ymring 3s linear infinite}' +
-      '.bubble::after{content:"";position:absolute;inset:-2px;border-radius:50%;z-index:-1;background:#fff}' +
+      // Two glowing "comet" arcs (brand green + blue on opposite sides) orbiting
+      // the bubble, over a white gap so they pop on any background.
+      '.bubble::before{content:"";position:absolute;inset:-9px;border-radius:50%;z-index:-2;' +
+      'background:conic-gradient(from 0deg,' +
+      '#1f6fcc 0deg,rgba(31,111,204,0) 68deg,rgba(59,168,90,0) 112deg,' +
+      '#3ba85a 180deg,rgba(59,168,90,0) 248deg,rgba(31,111,204,0) 292deg,#1f6fcc 360deg);' +
+      'filter:blur(3px);animation:ymring 2.2s linear infinite}' +
+      '.bubble::after{content:"";position:absolute;inset:-3px;border-radius:50%;z-index:-1;background:#fff}' +
       '.bubble:hover{transform:scale(1.06)}' +
-      '.bubble svg{width:38px;height:38px}' +
+      '.bubble svg{width:42px;height:42px}' +
       '@keyframes ymring{to{transform:rotate(1turn)}}' +
       '.badge{position:absolute;top:-3px;right:-3px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;' +
       'background:#ff3b30;color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;' +
@@ -275,8 +278,8 @@
   // icon is the bubble itself. Sits on the accent bubble inside the animated ring.
   var CHAT_ICON =
     '<svg viewBox="0 0 128 128" fill="none">' +
-    '<path d="M36 64C44 84 56 92 72 92C88 92 100 84 108 64" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"/>' +
-    '<circle cx="90" cy="44" r="6.5" fill="#fff"/>' +
+    '<path d="M34 62C43 86 56 95 72 95C88 95 101 86 110 62" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>' +
+    '<circle cx="91" cy="42" r="9" fill="#fff"/>' +
     '</svg>';
   // The app's Telegram-plane send icon (assets/icons/telegram-send.svg) so the
   // widget's send button matches the in-app composer.
