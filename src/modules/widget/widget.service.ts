@@ -10,6 +10,7 @@ import * as chatService from '../chat/chat.service';
 import { broadcastAndNotifyMessage } from '../chat/chat.utils';
 import { fileToChatImageUrl } from '../../shared/upload';
 import { createNotification, sendPushToUser } from '../notification/notification.service';
+import { setOnline, setOffline } from '../user/user.service';
 
 // Visitor session length. Refreshed on activity; a cron prunes past this.
 const VISITOR_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -175,9 +176,71 @@ async function requireVisitor(token: string) {
 /** Resolve a visitor's live conversation for the SSE stream (throws if invalid). */
 export async function resolveVisitorStream(
   token: string,
-): Promise<{ conversationId: string | null; shadowUserId: string }> {
+): Promise<{ conversationId: string | null; shadowUserId: string; ownerId: string }> {
   const visitor = await requireVisitor(token);
-  return { conversationId: visitor.conversationId, shadowUserId: visitor.shadowUserId };
+  return {
+    conversationId: visitor.conversationId,
+    shadowUserId: visitor.shadowUserId,
+    ownerId: visitor.widgetConfig.userId,
+  };
+}
+
+// ─── presence + read receipts (owner-facing) ─────────────────────────
+// The owner's app treats the visitor's shadow user like any chat peer: it
+// reacts to `user:online`/`user:offline` and `chat:read` events keyed by the
+// shadow user id. We emit those on the visitor's behalf so the owner sees the
+// visitor connect/leave and sees their sent messages turn "read".
+
+// Live SSE connections per shadow user. Presence = "has an open stream". A short
+// grace on disconnect absorbs EventSource's auto-reconnect flapping.
+const presence = new Map<string, { count: number; offlineTimer?: ReturnType<typeof setTimeout> }>();
+const PRESENCE_GRACE_MS = 8000;
+
+export async function widgetPresenceConnect(shadowUserId: string, ownerId: string): Promise<void> {
+  let p = presence.get(shadowUserId);
+  if (!p) {
+    p = { count: 0 };
+    presence.set(shadowUserId, p);
+  }
+  if (p.offlineTimer) {
+    clearTimeout(p.offlineTimer);
+    p.offlineTimer = undefined;
+  }
+  p.count += 1;
+  if (p.count === 1) {
+    await setOnline(shadowUserId).catch(() => {});
+    getIO().to(`user:${ownerId}`).emit('user:online', { userId: shadowUserId });
+  }
+}
+
+export function widgetPresenceDisconnect(shadowUserId: string, ownerId: string): void {
+  const p = presence.get(shadowUserId);
+  if (!p) return;
+  p.count = Math.max(0, p.count - 1);
+  if (p.count > 0) return;
+  if (p.offlineTimer) clearTimeout(p.offlineTimer);
+  p.offlineTimer = setTimeout(() => {
+    const cur = presence.get(shadowUserId);
+    if (!cur || cur.count > 0) return; // reconnected within the grace window
+    presence.delete(shadowUserId);
+    setOffline(shadowUserId).catch(() => {});
+    getIO()
+      .to(`user:${ownerId}`)
+      .emit('user:offline', { userId: shadowUserId, lastSeenAt: new Date().toISOString() });
+  }, PRESENCE_GRACE_MS);
+}
+
+/**
+ * Visitor has read the thread → advance the shadow user's read cursor and tell
+ * the owner (blue ticks). Mirrors the app's chat:read gateway handler.
+ */
+export async function visitorMarkRead(token: string): Promise<void> {
+  const visitor = await requireVisitor(token);
+  if (!visitor.conversationId) return;
+  await chatService.markConversationAsRead(visitor.conversationId, visitor.shadowUserId);
+  const payload = { conversationId: visitor.conversationId, userId: visitor.shadowUserId };
+  getIO().to(`user:${visitor.widgetConfig.userId}`).emit('chat:read', payload);
+  getIO().to(`conversation:${visitor.conversationId}`).emit('chat:read', payload);
 }
 
 /** Visitor is typing → show it in the owner's app chat (reuses chat:typing). */

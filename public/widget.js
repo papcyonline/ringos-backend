@@ -190,19 +190,19 @@
       '.head .hbtn svg{width:16px;height:16px;fill:#fff}' +
       '.body{flex:1;overflow-y:auto;padding:12px 12px 8px;background:#eceff3;display:flex;flex-direction:column;gap:1px}' +
       // Each message is a row: optional owner avatar + the bubble.
-      '.row{display:flex;align-items:flex-end;gap:6px;max-width:88%;margin-top:7px}' +
+      '.row{display:flex;align-items:flex-start;gap:6px;max-width:88%;margin-top:7px}' +
       '.row.them{align-self:flex-start}' +
       '.row.me{align-self:flex-end;flex-direction:row-reverse}' +
-      '.row .rav{width:26px;height:26px;border-radius:50%;object-fit:cover;background:#cfd4da;flex:none;margin-bottom:1px}' +
+      '.row .rav{width:26px;height:26px;border-radius:50%;object-fit:cover;background:#cfd4da;flex:none;margin-top:1px}' +
       '.row.me .rav{display:none}' +
       // Bubbles with a curved tail ("horn") on the bottom outer corner.
       '.msg{position:relative;padding:6px 9px 5px;font-size:14px;line-height:1.35;word-wrap:break-word;box-shadow:0 1px .6px rgba(0,0,0,.13);min-width:46px}' +
-      '.msg.them{background:#fff;color:#1a1a1a;border-radius:13px 13px 13px 3px}' +
-      '.msg.me{background:' + accent + ';color:#fff;border-radius:13px 13px 3px 13px}' +
-      '.msg.them::after{content:"";position:absolute;left:-6px;bottom:0;width:11px;height:14px;background:#fff;' +
-      'clip-path:polygon(100% 0,100% 100%,0 100%)}' +
-      '.msg.me::after{content:"";position:absolute;right:-6px;bottom:0;width:11px;height:14px;background:' + accent + ';' +
-      'clip-path:polygon(0 0,0 100%,100% 100%)}' +
+      '.msg.them{background:#fff;color:#1a1a1a;border-radius:3px 13px 13px 13px}' +
+      '.msg.me{background:' + accent + ';color:#fff;border-radius:13px 3px 13px 13px}' +
+      '.msg.them::after{content:"";position:absolute;left:-6px;top:0;width:11px;height:14px;background:#fff;' +
+      'clip-path:polygon(100% 100%,100% 0,0 0)}' +
+      '.msg.me::after{content:"";position:absolute;right:-6px;top:0;width:11px;height:14px;background:' + accent + ';' +
+      'clip-path:polygon(0 100%,0 0,100% 0)}' +
       // Timestamp + delivery ticks, tucked bottom-right inside the bubble.
       '.msg .meta{display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:1px;font-size:10px;line-height:1;white-space:nowrap}' +
       '.msg.them .meta{color:#9aa0a6}' +
@@ -218,9 +218,9 @@
       '.msg.img .meta .tk svg path{fill:#fff}' +
       '.msg.img .meta .tk.read svg path{fill:#7fd4ff}' +
       '.msg .cap{padding:4px 6px 0}' +
-      '.typing{position:relative;align-self:flex-start;background:#fff;border-radius:13px 13px 13px 3px;box-shadow:0 1px .6px rgba(0,0,0,.13);padding:11px 13px;display:flex;gap:4px;margin-top:7px}' +
-      '.typing::after{content:"";position:absolute;left:-6px;bottom:0;width:11px;height:14px;background:#fff;' +
-      'clip-path:polygon(100% 0,100% 100%,0 100%)}' +
+      '.typing{position:relative;align-self:flex-start;background:#fff;border-radius:3px 13px 13px 13px;box-shadow:0 1px .6px rgba(0,0,0,.13);padding:11px 13px;display:flex;gap:4px;margin-top:7px}' +
+      '.typing::after{content:"";position:absolute;left:-6px;top:0;width:11px;height:14px;background:#fff;' +
+      'clip-path:polygon(100% 100%,100% 0,0 0)}' +
       '.typing span{width:7px;height:7px;border-radius:50%;background:#bbb;display:inline-block;animation:ymtype 1.2s infinite}' +
       '.typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}' +
       '@keyframes ymtype{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}' +
@@ -517,7 +517,20 @@
         updateBadge();
         playChime();
       }
+      // Panel is open → the visitor is reading; tell the owner (blue ticks).
+      if (state.open) markRead();
     });
+  }
+
+  // Tell the owner the visitor has read the thread (blue ticks on the owner's
+  // side). Debounced; only meaningful once a conversation and panel exist.
+  var lastRead = 0;
+  function markRead() {
+    if (!state.token || !state.conversationId || !state.open) return;
+    var now = Date.now();
+    if (now - lastRead < 1500) return;
+    lastRead = now;
+    api('POST', '/public/read').catch(function () {});
   }
 
   function updateBadge() {
@@ -632,6 +645,8 @@
       } else {
         el.foot.style.display = 'flex';
         startChat();
+        lastRead = 0; // let the next read ping fire immediately on open
+        markRead();
       }
     } else {
       // Keep polling in the background (slower) so replies still chime + badge.

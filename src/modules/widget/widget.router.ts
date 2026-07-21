@@ -132,7 +132,7 @@ router.get('/public/messages', async (req: Request, res: Response, next: NextFun
 // message serialization stays in /public/messages (DRY).
 router.get('/public/events', async (req: Request, res: Response) => {
   const token = req.query.t;
-  let stream: { conversationId: string | null } | null = null;
+  let stream: { conversationId: string | null; shadowUserId: string; ownerId: string } | null = null;
   try {
     if (typeof token === 'string' && token.length >= 10) {
       stream = await widget.resolveVisitorStream(token);
@@ -154,10 +154,24 @@ router.get('/public/events', async (req: Request, res: Response) => {
   const send = (evt: unknown) => res.write(`data: ${JSON.stringify(evt)}\n\n`);
   const off = onWidgetEvent(stream.conversationId, send);
   const heartbeat = setInterval(() => res.write(': ping\n\n'), 25000);
+  // An open stream = the visitor is present; the owner sees them online, and
+  // "left" once the stream closes (with a short grace for reconnects).
+  widget.widgetPresenceConnect(stream.shadowUserId, stream.ownerId).catch(() => {});
   req.on('close', () => {
     clearInterval(heartbeat);
     off();
+    widget.widgetPresenceDisconnect(stream!.shadowUserId, stream!.ownerId);
   });
+});
+
+// POST /public/read — visitor viewed the thread → owner's sent messages go read.
+router.post('/public/read', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await widget.visitorMarkRead(visitorToken(req));
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /public/typing — visitor is typing → surfaced in the owner's app chat.
