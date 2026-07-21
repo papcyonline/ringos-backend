@@ -175,20 +175,24 @@
       'height:470px;max-height:calc(100vh - 120px);background:#fff;border-radius:18px;overflow:hidden;' +
       'box-shadow:0 12px 40px rgba(0,0,0,.28);display:none;flex-direction:column}' +
       '.panel.open{display:flex}' +
-      // Header — avatar, name + online dot, and round translucent action buttons.
-      '.head{background:' + accent + ';color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px}' +
-      '.head img{width:38px;height:38px;border-radius:50%;object-fit:cover;background:rgba(255,255,255,.25);flex:none}' +
+      // Header — compact, light bar (no full accent flood): avatar, name +
+      // accent online dot, subtle grey action buttons. Keeps chat space free.
+      '.head{background:#fff;color:#111;padding:8px 12px;display:flex;align-items:center;gap:9px;border-bottom:1px solid #ececf0}' +
+      '.head img{width:32px;height:32px;border-radius:50%;object-fit:cover;background:#e6e8ec;flex:none}' +
       '.head .meta{min-width:0;flex:1}' +
-      '.head .nm{font-weight:600;font-size:15px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-      '.head .st{font-size:12px;opacity:.92;display:flex;align-items:center;gap:5px;margin-top:1px}' +
-      '.head .dot{width:7px;height:7px;border-radius:50%;background:#7be07b;box-shadow:0 0 0 2px rgba(255,255,255,.25);flex:none}' +
-      '.head .st.away .dot{background:#dfe2e6}' +
-      '.head .btns{display:flex;gap:8px;flex:none}' +
-      '.head .hbtn{width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.2);border:none;color:#fff;' +
+      '.head .nm{font-weight:600;font-size:14px;line-height:1.15;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '.head .st{font-size:11px;color:#8a9099;display:flex;align-items:center;gap:5px;margin-top:1px}' +
+      '.head .dot{width:7px;height:7px;border-radius:50%;background:' + accent + ';flex:none}' +
+      '.head .st.away{color:#a2a7ae}' +
+      '.head .st.away .dot{background:#ccd1d7}' +
+      '.head .btns{display:flex;gap:6px;flex:none}' +
+      '.head .hbtn{width:28px;height:28px;border-radius:50%;background:#f0f1f4;border:none;color:#5a6069;' +
       'cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:background .15s}' +
-      '.head .hbtn:hover{background:rgba(255,255,255,.35)}' +
-      '.head .hbtn svg{width:16px;height:16px;fill:#fff}' +
-      '.body{flex:1;overflow-y:auto;padding:12px 12px 8px;background:#eceff3;display:flex;flex-direction:column;gap:1px}' +
+      '.head .hbtn:hover{background:#e4e6ea}' +
+      '.head .hbtn svg{width:15px;height:15px;fill:#5a6069}' +
+      '.body{flex:1;overflow-y:auto;padding:12px 12px 8px;background-color:#f4f5f7;' +
+      'background-image:radial-gradient(rgba(0,0,0,.06) 1.1px,transparent 1.1px);background-size:16px 16px;' +
+      'display:flex;flex-direction:column;gap:1px}' +
       // Each message is a row: optional owner avatar + the bubble.
       '.row{display:flex;align-items:flex-start;gap:6px;max-width:88%;margin-top:7px}' +
       '.row.them{align-self:flex-start}' +
