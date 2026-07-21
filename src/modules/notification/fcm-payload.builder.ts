@@ -30,6 +30,8 @@ export interface VoiceNotePayload {
   isGroup?: string;
   groupName?: string;
   groupAvatar?: string;
+  // Conversation type (e.g. 'WIDGET') so clients can tag website-visitor chats.
+  conversationType?: string;
 }
 
 export interface ChatMessagePayload {
@@ -44,6 +46,8 @@ export interface ChatMessagePayload {
   isGroup?: string;
   groupName?: string;
   groupAvatar?: string;
+  // Conversation type (e.g. 'WIDGET') so clients can tag website-visitor chats.
+  conversationType?: string;
 }
 
 export type FcmDataPayload = CallPayload | VoiceNotePayload | ChatMessagePayload;
@@ -87,6 +91,7 @@ export function buildVoiceNotePayload(data: {
   isGroup?: boolean;
   groupName?: string | null;
   groupAvatar?: string | null;
+  conversationType?: string;
 }): Record<string, string> {
   const payload: Record<string, string> = {
     type: 'voice_note',
@@ -100,6 +105,9 @@ export function buildVoiceNotePayload(data: {
     audioDuration: String(data.audioDuration),
   };
   applyGroupFields(payload, data);
+  if (data.conversationType) {
+    payload.conversationType = data.conversationType;
+  }
   return payload;
 }
 
@@ -118,6 +126,7 @@ export function buildMessagePayload(data: {
   isGroup?: boolean;
   groupName?: string | null;
   groupAvatar?: string | null;
+  conversationType?: string;
 }): Record<string, string> {
   const payload: Record<string, string> = {
     type: 'chat_message',
@@ -135,6 +144,9 @@ export function buildMessagePayload(data: {
   }
 
   applyGroupFields(payload, data);
+  if (data.conversationType) {
+    payload.conversationType = data.conversationType;
+  }
   return payload;
 }
 

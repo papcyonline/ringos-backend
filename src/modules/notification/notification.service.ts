@@ -875,11 +875,15 @@ export async function notifyChatMessage(
   let isGroup = false;
   let groupName: string | undefined;
   let groupAvatar: string | undefined;
+  // Conversation type (e.g. WIDGET) rides in the push data so the app's in-app
+  // banner can tag "Website visitor" even for background pushes.
+  let conversationType: string | undefined;
   try {
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
       select: { type: true, name: true, avatarUrl: true },
     });
+    conversationType = conversation?.type;
     isGroup = conversation?.type === 'GROUP';
     if (isGroup) {
       groupName = conversation?.name ?? 'Group';
@@ -944,6 +948,7 @@ export async function notifyChatMessage(
           isGroup,
           groupName,
           groupAvatar,
+          conversationType,
         });
         sendDataPushToUser(participant.userId, voiceNotePayload).catch((err) => {
           logger.error({ err, userId: participant.userId }, 'Failed to send voice note push');
@@ -962,6 +967,7 @@ export async function notifyChatMessage(
           isGroup,
           groupName,
           groupAvatar,
+          conversationType,
         });
         sendDataPushToUser(participant.userId, messagePayload).catch((err) => {
           logger.error({ err, userId: participant.userId }, 'Failed to send chat push notification');
