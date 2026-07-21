@@ -7,3 +7,4 @@ coverage/
 uploads/
 email-preview.html
 yomeet-backend.env
+.env*
