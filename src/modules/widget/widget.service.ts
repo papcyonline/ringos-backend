@@ -103,15 +103,21 @@ export async function listVisitors(userId: string, limit = 100) {
 
 /** Block a visitor: they can no longer start sessions or send messages. */
 export async function blockVisitor(userId: string, visitorId: string) {
+  return setVisitorBlocked(userId, visitorId, new Date());
+}
+
+export async function unblockVisitor(userId: string, visitorId: string) {
+  return setVisitorBlocked(userId, visitorId, null);
+}
+
+/** Block/unblock a visitor, scoped to the owner's own widget config. */
+async function setVisitorBlocked(userId: string, visitorId: string, blockedAt: Date | null) {
   const config = await getOrCreateConfig(userId);
   const visitor = await prisma.webVisitor.findFirst({
     where: { id: visitorId, widgetConfigId: config.id },
   });
   if (!visitor) throw new NotFoundError('Visitor not found');
-  return prisma.webVisitor.update({
-    where: { id: visitorId },
-    data: { blockedAt: new Date() },
-  });
+  return prisma.webVisitor.update({ where: { id: visitorId }, data: { blockedAt } });
 }
 
 // ─── public helpers ──────────────────────────────────────────────────

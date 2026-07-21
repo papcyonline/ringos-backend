@@ -282,4 +282,13 @@ router.post('/me/visitors/:id/block', authenticate, async (req: AuthRequest, res
   }
 });
 
+// POST /me/visitors/:id/unblock — lift a block.
+router.post('/me/visitors/:id/unblock', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json(await widget.unblockVisitor(req.user!.userId, req.params.id as string));
+  } catch (err) {
+    next(err);
+  }
+});
+
 export { router as widgetRouter };

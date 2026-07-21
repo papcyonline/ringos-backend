@@ -63,6 +63,8 @@ import {
   visitorSendMessage,
   widgetPresenceConnect,
   widgetPresenceDisconnect,
+  blockVisitor,
+  unblockVisitor,
 } from '../widget.service';
 
 const TOKEN = 'tok_1234567890abcdef';
@@ -191,6 +193,36 @@ describe('presence', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('block / unblock visitor', () => {
+  beforeEach(() => {
+    mockPrisma.widgetConfig.findUnique.mockResolvedValue({ id: 'cfg1', userId: OWNER });
+    mockPrisma.webVisitor.findFirst.mockResolvedValue({ id: 'v1', widgetConfigId: 'cfg1' });
+  });
+
+  it('block sets blockedAt on the owner\'s own visitor', async () => {
+    await blockVisitor(OWNER, 'v1');
+    expect(mockPrisma.webVisitor.findFirst).toHaveBeenCalledWith({
+      where: { id: 'v1', widgetConfigId: 'cfg1' },
+    });
+    const upd = mockPrisma.webVisitor.update.mock.calls[0][0];
+    expect(upd.where).toEqual({ id: 'v1' });
+    expect(upd.data.blockedAt).toBeInstanceOf(Date);
+  });
+
+  it('unblock clears blockedAt', async () => {
+    await unblockVisitor(OWNER, 'v1');
+    expect(mockPrisma.webVisitor.update).toHaveBeenCalledWith({
+      where: { id: 'v1' }, data: { blockedAt: null },
+    });
+  });
+
+  it('refuses to block a visitor from another owner\'s widget', async () => {
+    mockPrisma.webVisitor.findFirst.mockResolvedValue(null);
+    await expect(blockVisitor(OWNER, 'other')).rejects.toThrow(/not found/i);
+    expect(mockPrisma.webVisitor.update).not.toHaveBeenCalled();
   });
 });
 
