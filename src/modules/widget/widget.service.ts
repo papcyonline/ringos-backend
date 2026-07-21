@@ -805,6 +805,29 @@ export async function deleteLeads(userId: string, ids: string[]): Promise<number
   return count;
 }
 
+/**
+ * Delete visitors by id. Owner-scoped to the caller's widget config so one
+ * owner can never delete another's visitors. Mirrors the prune path: we delete
+ * the shadow user, which cascades the WebVisitor row + participant links (the
+ * WIDGET conversation is left for the owner's history). Returns the count.
+ */
+export async function deleteVisitors(userId: string, ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const config = await getOrCreateConfig(userId);
+  const visitors = await prisma.webVisitor.findMany({
+    where: { id: { in: ids }, widgetConfigId: config.id },
+    select: { shadowUserId: true },
+  });
+  if (visitors.length === 0) return 0;
+  const { count } = await prisma.user.deleteMany({
+    where: {
+      id: { in: visitors.map((v) => v.shadowUserId) },
+      isWebVisitor: true,
+    },
+  });
+  return count;
+}
+
 // ─── maintenance ─────────────────────────────────────────────────────
 
 /**

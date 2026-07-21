@@ -47,3 +47,7 @@ export const leadSchema = z.object({
 export const deleteLeadsSchema = z.object({
   ids: z.array(z.string().trim().min(1).max(64)).min(1).max(200),
 });
+
+export const deleteVisitorsSchema = z.object({
+  ids: z.array(z.string().trim().min(1).max(64)).min(1).max(200),
+});

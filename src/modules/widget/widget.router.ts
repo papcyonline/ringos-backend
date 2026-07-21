@@ -10,6 +10,7 @@ import {
   visitorMessageSchema,
   leadSchema,
   deleteLeadsSchema,
+  deleteVisitorsSchema,
 } from './widget.schema';
 import * as widget from './widget.service';
 import { onWidgetEvent } from './widget.events';
@@ -287,6 +288,21 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const deleted = await widget.deleteLeads(req.user!.userId, req.body.ids);
+      res.json({ deleted });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /me/visitors/delete — delete one or many visitors by id.
+router.post(
+  '/me/visitors/delete',
+  authenticate,
+  validate(deleteVisitorsSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const deleted = await widget.deleteVisitors(req.user!.userId, req.body.ids);
       res.json({ deleted });
     } catch (err) {
       next(err);
