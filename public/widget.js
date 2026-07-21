@@ -65,6 +65,8 @@
     ownerDeliveredAt: null,
     greeting: null,          // owner's greeting, shown as a bubble on first open
     greeted: false,          // guard so the greeting shows only once
+    hasMessages: false,      // once a thread exists, never fall back to the lead form
+    leadSent: false,         // visitor already left an offline lead
     // Message ids already rendered, so the poller can't re-add a message the
     // optimistic echo (or a previous poll) already showed.
     seen: {},
@@ -587,6 +589,7 @@
       state.seen[m.id] = 1;
       state.lastId = m.id;
     }
+    state.hasMessages = true; // a live thread exists — never revert to the lead form
     var typing = el.body.querySelector('.typing');
     if (typing) typing.remove(); // a real message means typing is over
 
@@ -645,9 +648,7 @@
     if (cfg.owner && cfg.owner.verified) {
       el.nm.insertAdjacentHTML('beforeend', VERIFIED_ICON);
     }
-    var online = !!(cfg.owner && cfg.owner.online);
-    el.stTxt.textContent = online ? 'Online' : 'Away';
-    el.st.classList.toggle('away', !online);
+    applyPresence(!!(cfg.owner && cfg.owner.online));
     if (cfg.owner && cfg.owner.avatarUrl) {
       el.av.src = cfg.owner.avatarUrl;
       state.ownerAvatar = cfg.owner.avatarUrl;
@@ -664,11 +665,21 @@
       state.greeting = t.greeting;
       el.teaserMsg.textContent = t.greeting;
     }
-    // Offline + capture enabled + no history yet → show the lead form instead.
-    if (cfg.owner && !cfg.owner.online && cfg.offlineCapture) {
-      el.lead.classList.add('show');
-      el.foot.style.display = 'none';
-    }
+  }
+
+  // Apply owner presence to the header AND the offline lead form. Called on the
+  // initial config load and on every message poll, so the widget flips
+  // Online↔Away — and swaps the away email form for the live composer — fast.
+  function applyPresence(online) {
+    el.stTxt.textContent = online ? 'Online' : 'Away';
+    el.st.classList.toggle('away', !online);
+    var cfg = state.config || {};
+    // Offline + capture enabled + no thread yet + no lead left → show the form.
+    // Re-evaluated live, so the owner coming online restores the composer.
+    var showLead = !online && !!cfg.offlineCapture &&
+      !state.hasMessages && !state.leadSent;
+    el.lead.classList.toggle('show', showLead);
+    el.foot.style.display = showLead ? 'none' : '';
   }
 
   // ── session + messaging ────────────────────────────────────────────
@@ -697,10 +708,10 @@
     return api('GET', '/public/messages' + q).then(function (res) {
       if (res.ownerReadAt !== undefined) state.ownerReadAt = res.ownerReadAt;
       if (res.ownerDeliveredAt !== undefined) state.ownerDeliveredAt = res.ownerDeliveredAt;
-      // Live owner presence — flip the header Online ↔ Away as it changes.
+      // Live owner presence — flip the header Online ↔ Away AND swap the
+      // offline lead form for the composer as it changes.
       if (typeof res.ownerOnline === 'boolean') {
-        el.stTxt.textContent = res.ownerOnline ? 'Online' : 'Away';
-        el.st.classList.toggle('away', !res.ownerOnline);
+        applyPresence(res.ownerOnline);
       }
       var ownerNew = 0;
       (res.messages || []).forEach(function (m) {
@@ -1122,6 +1133,7 @@
         return api('POST', '/public/lead', { email: email, message: msg });
       })
       .then(function () {
+        state.leadSent = true;
         el.lead.innerHTML = '<p>Thanks! We\'ll be in touch soon.</p>';
       })
       .catch(function (err) {

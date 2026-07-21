@@ -51,6 +51,9 @@ router.options('/public/*', publicCors);
 // GET /public/:handle/config — bubble render data (no token).
 router.get('/public/:handle/config', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    // Carries live owner presence (owner.online) — never let a CDN/proxy cache
+    // a stale snapshot, or the widget boots to a wrong Online/Away state.
+    res.set('Cache-Control', 'no-store');
     res.json(await widget.getPublicConfig(req.params.handle as string, originHost(req)));
   } catch (err) {
     next(err);
@@ -141,6 +144,8 @@ router.post(
 // GET /public/messages?since= — visitor polls their thread.
 router.get('/public/messages', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    // Live thread + owner presence — must never be cached.
+    res.set('Cache-Control', 'no-store');
     res.json(await widget.visitorGetMessages(visitorToken(req), req.query.since as string | undefined));
   } catch (err) {
     next(err);
