@@ -144,7 +144,7 @@ export async function getPublicConfig(handle: string, originHost?: string) {
   const config = await requireLiveConfig(handle, originHost);
   const owner = await prisma.user.findUnique({
     where: { id: config.userId },
-    select: { displayName: true, avatarUrl: true, isOnline: true },
+    select: { displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
   });
   return {
     handle: config.handle,
@@ -154,6 +154,7 @@ export async function getPublicConfig(handle: string, originHost?: string) {
       displayName: owner?.displayName ?? 'Support',
       avatarUrl: owner?.avatarUrl ?? null,
       online: owner?.isOnline ?? false,
+      verified: owner?.isVerified ?? false,
     },
     // Device-aware "Powered by Yomeet" target (widget picks by user-agent).
     stores: {

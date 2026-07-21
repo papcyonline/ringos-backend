@@ -63,6 +63,8 @@
     ownerAvatar: null,       // shown next to incoming bubbles
     ownerReadAt: null,       // owner's read cursor → drives sent/delivered/read ticks
     ownerDeliveredAt: null,
+    greeting: null,          // owner's greeting, shown as a bubble on first open
+    greeted: false,          // guard so the greeting shows only once
     // Message ids already rendered, so the poller can't re-add a message the
     // optimistic echo (or a previous poll) already showed.
     seen: {},
@@ -228,6 +230,7 @@
       '.head img{width:32px;height:32px;border-radius:50%;object-fit:cover;background:#e6e8ec;flex:none}' +
       '.head .meta{min-width:0;flex:1}' +
       '.head .nm{font-weight:600;font-size:14px;line-height:1.15;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '.head .nm .vf{width:14px;height:14px;vertical-align:-2px;margin-left:3px}' +
       '.head .st{font-size:11px;color:#8a9099;display:flex;align-items:center;gap:5px;margin-top:1px}' +
       '.head .dot{width:7px;height:7px;border-radius:50%;background:' + accent + ';flex:none}' +
       '.head .st.away{color:#a2a7ae}' +
@@ -333,6 +336,11 @@
   var TICK_SINGLE =
     '<svg viewBox="0 0 18 12"><path d="M6.5 9.6L3.2 6.3A.9.9 0 101.93 7.6l3.94 3.94c.35.35.92.35 1.27 0L15.9 2.98A.9.9 0 1014.63 1.7L6.5 9.6z"/></svg>';
   var MIN_ICON = '<svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>';
+  // Blue verified seal + white check, shown next to a verified owner's name.
+  var VERIFIED_ICON =
+    '<svg class="vf" viewBox="0 0 24 24" aria-label="Verified">' +
+    '<path fill="#1d9bf0" d="M22.25 12l-2.1-2.4.29-3.19-3.12-.71L15.66 3 12 4.57 8.34 3 6.68 5.7l-3.12.7.29 3.2L1.75 12l2.1 2.4-.29 3.2 3.12.7L8.34 21 12 19.42 15.66 21l1.66-2.7 3.12-.71-.29-3.19z"/>' +
+    '<path fill="#fff" d="M10.1 15.3l-3-3 1.3-1.3 1.7 1.7 4.2-4.2 1.3 1.3z"/></svg>';
   var X_ICON =
     '<svg viewBox="0 0 24 24"><path d="M18.3 5.7a1 1 0 00-1.42 0L12 10.59 7.11 5.7A1 1 0 105.7 7.11L10.59 12 5.7 16.89a1 1 0 101.41 1.41L12 13.41l4.89 4.89a1 1 0 001.41-1.41L13.41 12l4.89-4.89a1 1 0 000-1.41z"/></svg>';
 
@@ -544,6 +552,10 @@
     var t = cfg.theme || {};
     var name = (cfg.owner && cfg.owner.displayName) || 'Chat';
     el.nm.textContent = name;
+    // Verified badge next to the owner's name when their Yomeet account is verified.
+    if (cfg.owner && cfg.owner.verified) {
+      el.nm.insertAdjacentHTML('beforeend', VERIFIED_ICON);
+    }
     var online = !!(cfg.owner && cfg.owner.online);
     el.stTxt.textContent = online ? 'Online' : 'Away';
     el.st.classList.toggle('away', !online);
@@ -558,11 +570,10 @@
       : /Android/i.test(ua) ? (s.android || 'https://yomeet.app')
       : (s.web || 'https://yomeet.app');
     if (t.greeting) {
-      var g = document.createElement('div');
-      g.className = 'greet';
-      g.textContent = t.greeting;
-      el.body.appendChild(g);
-      el.teaserMsg.textContent = t.greeting; // reuse the greeting as the teaser
+      // Shown as an incoming bubble once the visitor has entered their name and
+      // the chat opens (see maybeGreet), and reused as the teaser text.
+      state.greeting = t.greeting;
+      el.teaserMsg.textContent = t.greeting;
     }
     // Offline + capture enabled + no history yet → show the lead form instead.
     if (cfg.owner && !cfg.owner.online && cfg.offlineCapture) {
@@ -726,11 +737,30 @@
     }, 4000);
   }
 
+  // A one-time greeting from the owner, shown as an incoming bubble once the
+  // visitor has entered their name and the chat is open — but only for a fresh
+  // chat (no prior messages), so returning visitors aren't re-greeted.
+  function maybeGreet() {
+    if (state.greeted || !state.greeting || !state.name) return;
+    if (el.body.querySelector('.row')) return; // has history → don't greet
+    state.greeted = true;
+    addMessage({
+      content: state.greeting,
+      fromVisitor: false,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   // Begin (or resume) the chat: start the session, poll loop, and stream.
   function startChat() {
-    ensureSession().then(startPolling).catch(function (e) {
-      console.warn('[Yomeet widget]', e.message);
-    });
+    ensureSession()
+      .then(function () {
+        startPolling();
+        maybeGreet();
+      })
+      .catch(function (e) {
+        console.warn('[Yomeet widget]', e.message);
+      });
     el.input.focus();
   }
 
