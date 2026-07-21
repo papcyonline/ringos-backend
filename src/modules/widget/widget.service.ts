@@ -584,10 +584,20 @@ export async function visitorGetMessages(token: string, since?: string, limit = 
     },
   });
 
+  // The owner's read/delivered position drives the visitor's sent/delivered/read
+  // ticks. Returned top-level so the widget can advance ticks on every poll,
+  // even when no new messages arrived.
+  const ownerParticipant = await prisma.conversationParticipant.findFirst({
+    where: { conversationId: visitor.conversationId, userId: visitor.widgetConfig.userId },
+    select: { lastReadAt: true, lastDeliveredAt: true },
+  });
+
   // Tag each message from the visitor's perspective without exposing the
   // owner's raw user id.
   return {
     conversationId: visitor.conversationId,
+    ownerReadAt: ownerParticipant?.lastReadAt ?? null,
+    ownerDeliveredAt: ownerParticipant?.lastDeliveredAt ?? null,
     messages: messages.map((m) => ({
       id: m.id,
       content: m.content,

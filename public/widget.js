@@ -60,6 +60,9 @@
     es: null,      // EventSource (instant push); poll is the fallback
     sseUp: false,
     lastTyping: 0, // throttle for outbound typing pings
+    ownerAvatar: null,       // shown next to incoming bubbles
+    ownerReadAt: null,       // owner's read cursor → drives sent/delivered/read ticks
+    ownerDeliveredAt: null,
     // Message ids already rendered, so the poller can't re-add a message the
     // optimistic echo (or a previous poll) already showed.
     seen: {},
@@ -185,33 +188,50 @@
       'cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:background .15s}' +
       '.head .hbtn:hover{background:rgba(255,255,255,.35)}' +
       '.head .hbtn svg{width:16px;height:16px;fill:#fff}' +
-      '.body{flex:1;overflow-y:auto;padding:14px;background:#eceff3;display:flex;flex-direction:column;gap:9px}' +
-      // Bubbles with a pointed tail ("horn") on the bottom outer corner, mirroring
-      // the app chat: brand-accent outgoing (right), white incoming (left).
-      '.msg{position:relative;max-width:80%;padding:9px 13px;font-size:14px;line-height:1.4;word-wrap:break-word;box-shadow:0 1px 1px rgba(0,0,0,.08)}' +
-      '.msg.them{align-self:flex-start;background:#fff;color:#1a1a1a;border-radius:16px 16px 16px 4px}' +
-      '.msg.me{align-self:flex-end;background:' + accent + ';color:#fff;border-radius:16px 16px 4px 16px}' +
-      '.msg.them::after{content:"";position:absolute;left:-6px;bottom:1px;width:0;height:0;' +
-      'border-top:6px solid transparent;border-bottom:6px solid transparent;border-right:8px solid #fff}' +
-      '.msg.me::after{content:"";position:absolute;right:-6px;bottom:1px;width:0;height:0;' +
-      'border-top:6px solid transparent;border-bottom:6px solid transparent;border-left:8px solid ' + accent + '}' +
-      // Image messages.
-      '.msg.img{padding:4px;max-width:72%}' +
-      '.msg.img img{display:block;width:100%;max-width:220px;max-height:260px;object-fit:cover;border-radius:13px;cursor:pointer}' +
-      '.msg .cap{padding:5px 7px 2px;font-size:13px}' +
-      '.typing{position:relative;align-self:flex-start;background:#fff;border-radius:16px 16px 16px 4px;box-shadow:0 1px 1px rgba(0,0,0,.08);padding:12px 14px;display:flex;gap:4px}' +
-      '.typing::after{content:"";position:absolute;left:-6px;bottom:1px;width:0;height:0;' +
-      'border-top:6px solid transparent;border-bottom:6px solid transparent;border-right:8px solid #fff}' +
+      '.body{flex:1;overflow-y:auto;padding:12px 12px 8px;background:#eceff3;display:flex;flex-direction:column;gap:1px}' +
+      // Each message is a row: optional owner avatar + the bubble.
+      '.row{display:flex;align-items:flex-end;gap:6px;max-width:88%;margin-top:7px}' +
+      '.row.them{align-self:flex-start}' +
+      '.row.me{align-self:flex-end;flex-direction:row-reverse}' +
+      '.row .rav{width:26px;height:26px;border-radius:50%;object-fit:cover;background:#cfd4da;flex:none;margin-bottom:1px}' +
+      '.row.me .rav{display:none}' +
+      // Bubbles with a curved tail ("horn") on the bottom outer corner.
+      '.msg{position:relative;padding:6px 9px 5px;font-size:14px;line-height:1.35;word-wrap:break-word;box-shadow:0 1px .6px rgba(0,0,0,.13);min-width:46px}' +
+      '.msg.them{background:#fff;color:#1a1a1a;border-radius:13px 13px 13px 3px}' +
+      '.msg.me{background:' + accent + ';color:#fff;border-radius:13px 13px 3px 13px}' +
+      '.msg.them::after{content:"";position:absolute;left:-6px;bottom:0;width:11px;height:14px;background:#fff;' +
+      'clip-path:polygon(100% 0,100% 100%,0 100%)}' +
+      '.msg.me::after{content:"";position:absolute;right:-6px;bottom:0;width:11px;height:14px;background:' + accent + ';' +
+      'clip-path:polygon(0 0,0 100%,100% 100%)}' +
+      // Timestamp + delivery ticks, tucked bottom-right inside the bubble.
+      '.msg .meta{display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:1px;font-size:10px;line-height:1;white-space:nowrap}' +
+      '.msg.them .meta{color:#9aa0a6}' +
+      '.msg.me .meta{color:rgba(255,255,255,.82)}' +
+      '.msg .tk{display:inline-flex;align-items:center}' +
+      '.msg .tk svg{width:16px;height:11px}' +
+      '.msg .tk svg path{fill:rgba(255,255,255,.85)}' +
+      '.msg .tk.read svg path{fill:#7fd4ff}' +
+      // Image messages — time chip overlays the photo.
+      '.msg.img{padding:3px}' +
+      '.msg.img img{display:block;width:100%;max-width:210px;max-height:250px;object-fit:cover;border-radius:11px;cursor:pointer}' +
+      '.msg.img .meta{position:absolute;right:9px;bottom:8px;margin:0;padding:2px 6px;border-radius:9px;background:rgba(0,0,0,.4);color:#fff}' +
+      '.msg.img .meta .tk svg path{fill:#fff}' +
+      '.msg.img .meta .tk.read svg path{fill:#7fd4ff}' +
+      '.msg .cap{padding:4px 6px 0}' +
+      '.typing{position:relative;align-self:flex-start;background:#fff;border-radius:13px 13px 13px 3px;box-shadow:0 1px .6px rgba(0,0,0,.13);padding:11px 13px;display:flex;gap:4px;margin-top:7px}' +
+      '.typing::after{content:"";position:absolute;left:-6px;bottom:0;width:11px;height:14px;background:#fff;' +
+      'clip-path:polygon(100% 0,100% 100%,0 100%)}' +
       '.typing span{width:7px;height:7px;border-radius:50%;background:#bbb;display:inline-block;animation:ymtype 1.2s infinite}' +
       '.typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}' +
       '@keyframes ymtype{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}' +
-      // Footer — image attach button, input, and the app\'s Telegram send button.
-      '.foot{border-top:1px solid #ececec;padding:8px 10px;display:flex;gap:6px;background:#fff;align-items:center}' +
-      '.foot input.in{flex:1;min-width:0;border:1px solid #dcdcdc;border-radius:22px;padding:10px 15px;font-size:14px;outline:none}' +
-      '.foot input.in:focus{border-color:' + accent + '}' +
-      '.foot .attach{background:none;border:none;width:38px;height:38px;min-width:38px;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center}' +
-      '.foot .attach svg{width:23px;height:23px;fill:#8a8f98;transition:fill .15s}' +
-      '.foot .attach:hover svg{fill:' + accent + '}' +
+      // Footer — a rounded input pill with the "+" attach button inside it, and
+      // the app\'s Telegram send button outside on the right.
+      '.foot{border-top:1px solid #ececec;padding:8px 10px;display:flex;gap:8px;background:#fff;align-items:center}' +
+      '.foot .inwrap{flex:1;display:flex;align-items:center;gap:4px;background:#f1f2f4;border:1px solid #e3e5e9;border-radius:22px;padding:3px 4px;min-width:0}' +
+      '.foot .inwrap:focus-within{border-color:' + accent + '}' +
+      '.foot .plus{width:32px;height:32px;min-width:32px;border:none;border-radius:50%;background:' + accent + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}' +
+      '.foot .plus svg{width:19px;height:19px;fill:#fff}' +
+      '.foot input.in{flex:1;min-width:0;border:none;background:none;padding:8px 8px;font-size:14px;outline:none}' +
       '.foot .send{border:none;background:' + accent + ';color:#fff;border-radius:50%;width:40px;height:40px;min-width:40px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}' +
       '.foot .send svg{width:20px;height:20px;fill:#fff;margin:1px 0 0 1px}' +
       '.foot .send:disabled{opacity:.5;cursor:default}' +
@@ -239,9 +259,14 @@
   // widget's send button matches the in-app composer.
   var SEND_ICON =
     '<svg viewBox="0 0 496 512"><path d="M446.7 98.6l-67.6 318.8c-5.1 22.5-18.4 28.1-37.3 17.5l-103-75.9-49.7 47.8c-5.5 5.5-10.1 10.1-20.7 10.1l7.4-104.9 190.9-172.5c8.3-7.4-1.8-11.5-12.9-4.1L117.8 284 16.2 252.2c-22.1-6.9-22.5-22.1 4.6-32.7L418.2 66.4c18.4-6.8 34.5 4.4 28.5 32.2z"/></svg>';
-  // Photo/gallery icon for the image attach button.
-  var IMG_ICON =
-    '<svg viewBox="0 0 24 24"><path d="M21 3H3a1 1 0 00-1 1v16a1 1 0 001 1h18a1 1 0 001-1V4a1 1 0 00-1-1zM8.5 8a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM5 19l4.2-5.2 2.3 2.8L14.8 12 19 19H5z"/></svg>';
+  // "+" icon for the in-pill attach button.
+  var PLUS_ICON =
+    '<svg viewBox="0 0 24 24"><path d="M19 11h-6V5a1 1 0 00-2 0v6H5a1 1 0 000 2h6v6a1 1 0 002 0v-6h6a1 1 0 000-2z"/></svg>';
+  // Double / single check ("tick") marks for delivery status on sent messages.
+  var TICK_DOUBLE =
+    '<svg viewBox="0 0 18 12"><path d="M17.1 1.3a.9.9 0 00-1.28-.03L8.2 8.6l-1.1-1.06 6.9-6.6a.9.9 0 10-1.24-1.3L6.3 6.02 3.9 3.72A.9.9 0 002.65 5l3 2.9c.35.34.9.34 1.25 0l.02-.02.03.03c.35.34.9.34 1.25 0l8-7.32a.9.9 0 00-.1-1.29zM.9 5.02a.9.9 0 00-.03 1.27l3 3.1c.35.36.92.37 1.28.02.36-.34.37-.91.02-1.27l-3-3.1A.9.9 0 00.9 5.02z"/></svg>';
+  var TICK_SINGLE =
+    '<svg viewBox="0 0 18 12"><path d="M6.5 9.6L3.2 6.3A.9.9 0 101.93 7.6l3.94 3.94c.35.35.92.35 1.27 0L15.9 2.98A.9.9 0 1014.63 1.7L6.5 9.6z"/></svg>';
   var MIN_ICON = '<svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>';
   var X_ICON =
     '<svg viewBox="0 0 24 24"><path d="M18.3 5.7a1 1 0 00-1.42 0L12 10.59 7.11 5.7A1 1 0 105.7 7.11L10.59 12 5.7 16.89a1 1 0 101.41 1.41L12 13.41l4.89 4.89a1 1 0 001.41-1.41L13.41 12l4.89-4.89a1 1 0 000-1.41z"/></svg>';
@@ -272,8 +297,10 @@
     '      <button type="submit">Start chat</button>' +
     '    </form>' +
     '    <form class="foot">' +
-    '      <button type="button" class="attach" aria-label="Send image">' + IMG_ICON + '</button>' +
-    '      <input class="in" placeholder="Type a message…" autocomplete="off"/>' +
+    '      <div class="inwrap">' +
+    '        <button type="button" class="plus" aria-label="Send image">' + PLUS_ICON + '</button>' +
+    '        <input class="in" placeholder="Type a message…" autocomplete="off"/>' +
+    '      </div>' +
     '      <button type="submit" class="send" aria-label="Send">' + SEND_ICON + '</button>' +
     '      <input type="file" class="file" accept="image/*" hidden/>' +
     '    </form>' +
@@ -300,7 +327,7 @@
     pwLink: root.querySelector('.pw-link'),
     input: root.querySelector('.in'),
     send: root.querySelector('.foot .send'),
-    attach: root.querySelector('.attach'),
+    attach: root.querySelector('.plus'),
     file: root.querySelector('.file'),
     lead: root.querySelector('.lead'),
     leadEmail: root.querySelector('.lead-email'),
@@ -314,16 +341,85 @@
     return d.innerHTML;
   }
 
+  function fmtTime(iso) {
+    var d = iso ? new Date(iso) : new Date();
+    if (isNaN(d.getTime())) d = new Date();
+    var h = d.getHours(), mi = d.getMinutes();
+    var ap = h < 12 ? 'AM' : 'PM';
+    h = h % 12; if (h === 0) h = 12;
+    return h + ':' + (mi < 10 ? '0' : '') + mi + ' ' + ap;
+  }
+
+  // Delivery status of one of the visitor's own messages, from the owner's read
+  // position (returned on every poll). read > delivered > sent.
+  function statusFor(createdIso) {
+    var t = new Date(createdIso).getTime();
+    if (state.ownerReadAt && new Date(state.ownerReadAt).getTime() >= t) return 'read';
+    if (state.ownerDeliveredAt && new Date(state.ownerDeliveredAt).getTime() >= t) return 'delivered';
+    return 'sent';
+  }
+  function tickInner(status) {
+    return status === 'sent' ? TICK_SINGLE : TICK_DOUBLE;
+  }
+
+  function metaEl(m) {
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var tm = document.createElement('span');
+    tm.textContent = fmtTime(m.createdAt);
+    meta.appendChild(tm);
+    if (m.fromVisitor) {
+      var st = m.createdAt ? statusFor(m.createdAt) : 'sent';
+      var tk = document.createElement('span');
+      tk.className = 'tk' + (st === 'read' ? ' read' : '');
+      tk.innerHTML = tickInner(st);
+      meta.appendChild(tk);
+    }
+    return meta;
+  }
+
+  // Re-evaluate ticks on every own message when the owner's read position moves.
+  function updateTicks() {
+    var bubbles = el.body.querySelectorAll('.msg[data-me]');
+    for (var i = 0; i < bubbles.length; i++) {
+      var b = bubbles[i];
+      var created = b.getAttribute('data-created');
+      var tk = b.querySelector('.tk');
+      if (!created || !tk) continue;
+      var st = statusFor(created);
+      tk.className = 'tk' + (st === 'read' ? ' read' : '');
+      tk.innerHTML = tickInner(st);
+    }
+  }
+
+  // Renders a message row (owner avatar on incoming + bubble) and returns the
+  // bubble element so the caller can later stamp a server id/timestamp on it.
   function addMessage(m) {
     if (m.id) {
-      if (state.seen[m.id]) return; // already rendered — skip the duplicate
+      var existing = el.body.querySelector('.msg[data-mid="' + m.id + '"]');
+      if (state.seen[m.id]) return existing; // already rendered — skip the duplicate
       state.seen[m.id] = 1;
       state.lastId = m.id;
     }
     var typing = el.body.querySelector('.typing');
     if (typing) typing.remove(); // a real message means typing is over
+
+    var row = document.createElement('div');
+    row.className = 'row ' + (m.fromVisitor ? 'me' : 'them');
+    if (!m.fromVisitor) {
+      var av = document.createElement('img');
+      av.className = 'rav';
+      av.alt = '';
+      if (state.ownerAvatar) av.src = state.ownerAvatar;
+      row.appendChild(av);
+    }
+
     var div = document.createElement('div');
     div.className = 'msg ' + (m.fromVisitor ? 'me' : 'them');
+    if (m.id) div.setAttribute('data-mid', m.id);
+    if (m.createdAt) div.setAttribute('data-created', m.createdAt);
+    if (m.fromVisitor) div.setAttribute('data-me', '1');
+
     if (m.imageUrl) {
       div.className += ' img';
       var im = document.createElement('img');
@@ -340,10 +436,15 @@
         div.appendChild(cap);
       }
     } else {
-      div.innerHTML = esc(m.content);
+      var txt = document.createElement('span');
+      txt.textContent = m.content == null ? '' : String(m.content);
+      div.appendChild(txt);
     }
-    el.body.appendChild(div);
+    div.appendChild(metaEl(m));
+    row.appendChild(div);
+    el.body.appendChild(row);
     el.body.scrollTop = el.body.scrollHeight;
+    return div;
   }
 
   function applyConfig(cfg) {
@@ -354,7 +455,10 @@
     var online = !!(cfg.owner && cfg.owner.online);
     el.stTxt.textContent = online ? 'Online' : 'Away';
     el.st.classList.toggle('away', !online);
-    if (cfg.owner && cfg.owner.avatarUrl) el.av.src = cfg.owner.avatarUrl;
+    if (cfg.owner && cfg.owner.avatarUrl) {
+      el.av.src = cfg.owner.avatarUrl;
+      state.ownerAvatar = cfg.owner.avatarUrl;
+    }
     // "Powered by Yomeet" → the right store for the visitor's device.
     var s = cfg.stores || {};
     var ua = navigator.userAgent || '';
@@ -398,12 +502,15 @@
     if (!state.token) return Promise.resolve();
     var q = state.lastId ? '?since=' + encodeURIComponent(state.lastId) : '';
     return api('GET', '/public/messages' + q).then(function (res) {
+      if (res.ownerReadAt !== undefined) state.ownerReadAt = res.ownerReadAt;
+      if (res.ownerDeliveredAt !== undefined) state.ownerDeliveredAt = res.ownerDeliveredAt;
       var ownerNew = 0;
       (res.messages || []).forEach(function (m) {
         var isNew = !(m.id && state.seen[m.id]);
         addMessage(m); // dedupes via state.seen
         if (isNew && !m.fromVisitor) ownerNew++; // a fresh reply from the owner
       });
+      updateTicks(); // advance sent → delivered → read on our own messages
       // Reply arrived while the panel is closed → badge + chime.
       if (ownerNew > 0 && !state.open) {
         state.unread += ownerNew;
@@ -552,9 +659,10 @@
     el.file.value = ''; // allow re-picking the same file later
     if (!f || !/^image\//.test(f.type)) return;
     var localUrl = URL.createObjectURL(f);
+    var echo = null;
     ensureSession()
       .then(function () {
-        addMessage({ imageUrl: localUrl, fromVisitor: true }); // optimistic preview
+        echo = addMessage({ imageUrl: localUrl, fromVisitor: true, createdAt: new Date().toISOString() });
         return uploadImage(f);
       })
       .then(function (msg) {
@@ -563,6 +671,10 @@
         if (msg && msg.id) {
           state.seen[msg.id] = 1;
           state.lastId = msg.id;
+          if (echo) {
+            echo.setAttribute('data-mid', msg.id);
+            if (msg.createdAt) echo.setAttribute('data-created', msg.createdAt);
+          }
         }
         openStream();
       })
@@ -600,10 +712,11 @@
     if (!text) return;
     el.input.value = '';
     el.send.disabled = true;
+    var echo = null;
     ensureSession()
       .then(function () {
-        // optimistic echo
-        addMessage({ content: text, fromVisitor: true });
+        // optimistic echo (client timestamp; server id/time stamped on below)
+        echo = addMessage({ content: text, fromVisitor: true, createdAt: new Date().toISOString() });
         return api('POST', '/public/messages', { content: text });
       })
       .then(function (msg) {
@@ -612,6 +725,10 @@
         if (msg && msg.id) {
           state.seen[msg.id] = 1;
           state.lastId = msg.id;
+          if (echo) {
+            echo.setAttribute('data-mid', msg.id);
+            if (msg.createdAt) echo.setAttribute('data-created', msg.createdAt);
+          }
         }
         openStream(); // the conversation now exists → start instant push
         el.send.disabled = false;
