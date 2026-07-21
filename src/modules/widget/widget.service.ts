@@ -21,6 +21,25 @@ const MSG_WINDOW_SEC = 60;
 const SESSION_MAX = 10;
 const SESSION_WINDOW_SEC = 60;
 
+// Presence grace window: the owner still reads as "online" to the widget for a
+// short window after their socket drops. iOS kills the WebSocket the moment the
+// phone locks/backgrounds, so without this a momentary lock flaps the widget to
+// "Away". setOffline() stamps lastSeenAt, so a brief absence stays "online" and
+// only a sustained one flips to "Away".
+const PRESENCE_GRACE_MS = 2 * 60 * 1000; // 2 minutes
+
+/** Single source of truth for owner presence as seen by the widget. */
+function ownerIsOnline(
+  owner: { isOnline: boolean; lastSeenAt: Date | null } | null,
+): boolean {
+  if (!owner) return false;
+  if (owner.isOnline) return true;
+  return (
+    !!owner.lastSeenAt &&
+    Date.now() - owner.lastSeenAt.getTime() < PRESENCE_GRACE_MS
+  );
+}
+
 // ─── token/handle helpers ────────────────────────────────────────────
 
 /** Opaque, URL-safe secret handed to the visitor's browser. Never persisted raw. */
@@ -144,7 +163,7 @@ export async function getPublicConfig(handle: string, originHost?: string) {
   const config = await requireLiveConfig(handle, originHost);
   const owner = await prisma.user.findUnique({
     where: { id: config.userId },
-    select: { displayName: true, avatarUrl: true, isOnline: true, isVerified: true },
+    select: { displayName: true, avatarUrl: true, isOnline: true, lastSeenAt: true, isVerified: true },
   });
   return {
     handle: config.handle,
@@ -153,7 +172,7 @@ export async function getPublicConfig(handle: string, originHost?: string) {
     owner: {
       displayName: owner?.displayName ?? 'Support',
       avatarUrl: owner?.avatarUrl ?? null,
-      online: owner?.isOnline ?? false,
+      online: ownerIsOnline(owner),
       verified: owner?.isVerified ?? false,
     },
     // Device-aware "Powered by Yomeet" target (widget picks by user-agent).
@@ -501,13 +520,13 @@ async function session(
 ) {
   const owner = await prisma.user.findUnique({
     where: { id: ownerId },
-    select: { isOnline: true },
+    select: { isOnline: true, lastSeenAt: true },
   });
   return {
     visitorId,
     visitorToken,
     conversationId,
-    ownerOnline: owner?.isOnline ?? false,
+    ownerOnline: ownerIsOnline(owner),
   };
 }
 
@@ -720,14 +739,14 @@ export async function visitorGetMessages(token: string, since?: string, limit = 
   // (it's only a snapshot at page load otherwise).
   const owner = await prisma.user.findUnique({
     where: { id: visitor.widgetConfig.userId },
-    select: { isOnline: true },
+    select: { isOnline: true, lastSeenAt: true },
   });
 
   // Tag each message from the visitor's perspective without exposing the
   // owner's raw user id.
   return {
     conversationId: visitor.conversationId,
-    ownerOnline: owner?.isOnline ?? false,
+    ownerOnline: ownerIsOnline(owner),
     ownerReadAt: ownerParticipant?.lastReadAt ?? null,
     ownerDeliveredAt: ownerParticipant?.lastDeliveredAt ?? null,
     messages: messages.map((m) => ({
