@@ -166,20 +166,39 @@
       ':host{all:initial}' +
       '*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}' +
       '.wrap{position:fixed;bottom:20px;' + side + ':20px;z-index:2147483000}' +
-      '.bubble{position:relative;width:60px;height:60px;border-radius:50%;background:' + accent + ';cursor:pointer;' +
-      'display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(0,0,0,.25);' +
+      // 3D glossy orb: a top-left light highlight + bottom-right shading over the
+      // themeable accent, with inset shadows for depth. Works for any accent.
+      '.bubble{position:relative;width:60px;height:60px;border-radius:50%;cursor:pointer;' +
+      'background:radial-gradient(circle at 32% 24%,rgba(255,255,255,.55),rgba(255,255,255,0) 44%),' +
+      'radial-gradient(circle at 72% 84%,rgba(0,0,0,.34),rgba(0,0,0,0) 56%),' + accent + ';' +
+      'display:flex;align-items:center;justify-content:center;' +
+      'box-shadow:inset 0 3px 6px rgba(255,255,255,.4),inset 0 -9px 15px rgba(0,0,0,.3),0 9px 22px rgba(0,0,0,.32);' +
       'border:none;transition:transform .15s ease}' +
-      // Two glowing "comet" arcs (brand green + blue on opposite sides) orbiting
-      // the bubble, over a white gap so they pop on any background.
-      '.bubble::before{content:"";position:absolute;inset:-9px;border-radius:50%;z-index:-2;' +
-      'background:conic-gradient(from 0deg,' +
-      '#1f6fcc 0deg,rgba(31,111,204,0) 68deg,rgba(59,168,90,0) 112deg,' +
-      '#3ba85a 180deg,rgba(59,168,90,0) 248deg,rgba(31,111,204,0) 292deg,#1f6fcc 360deg);' +
-      'filter:blur(3px);animation:ymring 2.2s linear infinite}' +
-      '.bubble::after{content:"";position:absolute;inset:-3px;border-radius:50%;z-index:-1;background:#fff}' +
+      // Full rotating "aurora" ring (emerald→cyan→indigo) over a white gap so it
+      // reads as a distinct, unique border line on any background.
+      '.bubble::before{content:"";position:absolute;inset:-4px;border-radius:50%;z-index:-2;' +
+      'background:conic-gradient(from 0deg,#34d399,#22d3ee,#818cf8,#22d3ee,#34d399);' +
+      'animation:ymring 3s linear infinite}' +
+      '.bubble::after{content:"";position:absolute;inset:-2px;border-radius:50%;z-index:-1;background:#fff}' +
       '.bubble:hover{transform:scale(1.06)}' +
-      '.bubble svg{width:42px;height:42px}' +
+      '.bubble svg{width:42px;height:42px;overflow:visible}' +
       '@keyframes ymring{to{transform:rotate(1turn)}}' +
+      // The face winks + opens its smile every few seconds for a bit of life.
+      '.bubble svg .eye{transform-box:fill-box;transform-origin:center;animation:ymwink 4.5s ease-in-out infinite}' +
+      '.bubble svg .mouth{transform-box:fill-box;transform-origin:50% 25%;animation:ymgrin 4.5s ease-in-out infinite}' +
+      '@keyframes ymwink{0%,84%,100%{transform:scaleY(1)}88%,92%{transform:scaleY(.08)}}' +
+      '@keyframes ymgrin{0%,82%,100%{transform:scaleY(1)}88%,94%{transform:scaleY(1.35)}}' +
+      // Greeting teaser — a small speech bubble that pops up beside the widget.
+      '.teaser{position:absolute;bottom:74px;' + side + ':2px;width:max-content;max-width:240px;background:#fff;color:#111;' +
+      'padding:11px 34px 11px 14px;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.18);' +
+      'font-size:14px;line-height:1.35;font-weight:500;cursor:pointer;display:none;' +
+      'transform-origin:bottom ' + side + ';transform:translateY(8px) scale(.85);opacity:0;' +
+      'transition:transform .28s cubic-bezier(.2,.9,.3,1.35),opacity .2s}' +
+      '.teaser.show{display:block;transform:translateY(0) scale(1);opacity:1}' +
+      '.teaser .tx{position:absolute;top:6px;' + (side === 'right' ? 'right' : 'left') + ':6px;width:20px;height:20px;' +
+      'border:none;border-radius:50%;background:rgba(0,0,0,.06);color:#666;cursor:pointer;font-size:14px;' +
+      'line-height:1;display:flex;align-items:center;justify-content:center;padding:0}' +
+      '.teaser .tx:hover{background:rgba(0,0,0,.12)}' +
       '.badge{position:absolute;top:-3px;right:-3px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;' +
       'background:#ff3b30;color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;' +
       'box-shadow:0 0 0 2px #fff;display:none}' +
@@ -278,8 +297,8 @@
   // icon is the bubble itself. Sits on the accent bubble inside the animated ring.
   var CHAT_ICON =
     '<svg viewBox="0 0 128 128" fill="none">' +
-    '<path d="M34 62C43 86 56 95 72 95C88 95 101 86 110 62" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>' +
-    '<circle cx="91" cy="42" r="9" fill="#fff"/>' +
+    '<path class="mouth" d="M34 62C43 86 56 95 72 95C88 95 101 86 110 62" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>' +
+    '<circle class="eye" cx="91" cy="42" r="9" fill="#fff"/>' +
     '</svg>';
   // The app's Telegram-plane send icon (assets/icons/telegram-send.svg) so the
   // widget's send button matches the in-app composer.
@@ -353,6 +372,7 @@
     '    </form>' +
     '    <div class="powered">Powered by <a class="pw-link" target="_blank" rel="noopener noreferrer">Yomeet</a></div>' +
     '  </div>' +
+    '  <div class="teaser"><button class="tx" aria-label="Dismiss">&times;</button><span class="teaser-msg">Hello, need some help?</span></div>' +
     '  <button class="bubble" aria-label="Chat">' + CHAT_ICON + '<span class="badge"></span></button>' +
     '</div>';
 
@@ -361,6 +381,9 @@
   var el = {
     bubble: root.querySelector('.bubble'),
     badge: root.querySelector('.badge'),
+    teaser: root.querySelector('.teaser'),
+    teaserMsg: root.querySelector('.teaser-msg'),
+    teaserX: root.querySelector('.teaser .tx'),
     panel: root.querySelector('.panel'),
     close: root.querySelector('.x'),
     min: root.querySelector('.min'),
@@ -519,6 +542,7 @@
       g.className = 'greet';
       g.textContent = t.greeting;
       el.body.appendChild(g);
+      el.teaserMsg.textContent = t.greeting; // reuse the greeting as the teaser
     }
     // Offline + capture enabled + no history yet → show the lead form instead.
     if (cfg.owner && !cfg.owner.online && cfg.offlineCapture) {
@@ -715,8 +739,41 @@
     }
   }
 
+  // ── greeting teaser ────────────────────────────────────────────────
+  // A friendly nudge that pops up beside the bubble once per session, until the
+  // visitor opens the chat or dismisses it.
+  var TEASER_KEY = 'yomeet_widget_teaser_' + handle;
+  var teaserTimer = null;
+  function teaserSeen() {
+    try { return !!sessionStorage.getItem(TEASER_KEY); } catch (e) { return false; }
+  }
+  function hideTeaser(remember) {
+    el.teaser.classList.remove('show');
+    clearTimeout(teaserTimer);
+    if (remember) { try { sessionStorage.setItem(TEASER_KEY, '1'); } catch (e) { /* ignore */ } }
+  }
+  function maybeShowTeaser() {
+    if (state.open || teaserSeen()) return;
+    el.teaser.classList.add('show');
+    // auto-retract after a while so it isn't nagging, but don't mark as seen —
+    // it can pop again next session.
+    teaserTimer = setTimeout(function () { el.teaser.classList.remove('show'); }, 12000);
+  }
+  // Give the page a moment to settle, then invite.
+  setTimeout(maybeShowTeaser, 3500);
+
+  el.teaser.addEventListener('click', function () {
+    hideTeaser(true);
+    togglePanel(true);
+  });
+  el.teaserX.addEventListener('click', function (e) {
+    e.stopPropagation(); // don't also open the panel
+    hideTeaser(true);
+  });
+
   // ── events ─────────────────────────────────────────────────────────
   el.bubble.addEventListener('click', function () {
+    hideTeaser(true);
     togglePanel(!state.open);
   });
   el.close.addEventListener('click', function () {
