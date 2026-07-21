@@ -159,6 +159,13 @@
 
   var side = 'right';
   var accent = '#25D366';
+  // Widget dimensions, driven by theme.size (small | medium | large).
+  var SIZES = {
+    small: { bubble: 52, icon: 36, panelW: 320, panelH: 440 },
+    medium: { bubble: 60, icon: 42, panelW: 344, panelH: 470 },
+    large: { bubble: 70, icon: 49, panelW: 372, panelH: 520 },
+  };
+  var sz = SIZES.medium;
 
   function css() {
     return (
@@ -166,22 +173,22 @@
       ':host{all:initial}' +
       '*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}' +
       '.wrap{position:fixed;bottom:20px;' + side + ':20px;z-index:2147483000}' +
-      // 3D glossy orb: a top-left light highlight + bottom-right shading over the
-      // themeable accent, with inset shadows for depth. Works for any accent.
-      '.bubble{position:relative;width:60px;height:60px;border-radius:50%;cursor:pointer;' +
+      // Bubble = a transparent button holding two real layers: the rotating
+      // aurora ring (behind) and the 3D orb (on top). No negative z-index, so a
+      // hover transform can\'t flip the ring on top of the orb.
+      '.bubble{position:relative;width:' + sz.bubble + 'px;height:' + sz.bubble + 'px;border-radius:50%;cursor:pointer;' +
+      'background:none;border:none;padding:0;box-shadow:0 9px 22px rgba(0,0,0,.32);transition:transform .15s ease}' +
+      '.bubble:hover{transform:scale(1.06)}' +
+      // Rotating "aurora" ring (emerald→cyan→indigo) — a unique animated border.
+      '.bubble .ring{position:absolute;inset:-4px;border-radius:50%;' +
+      'background:conic-gradient(from 0deg,#34d399,#22d3ee,#818cf8,#22d3ee,#34d399);animation:ymring 3s linear infinite}' +
+      // 3D glossy orb (top-left highlight + bottom shading over the accent) with
+      // a thin white outline that reads as a gap between orb and ring.
+      '.bubble .orb{position:absolute;inset:0;border-radius:50%;z-index:1;display:flex;align-items:center;justify-content:center;' +
       'background:radial-gradient(circle at 32% 24%,rgba(255,255,255,.55),rgba(255,255,255,0) 44%),' +
       'radial-gradient(circle at 72% 84%,rgba(0,0,0,.34),rgba(0,0,0,0) 56%),' + accent + ';' +
-      'display:flex;align-items:center;justify-content:center;' +
-      'box-shadow:inset 0 3px 6px rgba(255,255,255,.4),inset 0 -9px 15px rgba(0,0,0,.3),0 9px 22px rgba(0,0,0,.32);' +
-      'border:none;transition:transform .15s ease}' +
-      // Full rotating "aurora" ring (emerald→cyan→indigo) over a white gap so it
-      // reads as a distinct, unique border line on any background.
-      '.bubble::before{content:"";position:absolute;inset:-4px;border-radius:50%;z-index:-2;' +
-      'background:conic-gradient(from 0deg,#34d399,#22d3ee,#818cf8,#22d3ee,#34d399);' +
-      'animation:ymring 3s linear infinite}' +
-      '.bubble::after{content:"";position:absolute;inset:-2px;border-radius:50%;z-index:-1;background:#fff}' +
-      '.bubble:hover{transform:scale(1.06)}' +
-      '.bubble svg{width:42px;height:42px;overflow:visible}' +
+      'box-shadow:inset 0 3px 6px rgba(255,255,255,.4),inset 0 -9px 15px rgba(0,0,0,.3),0 0 0 2.5px #fff}' +
+      '.bubble .orb svg{width:' + sz.icon + 'px;height:' + sz.icon + 'px;overflow:visible}' +
       '@keyframes ymring{to{transform:rotate(1turn)}}' +
       // The face winks + opens its smile every few seconds for a bit of life.
       '.bubble svg .eye{transform-box:fill-box;transform-origin:center;animation:ymwink 4.5s ease-in-out infinite}' +
@@ -189,7 +196,7 @@
       '@keyframes ymwink{0%,84%,100%{transform:scaleY(1)}88%,92%{transform:scaleY(.08)}}' +
       '@keyframes ymgrin{0%,82%,100%{transform:scaleY(1)}88%,94%{transform:scaleY(1.35)}}' +
       // Greeting teaser — a small speech bubble that pops up beside the widget.
-      '.teaser{position:absolute;bottom:74px;' + side + ':2px;width:max-content;max-width:240px;background:#fff;color:#111;' +
+      '.teaser{position:absolute;bottom:' + (sz.bubble + 14) + 'px;' + side + ':2px;width:max-content;max-width:240px;background:#fff;color:#111;' +
       'padding:11px 34px 11px 14px;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.18);' +
       'font-size:14px;line-height:1.35;font-weight:500;cursor:pointer;display:none;' +
       'transform-origin:bottom ' + side + ';transform:translateY(8px) scale(.85);opacity:0;' +
@@ -199,12 +206,12 @@
       'border:none;border-radius:50%;background:rgba(0,0,0,.06);color:#666;cursor:pointer;font-size:14px;' +
       'line-height:1;display:flex;align-items:center;justify-content:center;padding:0}' +
       '.teaser .tx:hover{background:rgba(0,0,0,.12)}' +
-      '.badge{position:absolute;top:-3px;right:-3px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;' +
+      '.badge{position:absolute;top:-3px;right:-3px;z-index:2;min-width:20px;height:20px;padding:0 5px;border-radius:10px;' +
       'background:#ff3b30;color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;' +
       'box-shadow:0 0 0 2px #fff;display:none}' +
       '.badge.show{display:block}' +
-      '.panel{position:absolute;bottom:74px;' + side + ':0;width:344px;max-width:calc(100vw - 40px);' +
-      'height:470px;max-height:calc(100vh - 120px);border-radius:18px;overflow:hidden;' +
+      '.panel{position:absolute;bottom:' + (sz.bubble + 14) + 'px;' + side + ':0;width:' + sz.panelW + 'px;max-width:calc(100vw - 40px);' +
+      'height:' + sz.panelH + 'px;max-height:calc(100vh - 120px);border-radius:18px;overflow:hidden;' +
       'background-color:#f4f5f7;background-image:radial-gradient(rgba(0,0,0,.06) 1.1px,transparent 1.1px);background-size:16px 16px;' +
       'box-shadow:0 12px 40px rgba(0,0,0,.28);display:none;flex-direction:column}' +
       '.panel.open{display:flex}' +
@@ -289,7 +296,14 @@
       '.lead input,.lead textarea{border:1px solid #dcdcdc;border-radius:10px;padding:9px 12px;font-size:14px;font-family:inherit;outline:none}' +
       '.lead button{border:none;background:' + accent + ';color:#fff;border-radius:10px;padding:10px;font-weight:600;cursor:pointer}' +
       '.powered{text-align:center;font-size:11px;color:#9aa0a6;padding:5px 6px 7px;background:#fff;margin:0 6px 6px;border-radius:0 0 14px 14px}' +
-      '.powered a{color:' + accent + ';text-decoration:none;font-weight:600}'
+      '.powered a{color:' + accent + ';text-decoration:none;font-weight:600}' +
+      // Phones: the panel becomes a near-fullscreen sheet so the chat is
+      // comfortable to read and type on small screens.
+      '@media (max-width:480px){' +
+      '.wrap{bottom:16px;' + side + ':16px}' +
+      '.panel{width:calc(100vw - 24px);height:calc(100dvh - 96px);max-height:calc(100dvh - 96px);bottom:' + (sz.bubble + 12) + 'px}' +
+      '.msg.img img,.msg.img{max-width:62vw}' +
+      '}'
     );
   }
 
@@ -373,7 +387,7 @@
     '    <div class="powered">Powered by <a class="pw-link" target="_blank" rel="noopener noreferrer">Yomeet</a></div>' +
     '  </div>' +
     '  <div class="teaser"><button class="tx" aria-label="Dismiss">&times;</button><span class="teaser-msg">Hello, need some help?</span></div>' +
-    '  <button class="bubble" aria-label="Chat">' + CHAT_ICON + '<span class="badge"></span></button>' +
+    '  <button class="bubble" aria-label="Chat"><span class="ring"></span><span class="orb">' + CHAT_ICON + '</span><span class="badge"></span></button>' +
     '</div>';
 
   applyStyles(); // initial styles (defaults; re-applied once the theme loads)
@@ -879,6 +893,7 @@
       if (typeof t.bubbleColor === 'string' && /^#([0-9a-f]{3}){1,2}$/i.test(t.bubbleColor)) {
         accent = t.bubbleColor;
       }
+      if (SIZES[t.size]) sz = SIZES[t.size];
       // Re-render styles now that theme is known.
       applyStyles();
       applyConfig(cfg);
