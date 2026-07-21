@@ -697,6 +697,11 @@
     return api('GET', '/public/messages' + q).then(function (res) {
       if (res.ownerReadAt !== undefined) state.ownerReadAt = res.ownerReadAt;
       if (res.ownerDeliveredAt !== undefined) state.ownerDeliveredAt = res.ownerDeliveredAt;
+      // Live owner presence — flip the header Online ↔ Away as it changes.
+      if (typeof res.ownerOnline === 'boolean') {
+        el.stTxt.textContent = res.ownerOnline ? 'Online' : 'Away';
+        el.st.classList.toggle('away', !res.ownerOnline);
+      }
       var ownerNew = 0;
       (res.messages || []).forEach(function (m) {
         var isNew = !(m.id && state.seen[m.id]);

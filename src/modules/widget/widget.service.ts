@@ -716,10 +716,18 @@ export async function visitorGetMessages(token: string, since?: string, limit = 
     select: { lastReadAt: true, lastDeliveredAt: true },
   });
 
+  // Live owner presence so the widget header can flip Online ↔ Away on each poll
+  // (it's only a snapshot at page load otherwise).
+  const owner = await prisma.user.findUnique({
+    where: { id: visitor.widgetConfig.userId },
+    select: { isOnline: true },
+  });
+
   // Tag each message from the visitor's perspective without exposing the
   // owner's raw user id.
   return {
     conversationId: visitor.conversationId,
+    ownerOnline: owner?.isOnline ?? false,
     ownerReadAt: ownerParticipant?.lastReadAt ?? null,
     ownerDeliveredAt: ownerParticipant?.lastDeliveredAt ?? null,
     messages: messages.map((m) => ({
