@@ -213,8 +213,14 @@
       '.panel{position:absolute;bottom:' + (sz.bubble + 14) + 'px;' + side + ':0;width:' + sz.panelW + 'px;max-width:calc(100vw - 40px);' +
       'height:' + sz.panelH + 'px;max-height:calc(100vh - 120px);border-radius:18px;overflow:hidden;' +
       'background-color:#f4f5f7;background-image:radial-gradient(rgba(0,0,0,.06) 1.1px,transparent 1.1px);background-size:16px 16px;' +
-      'box-shadow:0 12px 40px rgba(0,0,0,.28);display:none;flex-direction:column}' +
-      '.panel.open{display:flex}' +
+      'box-shadow:0 12px 40px rgba(0,0,0,.28);display:flex;flex-direction:column;' +
+      // Smooth open/close: scale + fade from the bubble corner. visibility is
+      // delayed on close so the panel animates out before it stops rendering.
+      'opacity:0;visibility:hidden;pointer-events:none;transform:translateY(12px) scale(.92);' +
+      'transform-origin:bottom ' + side + ';' +
+      'transition:opacity .2s ease,transform .28s cubic-bezier(.2,.9,.25,1.2),visibility 0s linear .3s}' +
+      '.panel.open{opacity:1;visibility:visible;pointer-events:auto;transform:none;' +
+      'transition:opacity .2s ease,transform .28s cubic-bezier(.2,.9,.25,1.2),visibility 0s}' +
       // Header — compact, light bar (no full accent flood): avatar, name +
       // accent online dot, subtle grey action buttons. Keeps chat space free.
       '.head{position:relative;z-index:1;background:#fff;color:#111;padding:8px 12px;margin:6px 6px 0;display:flex;align-items:center;gap:9px;' +
