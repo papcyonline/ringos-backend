@@ -1576,6 +1576,7 @@ model WebVisitor {
   email          String?
   // Visitor context for live-chat (all best-effort, shown to the owner).
   country        String?   // resolved country name (from CF-IPCountry)
+  countryCode    String?   // ISO alpha-2 (from CF-IPCountry) → flag emoji
   city           String?   // resolved city (best-effort IP geolocation)
   pageUrl        String?   // the page the visitor started chatting from
   referrer       String?   // where the visitor came from (document.referrer)

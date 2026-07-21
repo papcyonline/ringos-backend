@@ -95,7 +95,7 @@ export async function listVisitors(userId: string, limit = 100) {
     take: Math.min(limit, 200),
     select: {
       id: true, name: true, email: true, originDomain: true,
-      country: true, city: true, pageUrl: true, referrer: true,
+      country: true, countryCode: true, city: true, pageUrl: true, referrer: true,
       conversationId: true, blockedAt: true, createdAt: true, lastSeenAt: true,
     },
   });
@@ -266,6 +266,20 @@ function countryName(code?: string): string | undefined {
   }
 }
 
+/** Normalise a CF-IPCountry value to a clean ISO alpha-2 code (or null). */
+function normalizeCountryCode(code?: string | null): string | null {
+  if (!code || !/^[A-Za-z]{2}$/.test(code)) return null;
+  const cc = code.toUpperCase();
+  return cc === 'XX' || cc === 'T1' ? null : cc;
+}
+
+/** ISO alpha-2 code → flag emoji, via Unicode regional-indicator letters. */
+function codeToFlag(code?: string | null): string | undefined {
+  const cc = normalizeCountryCode(code);
+  if (!cc) return undefined;
+  return String.fromCodePoint(...[...cc].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
+
 /** Best-effort city lookup by IP. Non-fatal, short timeout — never blocks a session. */
 async function lookupCity(ip?: string): Promise<string | undefined> {
   if (!ip || ip === '127.0.0.1' || ip.startsWith('192.168.') || ip === '::1') return undefined;
@@ -313,13 +327,16 @@ function shortUrl(u?: string | null): string | undefined {
 
 /** The context line shown at the top of the owner's WIDGET conversation. */
 function contextLine(v: {
-  country?: string | null; city?: string | null; userAgent?: string | null;
-  pageUrl?: string | null; referrer?: string | null; email?: string | null;
+  country?: string | null; countryCode?: string | null; city?: string | null;
+  userAgent?: string | null; pageUrl?: string | null; referrer?: string | null;
+  email?: string | null;
 }): string | null {
   const parts: string[] = [];
   if (v.email) parts.push('✉️ ' + v.email);
+  const flag = codeToFlag(v.countryCode);
   const loc = [v.city, v.country].filter(Boolean).join(', ');
-  if (loc) parts.push('🌍 ' + loc);
+  if (loc) parts.push('🌍 ' + (flag ? flag + ' ' : '') + loc);
+  else if (flag) parts.push('🌍 ' + flag);
   const dev = parseUA(v.userAgent);
   if (dev) parts.push('💻 ' + dev);
   const page = shortUrl(v.pageUrl);
@@ -384,6 +401,7 @@ export async function startSession(input: {
 
   // Resolve visitor context (best-effort; city lookup is capped + non-fatal).
   const country = countryName(input.country);
+  const countryCode = normalizeCountryCode(input.country);
   const city = await lookupCity(input.ip);
 
   // Resume path.
@@ -400,6 +418,7 @@ export async function startSession(input: {
           ...(input.name && { name: input.name }),
           ...(input.email && { email: input.email }),
           ...(country && { country }),
+          ...(countryCode && { countryCode }),
           ...(city && { city }),
           ...(input.pageUrl && { pageUrl: input.pageUrl.slice(0, 2000) }),
           ...(input.referrer && { referrer: input.referrer.slice(0, 2000) }),
@@ -431,6 +450,7 @@ export async function startSession(input: {
           expiresAt: new Date(Date.now() + VISITOR_TTL_MS),
           ...(input.name && { name: input.name }),
           ...(country && { country }),
+          ...(countryCode && { countryCode }),
           ...(city && { city }),
           ...(input.pageUrl && { pageUrl: input.pageUrl.slice(0, 2000) }),
           ...(input.referrer && { referrer: input.referrer.slice(0, 2000) }),
@@ -454,6 +474,7 @@ export async function startSession(input: {
       userAgent: input.userAgent?.slice(0, 400) ?? null,
       originDomain: input.originHost ?? null,
       country: country ?? null,
+      countryCode: countryCode ?? null,
       city: city ?? null,
       pageUrl: input.pageUrl?.slice(0, 2000) ?? null,
       referrer: input.referrer?.slice(0, 2000) ?? null,
@@ -493,6 +514,7 @@ async function ensureConversation(visitor: {
   shadowUserId: string;
   widgetConfig: { userId: string };
   country?: string | null;
+  countryCode?: string | null;
   city?: string | null;
   userAgent?: string | null;
   pageUrl?: string | null;
@@ -534,6 +556,7 @@ async function ensureConversation(visitor: {
           widgetContext: true,
           email: visitor.email ?? null,
           country: visitor.country ?? null,
+          countryCode: visitor.countryCode ?? null,
           city: visitor.city ?? null,
           pageUrl: visitor.pageUrl ?? null,
           referrer: visitor.referrer ?? null,
