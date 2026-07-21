@@ -144,6 +144,10 @@
   }
 
   // ── UI (Shadow DOM) ────────────────────────────────────────────────
+  // Guard against a double embed (snippet pasted in both header + footer, or a
+  // theme that includes it twice) — otherwise two widgets stack up.
+  if (document.querySelector('[data-yomeet-widget="' + handle + '"]')) return;
+
   var host = document.createElement('div');
   host.setAttribute('data-yomeet-widget', handle);
   // Attach to <html>, not <body>. Frameworks that render into <body> (e.g.
@@ -279,8 +283,29 @@
   var X_ICON =
     '<svg viewBox="0 0 24 24"><path d="M18.3 5.7a1 1 0 00-1.42 0L12 10.59 7.11 5.7A1 1 0 105.7 7.11L10.59 12 5.7 16.89a1 1 0 101.41 1.41L12 13.41l4.89 4.89a1 1 0 001.41-1.41L13.41 12l4.89-4.89a1 1 0 000-1.41z"/></svg>';
 
+  // Style injection that survives a strict Content-Security-Policy. On
+  // security-hardened sites a `style-src` without 'unsafe-inline' blocks a
+  // plain <style> tag (even inside a shadow root) → an unstyled widget. A
+  // constructable stylesheet (adoptedStyleSheets) is not treated as inline, so
+  // it renders under strict CSP. Fall back to <style> on older browsers.
+  var styleSheet = null;
+  function applyStyles() {
+    var cssText = css();
+    if (styleSheet) { styleSheet.replaceSync(cssText); return; }
+    try {
+      if (typeof CSSStyleSheet !== 'undefined' && 'replaceSync' in CSSStyleSheet.prototype) {
+        styleSheet = new CSSStyleSheet();
+        styleSheet.replaceSync(cssText);
+        root.adoptedStyleSheets = [styleSheet];
+        return;
+      }
+    } catch (e) { styleSheet = null; /* fall through to a <style> tag */ }
+    var styleEl = root.querySelector('style');
+    if (!styleEl) { styleEl = document.createElement('style'); root.insertBefore(styleEl, root.firstChild); }
+    styleEl.textContent = cssText;
+  }
+
   root.innerHTML =
-    '<style>' + css() + '</style>' +
     '<div class="wrap">' +
     '  <div class="panel" part="panel">' +
     '    <div class="head">' +
@@ -316,6 +341,8 @@
     '  </div>' +
     '  <button class="bubble" aria-label="Chat">' + CHAT_ICON + '<span class="badge"></span></button>' +
     '</div>';
+
+  applyStyles(); // initial styles (defaults; re-applied once the theme loads)
 
   var el = {
     bubble: root.querySelector('.bubble'),
@@ -782,7 +809,7 @@
         accent = t.bubbleColor;
       }
       // Re-render styles now that theme is known.
-      root.querySelector('style').textContent = css();
+      applyStyles();
       applyConfig(cfg);
     })
     .catch(function (e) {
