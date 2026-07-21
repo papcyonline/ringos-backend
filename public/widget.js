@@ -289,6 +289,34 @@
       '.foot .send{border:none;background:' + accent + ';color:#fff;border-radius:50%;width:40px;height:40px;min-width:40px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}' +
       '.foot .send svg{width:20px;height:20px;fill:#fff;margin:1px 0 0 1px}' +
       '.foot .send:disabled{opacity:.5;cursor:default}' +
+      // Mic + record — idle/empty shows the mic; typing shows send; recording
+      // swaps the input for a recording bar and shows send (to finish).
+      '.foot .mic{border:none;background:' + accent + ';color:#fff;border-radius:50%;width:40px;height:40px;min-width:40px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}' +
+      '.foot .mic svg{width:21px;height:21px;fill:#fff}' +
+      '.foot .send{display:none}' +
+      '.foot.has-text .mic{display:none}' +
+      '.foot.has-text .send{display:flex}' +
+      '.foot.recording .inwrap{display:none}' +
+      '.foot.recording .mic{display:none}' +
+      '.foot.recording .send{display:flex}' +
+      '.recbar{display:none;flex:1;align-items:center;gap:10px;background:#f1f2f4;border:1px solid #e3e5e9;border-radius:22px;padding:8px 14px;min-width:0}' +
+      '.foot.recording .recbar{display:flex}' +
+      '.recbar .rec-dot{width:10px;height:10px;border-radius:50%;background:#ff3b30;flex:none;animation:ymrec 1s ease-in-out infinite}' +
+      '@keyframes ymrec{0%,100%{opacity:1}50%{opacity:.25}}' +
+      '.recbar .rec-time{font-size:14px;color:#333;flex:1}' +
+      '.recbar .rec-cancel{border:none;background:none;color:#888;font-size:20px;cursor:pointer;padding:0 2px;line-height:1}' +
+      // Voice-note bubble: play/pause + progress + countdown.
+      '.msg.audio{min-width:186px}' +
+      '.msg .aud{display:flex;align-items:center;gap:9px;padding:2px 2px 4px}' +
+      '.msg .aud-play{border:none;border-radius:50%;width:32px;height:32px;min-width:32px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}' +
+      '.msg.them .aud-play{background:' + accent + '}.msg.me .aud-play{background:rgba(255,255,255,.92)}' +
+      '.msg .aud-play svg{width:16px;height:16px}' +
+      '.msg.them .aud-play svg{fill:#fff}.msg.me .aud-play svg{fill:' + accent + '}' +
+      '.msg .aud-bar{flex:1;height:3px;border-radius:2px;position:relative;min-width:60px}' +
+      '.msg.them .aud-bar{background:rgba(0,0,0,.12)}.msg.me .aud-bar{background:rgba(255,255,255,.35)}' +
+      '.msg .aud-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:2px}' +
+      '.msg.them .aud-fill{background:' + accent + '}.msg.me .aud-fill{background:#fff}' +
+      '.msg .aud-time{font-size:11px;opacity:.75;flex:none;min-width:30px;text-align:right}' +
       '.greet{align-self:flex-start;color:#666;font-size:13px;padding:4px 2px}' +
       // Pre-chat name step.
       '.namebar{position:relative;z-index:1;padding:12px;margin:0 6px;background:#fff;display:none;flex-direction:column;gap:8px;' +
@@ -336,6 +364,10 @@
   var TICK_SINGLE =
     '<svg viewBox="0 0 18 12"><path d="M6.5 9.6L3.2 6.3A.9.9 0 101.93 7.6l3.94 3.94c.35.35.92.35 1.27 0L15.9 2.98A.9.9 0 1014.63 1.7L6.5 9.6z"/></svg>';
   var MIN_ICON = '<svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>';
+  var MIC_ICON =
+    '<svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 003-3V6a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V22h2v-3.08A7 7 0 0019 12h-2z"/></svg>';
+  var AUDIO_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+  var AUDIO_PAUSE = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
   // Blue verified seal + white check, shown next to a verified owner's name.
   var VERIFIED_ICON =
     '<svg class="vf" viewBox="0 0 24 24" aria-label="Verified">' +
@@ -395,6 +427,9 @@
     '        <button type="button" class="plus" aria-label="Send image">' + PLUS_ICON + '</button>' +
     '        <input class="in" placeholder="Type a message…" autocomplete="off"/>' +
     '      </div>' +
+    '      <div class="recbar"><span class="rec-dot"></span><span class="rec-time">0:00</span>' +
+    '        <button type="button" class="rec-cancel" aria-label="Cancel recording">&times;</button></div>' +
+    '      <button type="button" class="mic" aria-label="Record voice note">' + MIC_ICON + '</button>' +
     '      <button type="submit" class="send" aria-label="Send">' + SEND_ICON + '</button>' +
     '      <input type="file" class="file" accept="image/*" hidden/>' +
     '    </form>' +
@@ -427,6 +462,10 @@
     pwLink: root.querySelector('.pw-link'),
     input: root.querySelector('.in'),
     send: root.querySelector('.foot .send'),
+    mic: root.querySelector('.foot .mic'),
+    recbar: root.querySelector('.recbar'),
+    recTime: root.querySelector('.rec-time'),
+    recCancel: root.querySelector('.rec-cancel'),
     attach: root.querySelector('.plus'),
     file: root.querySelector('.file'),
     lead: root.querySelector('.lead'),
@@ -492,6 +531,53 @@
     }
   }
 
+  function fmtClock(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    var mm = Math.floor(sec / 60), ss = sec % 60;
+    return mm + ':' + (ss < 10 ? '0' : '') + ss;
+  }
+
+  // A compact voice-note player: play/pause + progress bar + a countdown time.
+  function renderAudio(url, duration) {
+    var wrap = document.createElement('div');
+    wrap.className = 'aud';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'aud-play';
+    btn.innerHTML = AUDIO_PLAY;
+    var bar = document.createElement('div');
+    bar.className = 'aud-bar';
+    var fill = document.createElement('div');
+    fill.className = 'aud-fill';
+    bar.appendChild(fill);
+    var time = document.createElement('span');
+    time.className = 'aud-time';
+    time.textContent = fmtClock(duration);
+    var audio = new Audio(url);
+    var playing = false;
+    audio.addEventListener('timeupdate', function () {
+      var d = (audio.duration && isFinite(audio.duration)) ? audio.duration : (duration || 0);
+      if (d > 0) fill.style.width = (audio.currentTime / d * 100) + '%';
+      time.textContent = fmtClock(d - audio.currentTime);
+    });
+    audio.addEventListener('ended', function () {
+      playing = false;
+      btn.innerHTML = AUDIO_PLAY;
+      fill.style.width = '0%';
+      audio.currentTime = 0;
+      time.textContent = fmtClock(duration);
+    });
+    btn.addEventListener('click', function () {
+      if (playing) { audio.pause(); btn.innerHTML = AUDIO_PLAY; }
+      else { audio.play(); btn.innerHTML = AUDIO_PAUSE; }
+      playing = !playing;
+    });
+    wrap.appendChild(btn);
+    wrap.appendChild(bar);
+    wrap.appendChild(time);
+    return wrap;
+  }
+
   // Renders a message row (owner avatar on incoming + bubble) and returns the
   // bubble element so the caller can later stamp a server id/timestamp on it.
   function addMessage(m) {
@@ -535,6 +621,9 @@
         cap.textContent = m.content;
         div.appendChild(cap);
       }
+    } else if (m.audioUrl) {
+      div.className += ' audio';
+      div.appendChild(renderAudio(m.audioUrl, m.audioDuration, m.fromVisitor));
     } else {
       var txt = document.createElement('span');
       txt.textContent = m.content == null ? '' : String(m.content);
@@ -873,6 +962,8 @@
   // Outbound typing → the owner's app shows "…is typing". Throttled to 1 ping /
   // 2s (the server auto-clears after 5s), and only once a session exists.
   el.input.addEventListener('input', function () {
+    // Show the send button when there's text, the mic button when empty.
+    el.foot.classList.toggle('has-text', el.input.value.trim().length > 0);
     var now = Date.now();
     if (state.token && now - state.lastTyping > 2000) {
       state.lastTyping = now;
@@ -880,11 +971,123 @@
     }
   });
 
+  // ── voice notes ─────────────────────────────────────────────────────
+  // Record to WAV (via Web Audio) so the clip plays everywhere — the owner's
+  // iOS/Android app and any browser. MediaRecorder's webm/opus wouldn't play on
+  // iOS, so we capture PCM and encode a 16-bit WAV ourselves.
+  var rec = { active: false, ctx: null, src: null, proc: null, stream: null,
+    chunks: [], sampleRate: 0, startTs: 0, timer: null };
+
+  function recTick() {
+    var s = Math.floor((Date.now() - rec.startTs) / 1000);
+    el.recTime.textContent = fmtClock(s);
+  }
+
+  function recStart() {
+    if (rec.active) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+      rec.stream = stream;
+      rec.ctx = new AC();
+      rec.sampleRate = rec.ctx.sampleRate;
+      rec.src = rec.ctx.createMediaStreamSource(stream);
+      rec.proc = rec.ctx.createScriptProcessor(4096, 1, 1);
+      rec.chunks = [];
+      rec.proc.onaudioprocess = function (e) {
+        rec.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      };
+      rec.src.connect(rec.proc);
+      rec.proc.connect(rec.ctx.destination);
+      rec.active = true;
+      rec.startTs = Date.now();
+      el.recTime.textContent = '0:00';
+      el.foot.classList.add('recording');
+      rec.timer = setInterval(recTick, 250);
+    }).catch(function (err) {
+      console.warn('[Yomeet widget] microphone unavailable', err && err.message);
+    });
+  }
+
+  function recTeardown() {
+    clearInterval(rec.timer);
+    try { rec.proc && rec.proc.disconnect(); rec.src && rec.src.disconnect(); } catch (e) { /* ignore */ }
+    if (rec.stream) rec.stream.getTracks().forEach(function (t) { t.stop(); });
+    try { rec.ctx && rec.ctx.close(); } catch (e) { /* ignore */ }
+    rec.active = false;
+    el.foot.classList.remove('recording');
+  }
+
+  function recStop(send) {
+    if (!rec.active) return;
+    var dur = Math.round((Date.now() - rec.startTs) / 1000);
+    var chunks = rec.chunks;
+    var sr = rec.sampleRate;
+    recTeardown();
+    if (!send || dur < 1) return;
+    var total = chunks.reduce(function (a, c) { return a + c.length; }, 0);
+    var pcm = new Float32Array(total);
+    var off = 0;
+    chunks.forEach(function (c) { pcm.set(c, off); off += c.length; });
+    var blob = new Blob([encodeWav(pcm, sr)], { type: 'audio/wav' });
+    uploadAudio(blob, dur);
+  }
+
+  // 16-bit mono PCM → WAV container.
+  function encodeWav(samples, sampleRate) {
+    var buf = new ArrayBuffer(44 + samples.length * 2);
+    var view = new DataView(buf);
+    function str(off, s) { for (var i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); }
+    str(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); str(8, 'WAVE');
+    str(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true); str(36, 'data'); view.setUint32(40, samples.length * 2, true);
+    var o = 44;
+    for (var i = 0; i < samples.length; i++) {
+      var s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      o += 2;
+    }
+    return view;
+  }
+
+  function uploadAudio(blob, dur) {
+    var echo = null;
+    ensureSession().then(function () {
+      echo = addMessage({ audioUrl: URL.createObjectURL(blob), audioDuration: dur, fromVisitor: true, createdAt: new Date().toISOString() });
+      var fd = new FormData();
+      fd.append('audio', blob, 'voice.wav');
+      fd.append('duration', String(dur));
+      var headers = {};
+      if (state.token) headers['x-widget-token'] = state.token;
+      return fetch(API + '/api/widget/public/messages/audio', { method: 'POST', headers: headers, body: fd })
+        .then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (d) {
+            if (!r.ok) throw new Error((d && d.error && d.error.message) || 'Upload failed');
+            return d;
+          });
+        });
+    }).then(function (msg) {
+      stampEcho(echo, msg);
+      openStream();
+    }).catch(function (err) {
+      console.warn('[Yomeet widget]', err.message);
+    });
+  }
+
+  el.mic.addEventListener('click', recStart);
+  el.recCancel.addEventListener('click', function () { recStop(false); });
+
   el.foot.addEventListener('submit', function (e) {
     e.preventDefault();
+    // While recording, the send button finishes + uploads the voice note.
+    if (rec.active) { recStop(true); return; }
     var text = el.input.value.trim();
     if (!text) return;
     el.input.value = '';
+    el.foot.classList.remove('has-text');
     el.send.disabled = true;
     var echo = null;
     ensureSession()

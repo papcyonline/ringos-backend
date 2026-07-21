@@ -8,7 +8,7 @@ import { checkRateLimit } from '../../shared/redis.service';
 import { getIO } from '../../config/socket';
 import * as chatService from '../chat/chat.service';
 import { broadcastAndNotifyMessage } from '../chat/chat.utils';
-import { fileToChatImageUrl } from '../../shared/upload';
+import { fileToChatImageUrl, fileToChatAudioUrl } from '../../shared/upload';
 import { createNotification, sendPushToUser } from '../notification/notification.service';
 import { setOnline, setOffline } from '../user/user.service';
 
@@ -634,6 +634,39 @@ export async function visitorSendImage(token: string, file: Express.Multer.File)
 }
 
 /**
+ * Visitor sends a voice note. The audio is uploaded to R2 (same path/limits as
+ * an in-app voice note), then delivered to the owner like any other message.
+ * [duration] is the recorded length in whole seconds (best-effort).
+ */
+export async function visitorSendAudio(
+  token: string,
+  file: Express.Multer.File,
+  duration?: number,
+) {
+  const visitor = await requireVisitor(token);
+
+  const rl = await checkRateLimit(`widget:msg:${visitor.id}`, MSG_MAX, MSG_WINDOW_SEC);
+  if (!rl.allowed) throw new ForbiddenError('Too many messages, please slow down');
+
+  const conversationId = await ensureConversation(visitor);
+  const audioUrl = await fileToChatAudioUrl(file, conversationId);
+  const message = await chatService.sendMessage(
+    conversationId,
+    visitor.shadowUserId,
+    '',
+    { audioUrl, audioDuration: duration && duration > 0 ? Math.round(duration) : undefined },
+  );
+
+  broadcastAndNotifyMessage(message, conversationId, visitor.shadowUserId);
+
+  await prisma.webVisitor.update({
+    where: { id: visitor.id },
+    data: { lastSeenAt: new Date(), expiresAt: new Date(Date.now() + VISITOR_TTL_MS) },
+  });
+  return message;
+}
+
+/**
  * Visitor polls their thread. Returns messages after [since] (a message id),
  * oldest→newest, so the widget can append. Socket streaming can layer on later.
  */
@@ -670,6 +703,8 @@ export async function visitorGetMessages(token: string, since?: string, limit = 
       createdAt: true,
       senderId: true,
       imageUrl: true,
+      audioUrl: true,
+      audioDuration: true,
     },
   });
 
@@ -692,6 +727,8 @@ export async function visitorGetMessages(token: string, since?: string, limit = 
       content: m.content,
       createdAt: m.createdAt,
       imageUrl: m.imageUrl,
+      audioUrl: m.audioUrl,
+      audioDuration: m.audioDuration,
       fromVisitor: m.senderId === visitor.shadowUserId,
     })),
   };

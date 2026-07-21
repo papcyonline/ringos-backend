@@ -13,7 +13,7 @@ import {
 } from './widget.schema';
 import * as widget from './widget.service';
 import { onWidgetEvent } from './widget.events';
-import { chatImageUpload } from '../../shared/upload';
+import { chatImageUpload, chatAudioUpload } from '../../shared/upload';
 
 const router = Router();
 
@@ -109,6 +109,27 @@ router.post(
     try {
       if (!req.file) throw new BadRequestError('No image uploaded');
       const message = await widget.visitorSendImage(visitorToken(req), req.file);
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /public/messages/audio — visitor sends a voice note (multipart, token in
+// header). `duration` (seconds) rides along as a form field.
+router.post(
+  '/public/messages/audio',
+  chatAudioUpload.single('audio'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) throw new BadRequestError('No audio uploaded');
+      const duration = Number(req.body.duration);
+      const message = await widget.visitorSendAudio(
+        visitorToken(req),
+        req.file,
+        Number.isFinite(duration) ? duration : undefined,
+      );
       res.status(201).json(message);
     } catch (err) {
       next(err);
