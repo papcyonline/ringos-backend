@@ -43,3 +43,7 @@ export const leadSchema = z.object({
   email: z.string().trim().email().max(160),
   message: z.string().trim().min(1).max(4000),
 });
+
+export const deleteLeadsSchema = z.object({
+  ids: z.array(z.string().trim().min(1).max(64)).min(1).max(200),
+});

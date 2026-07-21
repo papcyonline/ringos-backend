@@ -614,6 +614,19 @@ export async function listLeads(userId: string, limit = 100) {
   });
 }
 
+/**
+ * Delete leads by id. Scoped to the caller's own widget config so one owner can
+ * never delete another's leads. Returns the number actually removed.
+ */
+export async function deleteLeads(userId: string, ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const config = await getOrCreateConfig(userId);
+  const { count } = await prisma.widgetLead.deleteMany({
+    where: { id: { in: ids }, widgetConfigId: config.id },
+  });
+  return count;
+}
+
 // ─── maintenance ─────────────────────────────────────────────────────
 
 /**

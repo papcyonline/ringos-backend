@@ -9,6 +9,7 @@ import {
   startSessionSchema,
   visitorMessageSchema,
   leadSchema,
+  deleteLeadsSchema,
 } from './widget.schema';
 import * as widget from './widget.service';
 import { onWidgetEvent } from './widget.events';
@@ -226,6 +227,21 @@ router.get('/me/leads', authenticate, async (req: AuthRequest, res: Response, ne
     next(err);
   }
 });
+
+// POST /me/leads/delete — delete one or many leads by id.
+router.post(
+  '/me/leads/delete',
+  authenticate,
+  validate(deleteLeadsSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const deleted = await widget.deleteLeads(req.user!.userId, req.body.ids);
+      res.json({ deleted });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // POST /me/visitors/:id/block — block a visitor.
 router.post('/me/visitors/:id/block', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
