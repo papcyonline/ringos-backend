@@ -26,7 +26,7 @@ const SESSION_WINDOW_SEC = 60;
 // phone locks/backgrounds, so without this a momentary lock flaps the widget to
 // "Away". setOffline() stamps lastSeenAt, so a brief absence stays "online" and
 // only a sustained one flips to "Away".
-const PRESENCE_GRACE_MS = 2 * 60 * 1000; // 2 minutes
+const OWNER_PRESENCE_GRACE_MS = 2 * 60 * 1000; // 2 minutes
 
 /** Single source of truth for owner presence as seen by the widget. */
 function ownerIsOnline(
@@ -36,7 +36,7 @@ function ownerIsOnline(
   if (owner.isOnline) return true;
   return (
     !!owner.lastSeenAt &&
-    Date.now() - owner.lastSeenAt.getTime() < PRESENCE_GRACE_MS
+    Date.now() - owner.lastSeenAt.getTime() < OWNER_PRESENCE_GRACE_MS
   );
 }
 
