@@ -101,15 +101,14 @@ router.post(
   },
 );
 
-// POST /public/messages/image — visitor sends an image (multipart, token in
-// header). Optional `caption` field rides along as the message text.
+// POST /public/messages/image — visitor sends an image (multipart, token in header).
 router.post(
   '/public/messages/image',
   chatImageUpload.single('image'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       if (!req.file) throw new BadRequestError('No image uploaded');
-      const message = await widget.visitorSendImage(visitorToken(req), req.file, req.body.caption);
+      const message = await widget.visitorSendImage(visitorToken(req), req.file);
       res.status(201).json(message);
     } catch (err) {
       next(err);

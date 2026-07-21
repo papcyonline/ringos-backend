@@ -119,10 +119,10 @@ describe('visitorSendImage', () => {
     mockSendMessage.mockResolvedValue({ id: 'm1', imageUrl: 'https://cdn/x.jpg' });
     const file = { buffer: Buffer.from('x'), mimetype: 'image/jpeg' } as never;
 
-    const msg = await visitorSendImage(TOKEN, file, 'hi');
+    const msg = await visitorSendImage(TOKEN, file);
 
     expect(mockFileToUrl).toHaveBeenCalledWith(file, CONV);
-    expect(mockSendMessage).toHaveBeenCalledWith(CONV, SHADOW, 'hi', { imageUrl: 'https://cdn/x.jpg' });
+    expect(mockSendMessage).toHaveBeenCalledWith(CONV, SHADOW, '', { imageUrl: 'https://cdn/x.jpg' });
     expect(mockBroadcast).toHaveBeenCalledWith(msg, CONV, SHADOW);
   });
 

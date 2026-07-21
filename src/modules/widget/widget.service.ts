@@ -600,13 +600,9 @@ export async function visitorSendMessage(
 /**
  * Visitor sends an image. The file is uploaded to R2 under the conversation
  * (same path/limits as an in-app chat photo), then delivered to the owner like
- * any other message. Optional [caption] rides along as the message content.
+ * any other message.
  */
-export async function visitorSendImage(
-  token: string,
-  file: Express.Multer.File,
-  caption = '',
-) {
+export async function visitorSendImage(token: string, file: Express.Multer.File) {
   const visitor = await requireVisitor(token);
 
   const rl = await checkRateLimit(`widget:msg:${visitor.id}`, MSG_MAX, MSG_WINDOW_SEC);
@@ -617,7 +613,7 @@ export async function visitorSendImage(
   const message = await chatService.sendMessage(
     conversationId,
     visitor.shadowUserId,
-    caption.trim(),
+    '',
     { imageUrl },
   );
 

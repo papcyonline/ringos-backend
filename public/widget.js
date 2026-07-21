@@ -530,6 +530,18 @@
     });
   }
 
+  // Stamp the server id + timestamp onto an optimistic echo bubble, and advance
+  // the cursor so the poller never re-adds the just-sent message as a duplicate.
+  function stampEcho(echo, msg) {
+    if (!msg || !msg.id) return;
+    state.seen[msg.id] = 1;
+    state.lastId = msg.id;
+    if (echo) {
+      echo.setAttribute('data-mid', msg.id);
+      if (msg.createdAt) echo.setAttribute('data-created', msg.createdAt);
+    }
+  }
+
   // Tell the owner the visitor has read the thread (blue ticks on the owner's
   // side). Debounced; only meaningful once a conversation and panel exist.
   var lastRead = 0;
@@ -689,16 +701,7 @@
         return uploadImage(f);
       })
       .then(function (msg) {
-        // Advance the cursor so the poll/SSE refresh doesn't re-add the server
-        // copy as a duplicate of the optimistic bubble (same as text sends).
-        if (msg && msg.id) {
-          state.seen[msg.id] = 1;
-          state.lastId = msg.id;
-          if (echo) {
-            echo.setAttribute('data-mid', msg.id);
-            if (msg.createdAt) echo.setAttribute('data-created', msg.createdAt);
-          }
-        }
+        stampEcho(echo, msg);
         openStream();
       })
       .catch(function (err) {
@@ -743,16 +746,7 @@
         return api('POST', '/public/messages', { content: text });
       })
       .then(function (msg) {
-        // Record the server id + advance the cursor so the poller never
-        // re-adds this just-sent message as a duplicate of the optimistic echo.
-        if (msg && msg.id) {
-          state.seen[msg.id] = 1;
-          state.lastId = msg.id;
-          if (echo) {
-            echo.setAttribute('data-mid', msg.id);
-            if (msg.createdAt) echo.setAttribute('data-created', msg.createdAt);
-          }
-        }
+        stampEcho(echo, msg);
         openStream(); // the conversation now exists → start instant push
         el.send.disabled = false;
       })
