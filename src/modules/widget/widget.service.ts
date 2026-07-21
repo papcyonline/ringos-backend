@@ -8,6 +8,7 @@ import { checkRateLimit } from '../../shared/redis.service';
 import { getIO } from '../../config/socket';
 import * as chatService from '../chat/chat.service';
 import { broadcastAndNotifyMessage } from '../chat/chat.utils';
+import { fileToChatImageUrl } from '../../shared/upload';
 import { createNotification, sendPushToUser } from '../notification/notification.service';
 
 // Visitor session length. Refreshed on activity; a cron prunes past this.
@@ -501,6 +502,39 @@ export async function visitorSendMessage(
 
   // Deliver to the owner exactly like an app message: conversation room,
   // inbox rooms, push notification, background translation.
+  broadcastAndNotifyMessage(message, conversationId, visitor.shadowUserId);
+
+  await prisma.webVisitor.update({
+    where: { id: visitor.id },
+    data: { lastSeenAt: new Date(), expiresAt: new Date(Date.now() + VISITOR_TTL_MS) },
+  });
+  return message;
+}
+
+/**
+ * Visitor sends an image. The file is uploaded to R2 under the conversation
+ * (same path/limits as an in-app chat photo), then delivered to the owner like
+ * any other message. Optional [caption] rides along as the message content.
+ */
+export async function visitorSendImage(
+  token: string,
+  file: Express.Multer.File,
+  caption = '',
+) {
+  const visitor = await requireVisitor(token);
+
+  const rl = await checkRateLimit(`widget:msg:${visitor.id}`, MSG_MAX, MSG_WINDOW_SEC);
+  if (!rl.allowed) throw new ForbiddenError('Too many messages, please slow down');
+
+  const conversationId = await ensureConversation(visitor);
+  const imageUrl = await fileToChatImageUrl(file, conversationId);
+  const message = await chatService.sendMessage(
+    conversationId,
+    visitor.shadowUserId,
+    caption.trim(),
+    { imageUrl },
+  );
+
   broadcastAndNotifyMessage(message, conversationId, visitor.shadowUserId);
 
   await prisma.webVisitor.update({

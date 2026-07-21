@@ -13,6 +13,7 @@ import {
 } from './widget.schema';
 import * as widget from './widget.service';
 import { onWidgetEvent } from './widget.events';
+import { chatImageUpload } from '../../shared/upload';
 
 const router = Router();
 
@@ -93,6 +94,22 @@ router.post(
         req.body.content,
         req.body.clientMsgId,
       );
+      res.status(201).json(message);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /public/messages/image — visitor sends an image (multipart, token in
+// header). Optional `caption` field rides along as the message text.
+router.post(
+  '/public/messages/image',
+  chatImageUpload.single('image'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) throw new BadRequestError('No image uploaded');
+      const message = await widget.visitorSendImage(visitorToken(req), req.file, req.body.caption);
       res.status(201).json(message);
     } catch (err) {
       next(err);

@@ -114,6 +114,32 @@
     }
   }
 
+  // Multipart image upload — separate from api() because it must NOT set a JSON
+  // Content-Type (the browser sets the multipart boundary itself).
+  function uploadImage(file) {
+    var fd = new FormData();
+    fd.append('image', file);
+    var headers = {};
+    if (state.token) headers['x-widget-token'] = state.token;
+    return fetch(API + '/api/widget/public/messages/image', {
+      method: 'POST',
+      headers: headers,
+      body: fd,
+    }).then(function (r) {
+      return r
+        .json()
+        .catch(function () {
+          return {};
+        })
+        .then(function (data) {
+          if (!r.ok) {
+            throw new Error((data && data.error && data.error.message) || 'Upload failed');
+          }
+          return data;
+        });
+    });
+  }
+
   // ── UI (Shadow DOM) ────────────────────────────────────────────────
   var host = document.createElement('div');
   host.setAttribute('data-yomeet-widget', handle);
@@ -142,30 +168,53 @@
       'background:#ff3b30;color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;' +
       'box-shadow:0 0 0 2px #fff;display:none}' +
       '.badge.show{display:block}' +
-      '.panel{position:absolute;bottom:74px;' + side + ':0;width:340px;max-width:calc(100vw - 40px);' +
-      'height:460px;max-height:calc(100vh - 120px);background:#fff;border-radius:16px;overflow:hidden;' +
+      '.panel{position:absolute;bottom:74px;' + side + ':0;width:344px;max-width:calc(100vw - 40px);' +
+      'height:470px;max-height:calc(100vh - 120px);background:#fff;border-radius:18px;overflow:hidden;' +
       'box-shadow:0 12px 40px rgba(0,0,0,.28);display:none;flex-direction:column}' +
       '.panel.open{display:flex}' +
-      '.head{background:' + accent + ';color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}' +
-      '.head img{width:34px;height:34px;border-radius:50%;object-fit:cover;background:rgba(255,255,255,.2)}' +
-      '.head .nm{font-weight:600;font-size:15px;line-height:1.1}' +
-      '.head .st{font-size:12px;opacity:.85}' +
-      '.head .x{margin-' + (side === 'right' ? 'left' : 'right') + ':auto;cursor:pointer;font-size:20px;opacity:.9;background:none;border:none;color:#fff}' +
-      '.body{flex:1;overflow-y:auto;padding:14px;background:#f5f6f8;display:flex;flex-direction:column;gap:8px}' +
-      // Bubbles mirror the Yomeet app chat: 18px rounding with a small tail,
-      // brand-green outgoing, white incoming.
-      '.msg{max-width:80%;padding:9px 13px;border-radius:18px;font-size:14px;line-height:1.4;word-wrap:break-word}' +
-      '.msg.them{align-self:flex-start;background:#fff;color:#1a1a1a;border-radius:18px 18px 18px 5px;box-shadow:0 1px 2px rgba(0,0,0,.08)}' +
-      '.msg.me{align-self:flex-end;background:' + accent + ';color:#fff;border-radius:18px 18px 5px 18px}' +
-      '.typing{align-self:flex-start;background:#fff;border-radius:18px 18px 18px 5px;box-shadow:0 1px 2px rgba(0,0,0,.08);padding:12px 14px;display:flex;gap:4px}' +
+      // Header — avatar, name + online dot, and round translucent action buttons.
+      '.head{background:' + accent + ';color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px}' +
+      '.head img{width:38px;height:38px;border-radius:50%;object-fit:cover;background:rgba(255,255,255,.25);flex:none}' +
+      '.head .meta{min-width:0;flex:1}' +
+      '.head .nm{font-weight:600;font-size:15px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '.head .st{font-size:12px;opacity:.92;display:flex;align-items:center;gap:5px;margin-top:1px}' +
+      '.head .dot{width:7px;height:7px;border-radius:50%;background:#7be07b;box-shadow:0 0 0 2px rgba(255,255,255,.25);flex:none}' +
+      '.head .st.away .dot{background:#dfe2e6}' +
+      '.head .btns{display:flex;gap:8px;flex:none}' +
+      '.head .hbtn{width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.2);border:none;color:#fff;' +
+      'cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:background .15s}' +
+      '.head .hbtn:hover{background:rgba(255,255,255,.35)}' +
+      '.head .hbtn svg{width:16px;height:16px;fill:#fff}' +
+      '.body{flex:1;overflow-y:auto;padding:14px;background:#eceff3;display:flex;flex-direction:column;gap:9px}' +
+      // Bubbles with a pointed tail ("horn") on the bottom outer corner, mirroring
+      // the app chat: brand-accent outgoing (right), white incoming (left).
+      '.msg{position:relative;max-width:80%;padding:9px 13px;font-size:14px;line-height:1.4;word-wrap:break-word;box-shadow:0 1px 1px rgba(0,0,0,.08)}' +
+      '.msg.them{align-self:flex-start;background:#fff;color:#1a1a1a;border-radius:16px 16px 16px 4px}' +
+      '.msg.me{align-self:flex-end;background:' + accent + ';color:#fff;border-radius:16px 16px 4px 16px}' +
+      '.msg.them::after{content:"";position:absolute;left:-6px;bottom:1px;width:0;height:0;' +
+      'border-top:6px solid transparent;border-bottom:6px solid transparent;border-right:8px solid #fff}' +
+      '.msg.me::after{content:"";position:absolute;right:-6px;bottom:1px;width:0;height:0;' +
+      'border-top:6px solid transparent;border-bottom:6px solid transparent;border-left:8px solid ' + accent + '}' +
+      // Image messages.
+      '.msg.img{padding:4px;max-width:72%}' +
+      '.msg.img img{display:block;width:100%;max-width:220px;max-height:260px;object-fit:cover;border-radius:13px;cursor:pointer}' +
+      '.msg .cap{padding:5px 7px 2px;font-size:13px}' +
+      '.typing{position:relative;align-self:flex-start;background:#fff;border-radius:16px 16px 16px 4px;box-shadow:0 1px 1px rgba(0,0,0,.08);padding:12px 14px;display:flex;gap:4px}' +
+      '.typing::after{content:"";position:absolute;left:-6px;bottom:1px;width:0;height:0;' +
+      'border-top:6px solid transparent;border-bottom:6px solid transparent;border-right:8px solid #fff}' +
       '.typing span{width:7px;height:7px;border-radius:50%;background:#bbb;display:inline-block;animation:ymtype 1.2s infinite}' +
       '.typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}' +
       '@keyframes ymtype{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}' +
-      '.foot{border-top:1px solid #ececec;padding:10px;display:flex;gap:8px;background:#fff;align-items:center}' +
-      '.foot input{flex:1;border:1px solid #dcdcdc;border-radius:22px;padding:10px 15px;font-size:14px;outline:none}' +
-      '.foot button{border:none;background:' + accent + ';color:#fff;border-radius:50%;width:40px;height:40px;min-width:40px;cursor:pointer;display:flex;align-items:center;justify-content:center}' +
-      '.foot button svg{width:19px;height:19px;fill:#fff;margin-left:1px}' +
-      '.foot button:disabled{opacity:.5;cursor:default}' +
+      // Footer — image attach button, input, and the app\'s Telegram send button.
+      '.foot{border-top:1px solid #ececec;padding:8px 10px;display:flex;gap:6px;background:#fff;align-items:center}' +
+      '.foot input.in{flex:1;min-width:0;border:1px solid #dcdcdc;border-radius:22px;padding:10px 15px;font-size:14px;outline:none}' +
+      '.foot input.in:focus{border-color:' + accent + '}' +
+      '.foot .attach{background:none;border:none;width:38px;height:38px;min-width:38px;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center}' +
+      '.foot .attach svg{width:23px;height:23px;fill:#8a8f98;transition:fill .15s}' +
+      '.foot .attach:hover svg{fill:' + accent + '}' +
+      '.foot .send{border:none;background:' + accent + ';color:#fff;border-radius:50%;width:40px;height:40px;min-width:40px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}' +
+      '.foot .send svg{width:20px;height:20px;fill:#fff;margin:1px 0 0 1px}' +
+      '.foot .send:disabled{opacity:.5;cursor:default}' +
       '.greet{align-self:flex-start;color:#666;font-size:13px;padding:4px 2px}' +
       // Pre-chat name step.
       '.namebar{border-top:1px solid #ececec;padding:12px;background:#fff;display:none;flex-direction:column;gap:8px}' +
@@ -186,9 +235,16 @@
 
   var CHAT_ICON =
     '<svg viewBox="0 0 24 24"><path d="M12 3C6.5 3 2 6.9 2 11.7c0 2.2.98 4.2 2.6 5.7L4 21l4.2-1.4c1.2.4 2.5.6 3.8.6 5.5 0 10-3.9 10-8.5S17.5 3 12 3z"/></svg>';
-  // Paper-plane send icon, matching the app's send button.
+  // The app's Telegram-plane send icon (assets/icons/telegram-send.svg) so the
+  // widget's send button matches the in-app composer.
   var SEND_ICON =
-    '<svg viewBox="0 0 24 24"><path d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.993.993 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z"/></svg>';
+    '<svg viewBox="0 0 496 512"><path d="M446.7 98.6l-67.6 318.8c-5.1 22.5-18.4 28.1-37.3 17.5l-103-75.9-49.7 47.8c-5.5 5.5-10.1 10.1-20.7 10.1l7.4-104.9 190.9-172.5c8.3-7.4-1.8-11.5-12.9-4.1L117.8 284 16.2 252.2c-22.1-6.9-22.5-22.1 4.6-32.7L418.2 66.4c18.4-6.8 34.5 4.4 28.5 32.2z"/></svg>';
+  // Photo/gallery icon for the image attach button.
+  var IMG_ICON =
+    '<svg viewBox="0 0 24 24"><path d="M21 3H3a1 1 0 00-1 1v16a1 1 0 001 1h18a1 1 0 001-1V4a1 1 0 00-1-1zM8.5 8a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM5 19l4.2-5.2 2.3 2.8L14.8 12 19 19H5z"/></svg>';
+  var MIN_ICON = '<svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>';
+  var X_ICON =
+    '<svg viewBox="0 0 24 24"><path d="M18.3 5.7a1 1 0 00-1.42 0L12 10.59 7.11 5.7A1 1 0 105.7 7.11L10.59 12 5.7 16.89a1 1 0 101.41 1.41L12 13.41l4.89 4.89a1 1 0 001.41-1.41L13.41 12l4.89-4.89a1 1 0 000-1.41z"/></svg>';
 
   root.innerHTML =
     '<style>' + css() + '</style>' +
@@ -196,8 +252,11 @@
     '  <div class="panel" part="panel">' +
     '    <div class="head">' +
     '      <img class="av" alt=""/>' +
-    '      <div><div class="nm"></div><div class="st"></div></div>' +
-    '      <button class="x" aria-label="Close">&times;</button>' +
+    '      <div class="meta"><div class="nm"></div><div class="st"><span class="dot"></span><span class="st-txt"></span></div></div>' +
+    '      <div class="btns">' +
+    '        <button class="hbtn min" aria-label="Minimize">' + MIN_ICON + '</button>' +
+    '        <button class="hbtn x" aria-label="Close">' + X_ICON + '</button>' +
+    '      </div>' +
     '    </div>' +
     '    <div class="body"></div>' +
     '    <form class="lead">' +
@@ -212,7 +271,12 @@
     '      <input class="email-in" type="email" placeholder="Email (optional)" autocomplete="email" maxlength="160"/>' +
     '      <button type="submit">Start chat</button>' +
     '    </form>' +
-    '    <form class="foot"><input class="in" placeholder="Type a message…" autocomplete="off"/><button type="submit" aria-label="Send">' + SEND_ICON + '</button></form>' +
+    '    <form class="foot">' +
+    '      <button type="button" class="attach" aria-label="Send image">' + IMG_ICON + '</button>' +
+    '      <input class="in" placeholder="Type a message…" autocomplete="off"/>' +
+    '      <button type="submit" class="send" aria-label="Send">' + SEND_ICON + '</button>' +
+    '      <input type="file" class="file" accept="image/*" hidden/>' +
+    '    </form>' +
     '    <div class="powered">Powered by <a class="pw-link" target="_blank" rel="noopener noreferrer">Yomeet</a></div>' +
     '  </div>' +
     '  <button class="bubble" aria-label="Chat">' + CHAT_ICON + '<span class="badge"></span></button>' +
@@ -223,9 +287,11 @@
     badge: root.querySelector('.badge'),
     panel: root.querySelector('.panel'),
     close: root.querySelector('.x'),
+    min: root.querySelector('.min'),
     av: root.querySelector('.av'),
     nm: root.querySelector('.nm'),
     st: root.querySelector('.st'),
+    stTxt: root.querySelector('.st-txt'),
     body: root.querySelector('.body'),
     foot: root.querySelector('.foot'),
     namebar: root.querySelector('.namebar'),
@@ -233,7 +299,9 @@
     emailIn: root.querySelector('.email-in'),
     pwLink: root.querySelector('.pw-link'),
     input: root.querySelector('.in'),
-    send: root.querySelector('.foot button'),
+    send: root.querySelector('.foot .send'),
+    attach: root.querySelector('.attach'),
+    file: root.querySelector('.file'),
     lead: root.querySelector('.lead'),
     leadEmail: root.querySelector('.lead-email'),
     leadMsg: root.querySelector('.lead-msg'),
@@ -256,7 +324,24 @@
     if (typing) typing.remove(); // a real message means typing is over
     var div = document.createElement('div');
     div.className = 'msg ' + (m.fromVisitor ? 'me' : 'them');
-    div.innerHTML = esc(m.content);
+    if (m.imageUrl) {
+      div.className += ' img';
+      var im = document.createElement('img');
+      im.src = m.imageUrl;
+      im.alt = 'image';
+      im.addEventListener('click', function () {
+        window.open(m.imageUrl, '_blank', 'noopener');
+      });
+      div.appendChild(im);
+      if (m.content) {
+        var cap = document.createElement('div');
+        cap.className = 'cap';
+        cap.textContent = m.content;
+        div.appendChild(cap);
+      }
+    } else {
+      div.innerHTML = esc(m.content);
+    }
     el.body.appendChild(div);
     el.body.scrollTop = el.body.scrollHeight;
   }
@@ -266,7 +351,9 @@
     var t = cfg.theme || {};
     var name = (cfg.owner && cfg.owner.displayName) || 'Chat';
     el.nm.textContent = name;
-    el.st.textContent = cfg.owner && cfg.owner.online ? 'Online' : 'Away';
+    var online = !!(cfg.owner && cfg.owner.online);
+    el.stTxt.textContent = online ? 'Online' : 'Away';
+    el.st.classList.toggle('away', !online);
     if (cfg.owner && cfg.owner.avatarUrl) el.av.src = cfg.owner.avatarUrl;
     // "Powered by Yomeet" → the right store for the visitor's device.
     var s = cfg.stores || {};
@@ -451,6 +538,37 @@
   });
   el.close.addEventListener('click', function () {
     togglePanel(false);
+  });
+  el.min.addEventListener('click', function () {
+    togglePanel(false);
+  });
+
+  // Image attach → open the native file picker; upload on selection.
+  el.attach.addEventListener('click', function () {
+    el.file.click();
+  });
+  el.file.addEventListener('change', function () {
+    var f = el.file.files && el.file.files[0];
+    el.file.value = ''; // allow re-picking the same file later
+    if (!f || !/^image\//.test(f.type)) return;
+    var localUrl = URL.createObjectURL(f);
+    ensureSession()
+      .then(function () {
+        addMessage({ imageUrl: localUrl, fromVisitor: true }); // optimistic preview
+        return uploadImage(f);
+      })
+      .then(function (msg) {
+        // Advance the cursor so the poll/SSE refresh doesn't re-add the server
+        // copy as a duplicate of the optimistic bubble (same as text sends).
+        if (msg && msg.id) {
+          state.seen[msg.id] = 1;
+          state.lastId = msg.id;
+        }
+        openStream();
+      })
+      .catch(function (err) {
+        console.warn('[Yomeet widget]', err.message);
+      });
   });
 
   // Pre-chat name → remembered, then reveal the message input and start.
