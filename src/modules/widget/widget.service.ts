@@ -793,7 +793,9 @@ export async function captureLead(token: string, email: string, message: string)
   sendPushToUser(ownerId, {
     title: '🌐 New website lead',
     body: `${email}: ${preview}`,
-    data: { kind: 'widget_lead' },
+    // `type` is the app's deep-link discriminator; `kind` kept for the in-app
+    // list. Both route to the Leads screen on tap.
+    data: { type: 'widget_lead', kind: 'widget_lead' },
   }).catch(() => {});
 
   logger.info({ visitorId: visitor.id, ownerId }, 'Widget: offline lead captured');
