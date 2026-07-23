@@ -40,6 +40,33 @@ function ownerIsOnline(
   );
 }
 
+/**
+ * Widget presence as seen by the visitor: the widget is "online" if the owner
+ * OR any accepted teammate is online (within the grace window). One query for
+ * the owner + accepted member ids, then the shared ownerIsOnline() rule.
+ */
+async function isTeamOnline(widgetConfigId: string, ownerId: string): Promise<boolean> {
+  const members = await prisma.widgetTeamMember.findMany({
+    where: { widgetConfigId, status: 'ACCEPTED' },
+    select: { userId: true },
+  });
+  const ids = [ownerId, ...members.map((m) => m.userId)];
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids } },
+    select: { isOnline: true, lastSeenAt: true },
+  });
+  return users.some((u) => ownerIsOnline(u));
+}
+
+/** Accepted teammate user ids for a widget (used to fan out participants/notifications). */
+async function acceptedMemberIds(widgetConfigId: string): Promise<string[]> {
+  const members = await prisma.widgetTeamMember.findMany({
+    where: { widgetConfigId, status: 'ACCEPTED' },
+    select: { userId: true },
+  });
+  return members.map((m) => m.userId);
+}
+
 // ─── token/handle helpers ────────────────────────────────────────────
 
 /** Opaque, URL-safe secret handed to the visitor's browser. Never persisted raw. */
@@ -139,6 +166,164 @@ async function setVisitorBlocked(userId: string, visitorId: string, blockedAt: D
   return prisma.webVisitor.update({ where: { id: visitorId }, data: { blockedAt } });
 }
 
+// ─── team (shared inbox) ─────────────────────────────────────────────
+
+/** Owner's team: invited members (pending + accepted) with profile + presence. */
+export async function listTeam(ownerId: string) {
+  const config = await getOrCreateConfig(ownerId);
+  const members = await prisma.widgetTeamMember.findMany({
+    where: { widgetConfigId: config.id },
+    orderBy: { invitedAt: 'asc' },
+    select: {
+      status: true,
+      invitedAt: true,
+      user: {
+        select: {
+          id: true, displayName: true, avatarUrl: true, isOnline: true, isVerified: true,
+        },
+      },
+    },
+  });
+  return {
+    members: members.map((m) => ({
+      id: m.user.id,
+      displayName: m.user.displayName,
+      avatarUrl: m.user.avatarUrl,
+      isOnline: m.user.isOnline,
+      isVerified: m.user.isVerified,
+      status: m.status,
+      invitedAt: m.invitedAt,
+    })),
+  };
+}
+
+/** Invite a Yomeet user to help answer the owner's widget chats. */
+export async function inviteTeamMember(ownerId: string, memberUserId: string) {
+  if (memberUserId === ownerId) {
+    throw new ForbiddenError('You are already on your own team');
+  }
+  const target = await prisma.user.findUnique({
+    where: { id: memberUserId },
+    select: { id: true, isWebVisitor: true },
+  });
+  if (!target || target.isWebVisitor) throw new NotFoundError('User not found');
+  const config = await getOrCreateConfig(ownerId);
+  const existing = await prisma.widgetTeamMember.findUnique({
+    where: { widgetConfigId_userId: { widgetConfigId: config.id, userId: memberUserId } },
+  });
+  if (existing) throw new ForbiddenError('That user is already invited');
+  await prisma.widgetTeamMember.create({
+    data: { widgetConfigId: config.id, userId: memberUserId, status: 'PENDING' },
+  });
+  const owner = await prisma.user.findUnique({
+    where: { id: ownerId },
+    select: { displayName: true },
+  });
+  const ownerName = owner?.displayName ?? 'Someone';
+  createNotification({
+    userId: memberUserId,
+    type: 'SYSTEM',
+    title: 'Website chat team invite',
+    body: `${ownerName} invited you to help answer their website chats`,
+    data: { kind: 'widget_team_invite', widgetConfigId: config.id },
+  }).catch(() => {});
+  sendPushToUser(memberUserId, {
+    title: '👥 Team invite',
+    body: `${ownerName} invited you to their website chat team`,
+    data: { type: 'widget_team_invite', kind: 'widget_team_invite', widgetConfigId: config.id },
+  }).catch(() => {});
+  return { ok: true };
+}
+
+/** Pending invites addressed to the current user. */
+export async function listMyInvites(userId: string) {
+  const invites = await prisma.widgetTeamMember.findMany({
+    where: { userId, status: 'PENDING' },
+    orderBy: { invitedAt: 'desc' },
+    select: {
+      widgetConfigId: true,
+      invitedAt: true,
+      widgetConfig: {
+        select: { user: { select: { id: true, displayName: true, avatarUrl: true } } },
+      },
+    },
+  });
+  return invites.map((i) => ({
+    widgetConfigId: i.widgetConfigId,
+    invitedAt: i.invitedAt,
+    owner: {
+      id: i.widgetConfig.user.id,
+      displayName: i.widgetConfig.user.displayName,
+      avatarUrl: i.widgetConfig.user.avatarUrl,
+    },
+  }));
+}
+
+/** Accept or decline an invite. Accepting joins every existing widget conversation. */
+export async function respondToInvite(userId: string, widgetConfigId: string, accept: boolean) {
+  const membership = await prisma.widgetTeamMember.findUnique({
+    where: { widgetConfigId_userId: { widgetConfigId, userId } },
+  });
+  if (!membership || membership.status !== 'PENDING') {
+    throw new NotFoundError('Invite not found');
+  }
+  if (!accept) {
+    await prisma.widgetTeamMember.delete({
+      where: { widgetConfigId_userId: { widgetConfigId, userId } },
+    });
+    return { ok: true, accepted: false };
+  }
+  await prisma.widgetTeamMember.update({
+    where: { widgetConfigId_userId: { widgetConfigId, userId } },
+    data: { status: 'ACCEPTED', acceptedAt: new Date() },
+  });
+  await addMemberToConversations(widgetConfigId, userId);
+  return { ok: true, accepted: true };
+}
+
+/** Owner removes a member; strips them from the shared conversations. */
+export async function removeTeamMember(ownerId: string, memberUserId: string) {
+  const config = await getOrCreateConfig(ownerId);
+  await prisma.widgetTeamMember.deleteMany({
+    where: { widgetConfigId: config.id, userId: memberUserId },
+  });
+  await removeMemberFromConversations(config.id, memberUserId);
+  return { ok: true };
+}
+
+/** A member leaves a team they'd joined. */
+export async function leaveTeam(userId: string, widgetConfigId: string) {
+  await prisma.widgetTeamMember.deleteMany({ where: { widgetConfigId, userId } });
+  await removeMemberFromConversations(widgetConfigId, userId);
+  return { ok: true };
+}
+
+/** Add a user as participant to every existing widget conversation (idempotent). */
+async function addMemberToConversations(widgetConfigId: string, userId: string) {
+  const visitors = await prisma.webVisitor.findMany({
+    where: { widgetConfigId, conversationId: { not: null } },
+    select: { conversationId: true },
+  });
+  if (visitors.length === 0) return;
+  await prisma.conversationParticipant.createMany({
+    data: visitors.map((v) => ({ conversationId: v.conversationId as string, userId })),
+    skipDuplicates: true,
+  });
+}
+
+/** Remove a user's participant rows from a widget's conversations. */
+async function removeMemberFromConversations(widgetConfigId: string, userId: string) {
+  const visitors = await prisma.webVisitor.findMany({
+    where: { widgetConfigId, conversationId: { not: null } },
+    select: { conversationId: true },
+  });
+  const convIds = visitors.map((v) => v.conversationId as string);
+  if (convIds.length === 0) return;
+  await prisma.conversationParticipant.deleteMany({
+    where: { conversationId: { in: convIds }, userId },
+  });
+}
+
 // ─── public helpers ──────────────────────────────────────────────────
 
 function isOriginAllowed(allowedDomains: string[], originHost?: string): boolean {
@@ -172,7 +357,8 @@ export async function getPublicConfig(handle: string, originHost?: string) {
     owner: {
       displayName: owner?.displayName ?? 'Support',
       avatarUrl: owner?.avatarUrl ?? null,
-      online: ownerIsOnline(owner),
+      // Online if the owner OR any accepted teammate is available.
+      online: await isTeamOnline(config.id, config.userId),
       verified: owner?.isVerified ?? false,
     },
     // Device-aware "Powered by Yomeet" target (widget picks by user-agent).
@@ -450,7 +636,7 @@ export async function startSession(input: {
           ...(input.referrer && { referrer: input.referrer.slice(0, 2000) }),
         },
       });
-      return session(existing.id, input.visitorToken, existing.conversationId, config.userId);
+      return session(existing.id, input.visitorToken, existing.conversationId, config.userId, config.id);
     }
   }
 
@@ -482,7 +668,7 @@ export async function startSession(input: {
           ...(input.referrer && { referrer: input.referrer.slice(0, 2000) }),
         },
       });
-      return session(byEmail.id, token, byEmail.conversationId, config.userId);
+      return session(byEmail.id, token, byEmail.conversationId, config.userId, config.id);
     }
   }
 
@@ -508,25 +694,22 @@ export async function startSession(input: {
     },
   });
   logger.info({ visitorId: visitor.id, ownerId: config.userId }, 'Widget: new visitor session');
-  return session(visitor.id, token, null, config.userId);
+  return session(visitor.id, token, null, config.userId, config.id);
 }
 
-/** Shape the session response, including live owner presence. */
+/** Shape the session response, including live team presence. */
 async function session(
   visitorId: string,
   visitorToken: string,
   conversationId: string | null,
   ownerId: string,
+  widgetConfigId: string,
 ) {
-  const owner = await prisma.user.findUnique({
-    where: { id: ownerId },
-    select: { isOnline: true, lastSeenAt: true },
-  });
   return {
     visitorId,
     visitorToken,
     conversationId,
-    ownerOnline: ownerIsOnline(owner),
+    ownerOnline: await isTeamOnline(widgetConfigId, ownerId),
   };
 }
 
@@ -538,6 +721,7 @@ async function ensureConversation(visitor: {
   id: string;
   conversationId: string | null;
   shadowUserId: string;
+  widgetConfigId: string;
   widgetConfig: { userId: string };
   country?: string | null;
   countryCode?: string | null;
@@ -548,13 +732,17 @@ async function ensureConversation(visitor: {
   email?: string | null;
 }): Promise<string> {
   if (visitor.conversationId) return visitor.conversationId;
+  // Owner + accepted teammates all become participants, so the whole team
+  // shares the visitor's inbox and gets message notifications.
+  const memberIds = await acceptedMemberIds(visitor.widgetConfigId);
+  const staffIds = Array.from(new Set([visitor.widgetConfig.userId, ...memberIds]));
   const conversation = await prisma.conversation.create({
     data: {
       type: 'WIDGET',
       status: 'ACTIVE',
       participants: {
         create: [
-          { userId: visitor.widgetConfig.userId },
+          ...staffIds.map((userId) => ({ userId })),
           { userId: visitor.shadowUserId },
         ],
       },
@@ -735,18 +923,18 @@ export async function visitorGetMessages(token: string, since?: string, limit = 
     select: { lastReadAt: true, lastDeliveredAt: true },
   });
 
-  // Live owner presence so the widget header can flip Online ↔ Away on each poll
-  // (it's only a snapshot at page load otherwise).
-  const owner = await prisma.user.findUnique({
-    where: { id: visitor.widgetConfig.userId },
-    select: { isOnline: true, lastSeenAt: true },
-  });
+  // Live team presence so the widget header can flip Online ↔ Away on each poll
+  // (online if the owner or any teammate is available).
+  const ownerOnline = await isTeamOnline(
+    visitor.widgetConfigId,
+    visitor.widgetConfig.userId,
+  );
 
   // Tag each message from the visitor's perspective without exposing the
   // owner's raw user id.
   return {
     conversationId: visitor.conversationId,
-    ownerOnline: ownerIsOnline(owner),
+    ownerOnline,
     ownerReadAt: ownerParticipant?.lastReadAt ?? null,
     ownerDeliveredAt: ownerParticipant?.lastDeliveredAt ?? null,
     messages: messages.map((m) => ({
@@ -779,24 +967,29 @@ export async function captureLead(token: string, email: string, message: string)
     }),
   ]);
 
-  // Alert the owner so an offline lead is actionable, not just stored. Both
-  // fire-and-forget — a notification failure must not fail the capture.
+  // Alert the owner AND accepted teammates so an offline lead is actionable by
+  // whoever's around. All fire-and-forget — a notification failure must not
+  // fail the capture.
   const ownerId = visitor.widgetConfig.userId;
+  const memberIds = await acceptedMemberIds(visitor.widgetConfigId);
+  const recipients = Array.from(new Set([ownerId, ...memberIds]));
   const preview = message.length > 90 ? message.slice(0, 90) + '…' : message;
-  createNotification({
-    userId: ownerId,
-    type: 'SYSTEM',
-    title: 'New website lead',
-    body: `${email} — ${preview}`,
-    data: { kind: 'widget_lead' },
-  }).catch(() => {});
-  sendPushToUser(ownerId, {
-    title: '🌐 New website lead',
-    body: `${email}: ${preview}`,
-    // `type` is the app's deep-link discriminator; `kind` kept for the in-app
-    // list. Both route to the Leads screen on tap.
-    data: { type: 'widget_lead', kind: 'widget_lead' },
-  }).catch(() => {});
+  for (const uid of recipients) {
+    createNotification({
+      userId: uid,
+      type: 'SYSTEM',
+      title: 'New website lead',
+      body: `${email} — ${preview}`,
+      data: { kind: 'widget_lead' },
+    }).catch(() => {});
+    sendPushToUser(uid, {
+      title: '🌐 New website lead',
+      body: `${email}: ${preview}`,
+      // `type` is the app's deep-link discriminator; `kind` kept for the in-app
+      // list. Both route to the Leads screen on tap.
+      data: { type: 'widget_lead', kind: 'widget_lead' },
+    }).catch(() => {});
+  }
 
   logger.info({ visitorId: visitor.id, ownerId }, 'Widget: offline lead captured');
   return { ok: true };

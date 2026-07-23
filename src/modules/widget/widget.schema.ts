@@ -51,3 +51,7 @@ export const deleteLeadsSchema = z.object({
 export const deleteVisitorsSchema = z.object({
   ids: z.array(z.string().trim().min(1).max(64)).min(1).max(200),
 });
+
+export const inviteTeamMemberSchema = z.object({
+  userId: z.string().trim().min(1).max(64),
+});

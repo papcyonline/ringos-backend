@@ -11,6 +11,7 @@ import {
   leadSchema,
   deleteLeadsSchema,
   deleteVisitorsSchema,
+  inviteTeamMemberSchema,
 } from './widget.schema';
 import * as widget from './widget.service';
 import { onWidgetEvent } from './widget.events';
@@ -314,6 +315,76 @@ router.post(
     }
   },
 );
+
+// ─── team (shared inbox) ─────────────────────────────────────────────
+
+// GET /me/team — the owner's invited members (pending + accepted).
+router.get('/me/team', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json(await widget.listTeam(req.user!.userId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /me/team/invite — invite a Yomeet user to help answer widget chats.
+router.post(
+  '/me/team/invite',
+  authenticate,
+  validate(inviteTeamMemberSchema),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      res.json(await widget.inviteTeamMember(req.user!.userId, req.body.userId));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /me/team/:userId — owner removes a member.
+router.delete('/me/team/:userId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json(await widget.removeTeamMember(req.user!.userId, req.params.userId as string));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /me/team/invites — pending team invites addressed to the current user.
+router.get('/me/team/invites', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json(await widget.listMyInvites(req.user!.userId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /me/team/invites/:widgetConfigId/accept — accept an invite.
+router.post('/me/team/invites/:widgetConfigId/accept', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json(await widget.respondToInvite(req.user!.userId, req.params.widgetConfigId as string, true));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /me/team/invites/:widgetConfigId/decline — decline an invite.
+router.post('/me/team/invites/:widgetConfigId/decline', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json(await widget.respondToInvite(req.user!.userId, req.params.widgetConfigId as string, false));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /me/team/leave/:widgetConfigId — a member leaves a team.
+router.post('/me/team/leave/:widgetConfigId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json(await widget.leaveTeam(req.user!.userId, req.params.widgetConfigId as string));
+  } catch (err) {
+    next(err);
+  }
+});
 
 // POST /me/visitors/:id/block — block a visitor.
 router.post('/me/visitors/:id/block', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {

@@ -339,6 +339,7 @@ model User {
   // web visitor. Both relations live on User but are mutually exclusive per row.
   widgetConfig     WidgetConfig? @relation("WidgetOwner")
   webVisitor       WebVisitor?   @relation("VisitorShadowUser")
+  widgetTeamMemberships WidgetTeamMember[] @relation("WidgetTeamMemberships")
 
   @@index([isOnline, lastSeenAt])
 }
@@ -1553,11 +1554,36 @@ model WidgetConfig {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  user     User         @relation("WidgetOwner", fields: [userId], references: [id], onDelete: Cascade)
-  visitors WebVisitor[]
-  leads    WidgetLead[]
+  user        User               @relation("WidgetOwner", fields: [userId], references: [id], onDelete: Cascade)
+  visitors    WebVisitor[]
+  leads       WidgetLead[]
+  teamMembers WidgetTeamMember[]
 
   @@index([handle])
+}
+
+// A teammate the widget owner invited to help answer visitor chats. Owner
+// (WidgetConfig.userId) is the admin; accepted members become participants of
+// every WIDGET conversation so they share the inbox.
+enum WidgetTeamStatus {
+  PENDING
+  ACCEPTED
+}
+
+model WidgetTeamMember {
+  id             String           @id @default(uuid())
+  widgetConfigId String
+  userId         String
+  status         WidgetTeamStatus @default(PENDING)
+  invitedAt      DateTime         @default(now())
+  acceptedAt     DateTime?
+
+  widgetConfig WidgetConfig @relation(fields: [widgetConfigId], references: [id], onDelete: Cascade)
+  user         User         @relation("WidgetTeamMemberships", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([widgetConfigId, userId])
+  @@index([userId])
+  @@index([widgetConfigId])
 }
 
 // One anonymous website visitor session. Bridged into chat via a shadow user.
