@@ -15,7 +15,8 @@ const { mockPrisma } = vi.hoisted(() => ({
       update: vi.fn(),
     },
     widgetLead: { create: vi.fn() },
-    user: { findUnique: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
+    widgetTeamMember: { findMany: vi.fn() },
+    user: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
     conversation: { create: vi.fn() },
     message: { findUnique: vi.fn(), findMany: vi.fn() },
     $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
@@ -59,6 +60,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockCheckRateLimit.mockResolvedValue({ allowed: true, remaining: 10, resetAt: 0 });
   mockPrisma.user.findUnique.mockResolvedValue({ isOnline: true, displayName: 'Owner', avatarUrl: null });
+  // Team defaults: no teammates, presence lookup returns an online owner.
+  mockPrisma.widgetTeamMember.findMany.mockResolvedValue([]);
+  mockPrisma.user.findMany.mockResolvedValue([{ isOnline: true, lastSeenAt: null }]);
 });
 
 describe('widget.service', () => {

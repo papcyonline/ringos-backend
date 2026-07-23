@@ -13,9 +13,10 @@ const { mockPrisma } = vi.hoisted(() => ({
       create: vi.fn(), update: vi.fn(),
     },
     widgetLead: { create: vi.fn(), deleteMany: vi.fn(), findMany: vi.fn() },
-    user: { findUnique: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
+    widgetTeamMember: { findMany: vi.fn() },
+    user: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
     conversation: { create: vi.fn() },
-    conversationParticipant: { findFirst: vi.fn() },
+    conversationParticipant: { findFirst: vi.fn(), createMany: vi.fn(), deleteMany: vi.fn() },
     message: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   },
@@ -94,6 +95,9 @@ beforeEach(() => {
   mockPrisma.webVisitor.update.mockResolvedValue({});
   mockSetOnline.mockResolvedValue(undefined);
   mockSetOffline.mockResolvedValue(undefined);
+  // Team defaults: no teammates; presence lookup returns an online owner.
+  mockPrisma.widgetTeamMember.findMany.mockResolvedValue([]);
+  mockPrisma.user.findMany.mockResolvedValue([{ isOnline: true, lastSeenAt: null }]);
 });
 
 describe('deleteLeads', () => {
