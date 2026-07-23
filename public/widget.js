@@ -170,7 +170,7 @@
     medium: { bubble: 60, icon: 42, panelW: 344, panelH: 470 },
     large: { bubble: 70, icon: 49, panelW: 372, panelH: 520 },
   };
-  var sz = SIZES.medium;
+  var sz = SIZES.xsmall;
 
   function css() {
     return (
