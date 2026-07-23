@@ -139,9 +139,10 @@ describe('respondToInvite', () => {
     );
     expect(mockPrisma.conversationParticipant.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        // New members join caught-up (lastReadAt set), so history isn't unread.
         data: [
-          { conversationId: 'c1', userId: 'm1' },
-          { conversationId: 'c2', userId: 'm1' },
+          { conversationId: 'c1', userId: 'm1', lastReadAt: expect.any(Date) },
+          { conversationId: 'c2', userId: 'm1', lastReadAt: expect.any(Date) },
         ],
         skipDuplicates: true,
       }),
