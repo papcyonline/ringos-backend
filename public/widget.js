@@ -163,8 +163,9 @@
 
   var side = 'right';
   var accent = '#25D366';
-  // Widget dimensions, driven by theme.size (small | medium | large).
+  // Widget dimensions, driven by theme.size (xsmall | small | medium | large).
   var SIZES = {
+    xsmall: { bubble: 44, icon: 30, panelW: 300, panelH: 420 },
     small: { bubble: 52, icon: 36, panelW: 320, panelH: 440 },
     medium: { bubble: 60, icon: 42, panelW: 344, panelH: 470 },
     large: { bubble: 70, icon: 49, panelW: 372, panelH: 520 },
