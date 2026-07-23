@@ -33,6 +33,9 @@ const { mockPrisma } = vi.hoisted(() => {
     callLog: {
       findMany: vi.fn(),
     },
+    webVisitor: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     user: {
       findUnique: vi.fn(),
     },

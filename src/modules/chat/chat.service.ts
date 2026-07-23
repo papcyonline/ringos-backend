@@ -490,6 +490,17 @@ export async function getConversations(userId: string) {
     }
   }
 
+  // 2a2) Website-widget origin domain per conversation, so the inbox tag can
+  // name the site a visitor came from (useful when running several sites).
+  const widgetVisitors = await prisma.webVisitor.findMany({
+    where: { conversationId: { in: conversationIds } },
+    select: { conversationId: true, originDomain: true },
+  });
+  const widgetDomainMap = new Map<string, string | null>();
+  for (const v of widgetVisitors) {
+    if (v.conversationId) widgetDomainMap.set(v.conversationId, v.originDomain ?? null);
+  }
+
   // 2b) Batch latest call log (any status) per conversation
   const recentCalls = await prisma.callLog.findMany({
     where: {
@@ -555,6 +566,8 @@ export async function getConversations(userId: string) {
       unreadCount,
       lastMissedCall,
       lastCallLog,
+      // Origin site for widget conversations (null if unknown).
+      widgetDomain: c.type === 'WIDGET' ? (widgetDomainMap.get(c.id) ?? null) : undefined,
     };
   });
 
