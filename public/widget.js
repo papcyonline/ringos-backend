@@ -215,7 +215,9 @@
       'box-shadow:0 0 0 2px #fff;display:none}' +
       '.badge.show{display:block}' +
       '.panel{position:absolute;bottom:' + (sz.bubble + 14) + 'px;' + side + ':0;width:' + sz.panelW + 'px;max-width:calc(100vw - 40px);' +
-      'height:' + sz.panelH + 'px;max-height:calc(100vh - 120px);border-radius:18px;overflow:hidden;' +
+      // Auto height: start compact (header + greeting + footer) and grow with
+      // each bubble, capped at panelH (or the viewport) — then .body scrolls.
+      'height:auto;max-height:min(' + sz.panelH + 'px,calc(100vh - 120px));border-radius:18px;overflow:hidden;' +
       'background-color:#f4f5f7;background-image:radial-gradient(rgba(0,0,0,.06) 1.1px,transparent 1.1px);background-size:16px 16px;' +
       'box-shadow:0 12px 40px rgba(0,0,0,.28);display:flex;flex-direction:column;' +
       // Smooth open/close: scale + fade from the bubble corner. visibility is
@@ -242,7 +244,7 @@
       'cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:background .15s}' +
       '.head .hbtn:hover{background:#e4e6ea}' +
       '.head .hbtn svg{width:15px;height:15px;fill:#5a6069}' +
-      '.body{flex:1;overflow-y:auto;padding:12px 12px 8px;background:transparent;' +
+      '.body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 12px 8px;background:transparent;' +
       'display:flex;flex-direction:column;gap:1px}' +
       // Each message is a row: optional owner avatar + the bubble.
       '.row{display:flex;align-items:flex-start;gap:6px;max-width:88%;margin-top:7px}' +
