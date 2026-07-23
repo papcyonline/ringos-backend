@@ -280,7 +280,7 @@ describe('notification.service', () => {
       // Should have fetched sender's avatar
       expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
         where: { id: 'sender-1' },
-        select: { avatarUrl: true, isVerified: true },
+        select: { avatarUrl: true, isVerified: true, isWebVisitor: true },
       });
 
       // Notification should include imageUrl and senderAvatarUrl in data
@@ -297,6 +297,43 @@ describe('notification.service', () => {
           }),
         }),
       });
+    });
+
+    it('skips notifications for a staff reply in a shared WIDGET conversation', async () => {
+      mockPrisma.conversationParticipant.findMany.mockResolvedValue([
+        { userId: 'teammate-1' },
+      ]);
+      // Staff sender (not a web visitor).
+      mockPrisma.user.findUnique.mockResolvedValue({
+        avatarUrl: null, isVerified: false, isWebVisitor: false,
+      });
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        type: 'WIDGET', name: null, avatarUrl: null,
+      });
+      mockSocketRoom.fetchSockets.mockResolvedValue([]);
+
+      await notifyChatMessage('conv-1', 'staff-1', 'Owner', 'On it!');
+
+      expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+    });
+
+    it('still notifies staff when the visitor sends in a WIDGET conversation', async () => {
+      mockPrisma.conversationParticipant.findMany.mockResolvedValue([
+        { userId: 'staff-1' },
+      ]);
+      // Visitor sender (web-visitor shadow user).
+      mockPrisma.user.findUnique.mockResolvedValue({
+        avatarUrl: null, isVerified: false, isWebVisitor: true,
+      });
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        type: 'WIDGET', name: null, avatarUrl: null,
+      });
+      mockPrisma.notification.create.mockResolvedValue({ id: 'n1' });
+      mockSocketRoom.fetchSockets.mockResolvedValue([]);
+
+      await notifyChatMessage('conv-1', 'visitor-shadow', 'Visitor', 'Hi there');
+
+      expect(mockPrisma.notification.create).toHaveBeenCalled();
     });
 
     it('should handle sender without avatar gracefully', async () => {

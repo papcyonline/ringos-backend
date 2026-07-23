@@ -246,7 +246,7 @@ function computeMessageStatus(
 
 const messageInclude = {
   sender: {
-    select: { id: true, displayName: true, avatarUrl: true, isVerified: true },
+    select: { id: true, displayName: true, avatarUrl: true, isVerified: true, isWebVisitor: true },
   },
   replyTo: {
     select: {
@@ -272,6 +272,16 @@ const messageInclude = {
       user: { select: { displayName: true } },
     },
   },
+};
+
+// In a SHARED widget inbox a teammate's reply must not badge the conversation
+// unread for other staff — only the visitor's own messages count as unread.
+// Non-widget conversations are unaffected (the first OR branch always matches).
+const UNREAD_MESSAGE_FILTER = {
+  OR: [
+    { conversation: { type: { not: 'WIDGET' as const } } },
+    { sender: { isWebVisitor: true } },
+  ],
 };
 
 /**
@@ -415,6 +425,7 @@ export async function getConversations(userId: string) {
       conversationId: { in: conversationIds },
       senderId: { not: userId },
       deletedAt: null,
+      ...UNREAD_MESSAGE_FILTER,
     },
   });
 
@@ -440,6 +451,7 @@ export async function getConversations(userId: string) {
         conversationId: { in: idsWithLastRead },
         senderId: { not: userId },
         deletedAt: null,
+        ...UNREAD_MESSAGE_FILTER,
         ...(earliestLastRead ? { createdAt: { gt: earliestLastRead } } : {}),
       },
       select: { conversationId: true, createdAt: true },
@@ -1004,6 +1016,7 @@ export async function getChannelInbox(channelId: string, userId: string, cursor?
         conversationId: { in: idsWithoutLastRead },
         senderId: { not: userId },
         deletedAt: null,
+        ...UNREAD_MESSAGE_FILTER,
       },
     });
     for (const g of counts) unreadMap.set(g.conversationId, g._count.id);
@@ -1019,6 +1032,7 @@ export async function getChannelInbox(channelId: string, userId: string, cursor?
         conversationId: { in: idsWithLastRead },
         senderId: { not: userId },
         deletedAt: null,
+        ...UNREAD_MESSAGE_FILTER,
         createdAt: { gt: earliest },
       },
       select: { conversationId: true, createdAt: true },
@@ -1095,6 +1109,7 @@ export async function getChannelInboxUnreadCount(channelId: string, userId: stri
         conversationId: { in: idsWithoutRead },
         senderId: { not: userId },
         deletedAt: null,
+        ...UNREAD_MESSAGE_FILTER,
       },
     });
     total += result;
@@ -1110,6 +1125,7 @@ export async function getChannelInboxUnreadCount(channelId: string, userId: stri
         conversationId: { in: idsWithRead },
         senderId: { not: userId },
         deletedAt: null,
+        ...UNREAD_MESSAGE_FILTER,
         createdAt: { gt: earliest },
       },
       select: { conversationId: true, createdAt: true },
@@ -2091,6 +2107,8 @@ export async function getMessages(
   // Compute message status for messages sent by the current user
   const data = trimmed.map((msg) => ({
     ...msg,
+    // Flat flag mirroring formatMessagePayload — visitor left, staff right.
+    fromVisitor: !!(msg as { sender?: { isWebVisitor?: boolean } }).sender?.isWebVisitor,
     status: computeMessageStatus(msg, userId, participants),
   }));
 

@@ -864,7 +864,7 @@ export async function notifyChatMessage(
   // Fetch sender's avatar and verification status for notification display
   const sender = await prisma.user.findUnique({
     where: { id: senderId },
-    select: { avatarUrl: true, isVerified: true },
+    select: { avatarUrl: true, isVerified: true, isWebVisitor: true },
   });
   const senderAvatarUrl = sender?.avatarUrl ?? undefined;
   const senderIsVerified = sender?.isVerified ?? false;
@@ -891,6 +891,13 @@ export async function notifyChatMessage(
     }
   } catch (err) {
     logger.error({ err, conversationId }, 'Conversation lookup for notification failed — treating as 1-on-1');
+  }
+
+  // Shared widget inbox: a teammate's reply must not alert the other staff —
+  // it's handled. Only the visitor's messages notify staff. (The visitor sends
+  // as a web-visitor shadow user, so a non-visitor sender here is staff.)
+  if (conversationType === 'WIDGET' && !sender?.isWebVisitor) {
+    return;
   }
   const notifTitle = isGroup ? groupName! : senderName;
   const notifBody = isGroup ? `${senderName}: ${body}` : body;

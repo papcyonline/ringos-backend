@@ -106,6 +106,10 @@ export function formatMessagePayload(message: any, conversationId: string) {
     senderId: message.senderId,
     senderName: message.sender.displayName,
     senderAvatar: message.sender.avatarUrl,
+    // True when the sender is a website-widget visitor (shadow user). Lets the
+    // client put the visitor on the left and all staff replies on the right,
+    // tagging teammate replies in a shared widget inbox.
+    fromVisitor: !!message.sender.isWebVisitor,
     content: message.content,
     imageUrl: message.imageUrl,
     imageUrls: message.imageUrls ?? [],
