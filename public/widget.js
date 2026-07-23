@@ -342,7 +342,9 @@
       // comfortable to read and type on small screens.
       '@media (max-width:480px){' +
       '.wrap{bottom:16px;' + side + ':16px}' +
-      '.panel{width:calc(100vw - 24px);height:calc(100dvh - 96px);max-height:calc(100dvh - 96px);bottom:' + (sz.bubble + 12) + 'px}' +
+      // Same auto-height behaviour as desktop: grow with the chat, but the cap
+      // is the near-fullscreen height so a long thread fills the phone screen.
+      '.panel{width:calc(100vw - 24px);height:auto;max-height:calc(100dvh - 96px);bottom:' + (sz.bubble + 12) + 'px}' +
       '.msg.img img,.msg.img{max-width:62vw}' +
       '}'
     );
