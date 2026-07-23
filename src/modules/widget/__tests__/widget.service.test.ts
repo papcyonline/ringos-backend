@@ -23,10 +23,11 @@ const { mockPrisma } = vi.hoisted(() => ({
   },
 }));
 
-const { mockSendMessage, mockBroadcast, mockCheckRateLimit } = vi.hoisted(() => ({
+const { mockSendMessage, mockBroadcast, mockCheckRateLimit, mockIsPro } = vi.hoisted(() => ({
   mockSendMessage: vi.fn(),
   mockBroadcast: vi.fn(),
   mockCheckRateLimit: vi.fn(),
+  mockIsPro: vi.fn(),
 }));
 
 vi.mock('../../../config/database', () => ({ prisma: mockPrisma }));
@@ -37,6 +38,7 @@ vi.mock('../../../shared/logger', () => ({
 vi.mock('../../../shared/redis.service', () => ({ checkRateLimit: mockCheckRateLimit }));
 vi.mock('../../chat/chat.service', () => ({ sendMessage: mockSendMessage }));
 vi.mock('../../chat/chat.utils', () => ({ broadcastAndNotifyMessage: mockBroadcast }));
+vi.mock('../../../shared/usage.service', () => ({ isPro: mockIsPro }));
 
 import {
   getPublicConfig,
@@ -63,6 +65,7 @@ beforeEach(() => {
   // Team defaults: no teammates, presence lookup returns an online owner.
   mockPrisma.widgetTeamMember.findMany.mockResolvedValue([]);
   mockPrisma.user.findMany.mockResolvedValue([{ isOnline: true, lastSeenAt: null }]);
+  mockIsPro.mockResolvedValue(true); // Pro by default; gating tests override.
 });
 
 describe('widget.service', () => {
@@ -110,6 +113,23 @@ describe('widget.service', () => {
       expect(mockPrisma.widgetConfig.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ allowedDomains: ['a.com', 'b.com'] }) }),
       );
+    });
+
+    it('allows a single domain on the free tier', async () => {
+      mockIsPro.mockResolvedValue(false);
+      mockPrisma.widgetConfig.findUnique.mockResolvedValue(liveConfig);
+      mockPrisma.widgetConfig.update.mockResolvedValue(liveConfig);
+      await updateConfig('owner1', { allowedDomains: ['only.com'] });
+      expect(mockPrisma.widgetConfig.update).toHaveBeenCalled();
+    });
+
+    it('rejects a second domain when the owner is not Pro', async () => {
+      mockIsPro.mockResolvedValue(false);
+      mockPrisma.widgetConfig.findUnique.mockResolvedValue(liveConfig);
+      await expect(
+        updateConfig('owner1', { allowedDomains: ['a.com', 'b.com'] }),
+      ).rejects.toThrow(/Pro/);
+      expect(mockPrisma.widgetConfig.update).not.toHaveBeenCalled();
     });
   });
 

@@ -53,6 +53,9 @@ vi.mock('../../notification/notification.service', () => ({
   createNotification: vi.fn().mockResolvedValue(undefined),
   sendPushToUser: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('../../../shared/usage.service', () => ({
+  isPro: vi.fn().mockResolvedValue(true),
+}));
 vi.mock('../../user/user.service', () => ({ setOnline: mockSetOnline, setOffline: mockSetOffline }));
 vi.mock('../../../config/socket', () => ({ getIO: () => ({ to: mockTo }) }));
 

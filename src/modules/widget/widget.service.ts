@@ -11,6 +11,7 @@ import { broadcastAndNotifyMessage } from '../chat/chat.utils';
 import { fileToChatImageUrl, fileToChatAudioUrl } from '../../shared/upload';
 import { createNotification, sendPushToUser } from '../notification/notification.service';
 import { setOnline, setOffline } from '../user/user.service';
+import { isPro } from '../../shared/usage.service';
 
 // Visitor session length. Refreshed on activity; a cron prunes past this.
 const VISITOR_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -105,6 +106,13 @@ export async function updateConfig(
   },
 ) {
   await getOrCreateConfig(userId); // ensure a row exists
+  // Free tier is limited to a single website; more than one requires Pro.
+  if (data.allowedDomains !== undefined) {
+    const unique = Array.from(new Set(data.allowedDomains));
+    if (unique.length > 1 && !(await isPro(userId))) {
+      throw new ForbiddenError('Adding more than one website requires Yomeet Pro');
+    }
+  }
   return prisma.widgetConfig.update({
     where: { userId },
     data: {
@@ -213,6 +221,10 @@ export async function listTeam(ownerId: string) {
 export async function inviteTeamMember(ownerId: string, memberUserId: string) {
   if (memberUserId === ownerId) {
     throw new ForbiddenError('You are already on your own team');
+  }
+  // A shared team is a Pro feature.
+  if (!(await isPro(ownerId))) {
+    throw new ForbiddenError('Adding teammates requires Yomeet Pro');
   }
   const target = await prisma.user.findUnique({
     where: { id: memberUserId },
@@ -376,6 +388,13 @@ export async function getPublicConfig(handle: string, originHost?: string) {
   const brandName = typeof theme.name === 'string' ? theme.name.trim() : '';
   const brandAvatar = typeof theme.avatar === 'string' ? theme.avatar : null;
   const useBrand = brandName.length > 0;
+  // Verified tick: only in personal mode, only if the account is genuinely
+  // verified, the owner is Pro, and they've switched it on (a Pro display perk).
+  const showVerified =
+    !useBrand &&
+    !!owner?.isVerified &&
+    theme.showVerified === true &&
+    (await isPro(config.userId));
   return {
     handle: config.handle,
     theme: config.theme ?? {},
@@ -385,7 +404,7 @@ export async function getPublicConfig(handle: string, originHost?: string) {
       avatarUrl: useBrand ? brandAvatar : (owner?.avatarUrl ?? null),
       // Online if the owner OR any accepted teammate is available.
       online: await isTeamOnline(config.id, config.userId),
-      verified: useBrand ? false : (owner?.isVerified ?? false),
+      verified: showVerified,
     },
     // Device-aware "Powered by Yomeet" target (widget picks by user-agent).
     stores: {

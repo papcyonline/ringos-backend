@@ -17,9 +17,10 @@ const { mockPrisma } = vi.hoisted(() => ({
   },
 }));
 
-const { mockCreateNotification, mockSendPush } = vi.hoisted(() => ({
+const { mockCreateNotification, mockSendPush, mockIsPro } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn(),
   mockSendPush: vi.fn(),
+  mockIsPro: vi.fn(),
 }));
 
 vi.mock('../../../config/database', () => ({ prisma: mockPrisma }));
@@ -34,6 +35,7 @@ vi.mock('../../notification/notification.service', () => ({
   createNotification: mockCreateNotification,
   sendPushToUser: mockSendPush,
 }));
+vi.mock('../../../shared/usage.service', () => ({ isPro: mockIsPro }));
 
 import {
   getPublicConfig,
@@ -56,6 +58,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockCreateNotification.mockResolvedValue(undefined);
   mockSendPush.mockResolvedValue(undefined);
+  mockIsPro.mockResolvedValue(true); // Pro by default; gating tests override.
 });
 
 describe('widget team presence', () => {
@@ -122,6 +125,14 @@ describe('inviteTeamMember', () => {
     expect(mockCreateNotification).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'm1', data: expect.objectContaining({ kind: 'widget_team_invite' }) }),
     );
+  });
+
+  it('rejects inviting a teammate when the owner is not Pro', async () => {
+    mockIsPro.mockResolvedValue(false);
+    mockPrisma.user.findUnique.mockResolvedValue({ id: 'm1', isWebVisitor: false });
+    mockPrisma.widgetConfig.findUnique.mockResolvedValue(config);
+    await expect(inviteTeamMember('owner1', 'm1')).rejects.toThrow(/Pro/);
+    expect(mockPrisma.widgetTeamMember.create).not.toHaveBeenCalled();
   });
 });
 
