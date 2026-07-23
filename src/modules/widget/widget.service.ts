@@ -388,10 +388,9 @@ export async function getPublicConfig(handle: string, originHost?: string) {
   const brandName = typeof theme.name === 'string' ? theme.name.trim() : '';
   const brandAvatar = typeof theme.avatar === 'string' ? theme.avatar : null;
   const useBrand = brandName.length > 0;
-  // Verified tick: only in personal mode, only if the account is genuinely
+  // Verified tick (personal OR brand mode): only if the account is genuinely
   // verified, the owner is Pro, and they've switched it on (a Pro display perk).
   const showVerified =
-    !useBrand &&
     !!owner?.isVerified &&
     theme.showVerified === true &&
     (await isPro(config.userId));
