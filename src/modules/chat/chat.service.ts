@@ -600,6 +600,30 @@ export async function markConversationAsRead(conversationId: string, userId: str
     }),
   ]);
 
+  // Shared widget inbox: one staff member reading the thread marks it read for
+  // the whole team (their unread clears on next sync). The visitor's own read
+  // state is irrelevant, so only staff (non web-visitor) participants advance.
+  const conv = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { type: true },
+  });
+  if (conv?.type === 'WIDGET') {
+    const staff = await prisma.conversationParticipant.findMany({
+      where: { conversationId, userId: { not: userId }, user: { isWebVisitor: false } },
+      select: { userId: true },
+    });
+    if (staff.length > 0) {
+      await prisma.conversationParticipant.updateMany({
+        where: {
+          conversationId,
+          userId: { in: staff.map((s) => s.userId) },
+          OR: [{ lastReadAt: null }, { lastReadAt: { lt: now } }],
+        },
+        data: { lastReadAt: now },
+      });
+    }
+  }
+
   logger.debug({ conversationId, userId }, 'Conversation marked as read');
 }
 
