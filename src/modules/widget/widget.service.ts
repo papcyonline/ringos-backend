@@ -298,15 +298,22 @@ export async function leaveTeam(userId: string, widgetConfigId: string) {
   return { ok: true };
 }
 
-/** Add a user as participant to every existing widget conversation (idempotent). */
+/** Add a user as participant to every existing widget conversation (idempotent).
+ * New members join CAUGHT-UP (lastReadAt = now) so the existing history is
+ * visible but not flagged as a wall of unread messages. */
 async function addMemberToConversations(widgetConfigId: string, userId: string) {
   const visitors = await prisma.webVisitor.findMany({
     where: { widgetConfigId, conversationId: { not: null } },
     select: { conversationId: true },
   });
   if (visitors.length === 0) return;
+  const now = new Date();
   await prisma.conversationParticipant.createMany({
-    data: visitors.map((v) => ({ conversationId: v.conversationId as string, userId })),
+    data: visitors.map((v) => ({
+      conversationId: v.conversationId as string,
+      userId,
+      lastReadAt: now,
+    })),
     skipDuplicates: true,
   });
 }
