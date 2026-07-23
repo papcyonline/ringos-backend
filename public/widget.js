@@ -659,12 +659,25 @@
     el.pwLink.href = /iPhone|iPad|iPod/i.test(ua) ? (s.ios || 'https://yomeet.app')
       : /Android/i.test(ua) ? (s.android || 'https://yomeet.app')
       : (s.web || 'https://yomeet.app');
-    if (t.greeting) {
-      // Shown as an incoming bubble once the visitor has entered their name and
-      // the chat opens (see maybeGreet), and reused as the teaser text.
-      state.greeting = t.greeting;
-      el.teaserMsg.textContent = t.greeting;
-    }
+    // Greeting shown as an incoming bubble when the chat opens (see maybeGreet)
+    // and reused as the teaser. Falls back to a friendly default if the owner
+    // didn't set one, and supports a {name} token for personalisation.
+    var g = (typeof t.greeting === 'string' && t.greeting.trim())
+      ? t.greeting.trim() : DEFAULT_GREETING;
+    state.greeting = g;
+    el.teaserMsg.textContent = personalizeGreeting(g, state.name);
+  }
+
+  // Default first-message greeting when the owner hasn't set one.
+  var DEFAULT_GREETING = 'Hi {name} 👋 How can we help you?';
+
+  // Swap the {name} token for the visitor's name. With no name, drop the token
+  // (and any adjoining comma/space) so it reads cleanly: "Hi 👋 How can we help?"
+  function personalizeGreeting(text, name) {
+    var n = (name || '').trim();
+    if (!/\{name\}/i.test(text)) return text;
+    if (n) return text.replace(/\{name\}/gi, n);
+    return text.replace(/[,\s]*\{name\}/gi, '').replace(/\s{2,}/g, ' ').trim();
   }
 
   // Apply owner presence to the header AND the offline lead form. Called on the
@@ -842,15 +855,15 @@
     }, 4000);
   }
 
-  // A one-time greeting from the owner, shown as an incoming bubble once the
-  // visitor has entered their name and the chat is open — but only for a fresh
-  // chat (no prior messages), so returning visitors aren't re-greeted.
+  // A one-time greeting shown as an incoming bubble when the chat opens — only
+  // for a fresh chat (no prior messages), so returning visitors aren't
+  // re-greeted. Personalised with the visitor's name when they gave one.
   function maybeGreet() {
-    if (state.greeted || !state.greeting || !state.name) return;
+    if (state.greeted || !state.greeting) return;
     if (el.body.querySelector('.row')) return; // has history → don't greet
     state.greeted = true;
     addMessage({
-      content: state.greeting,
+      content: personalizeGreeting(state.greeting, state.name),
       fromVisitor: false,
       createdAt: new Date().toISOString(),
     });
