@@ -119,6 +119,18 @@ export async function updateConfig(
   });
 }
 
+/** Upload a custom brand avatar and store its URL in the widget theme. */
+export async function setBrandAvatar(userId: string, file: Express.Multer.File) {
+  const config = await getOrCreateConfig(userId);
+  const url = await fileToChatImageUrl(file, config.id);
+  const theme = { ...((config.theme as Record<string, unknown>) ?? {}), avatar: url };
+  await prisma.widgetConfig.update({
+    where: { userId },
+    data: { theme: theme as Prisma.InputJsonValue },
+  });
+  return { url };
+}
+
 /** New handle — instantly revokes every previously-pasted embed snippet. */
 export async function regenerateHandle(userId: string) {
   await getOrCreateConfig(userId);
@@ -357,16 +369,23 @@ export async function getPublicConfig(handle: string, originHost?: string) {
     where: { id: config.userId },
     select: { displayName: true, avatarUrl: true, isOnline: true, lastSeenAt: true, isVerified: true },
   });
+  // Identity: default to the owner's profile (name + avatar + verified tick).
+  // If the owner set a custom brand name, use that name + brand avatar instead,
+  // and drop the verified tick (a brand name isn't the personal account).
+  const theme = (config.theme ?? {}) as Record<string, unknown>;
+  const brandName = typeof theme.name === 'string' ? theme.name.trim() : '';
+  const brandAvatar = typeof theme.avatar === 'string' ? theme.avatar : null;
+  const useBrand = brandName.length > 0;
   return {
     handle: config.handle,
     theme: config.theme ?? {},
     offlineCapture: config.offlineCapture,
     owner: {
-      displayName: owner?.displayName ?? 'Support',
-      avatarUrl: owner?.avatarUrl ?? null,
+      displayName: useBrand ? brandName : (owner?.displayName ?? 'Support'),
+      avatarUrl: useBrand ? brandAvatar : (owner?.avatarUrl ?? null),
       // Online if the owner OR any accepted teammate is available.
       online: await isTeamOnline(config.id, config.userId),
-      verified: owner?.isVerified ?? false,
+      verified: useBrand ? false : (owner?.isVerified ?? false),
     },
     // Device-aware "Powered by Yomeet" target (widget picks by user-agent).
     stores: {

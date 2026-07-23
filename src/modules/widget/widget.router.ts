@@ -316,6 +316,21 @@ router.post(
   },
 );
 
+// POST /me/brand-avatar — upload a custom widget brand avatar (multipart).
+router.post(
+  '/me/brand-avatar',
+  authenticate,
+  chatImageUpload.single('image'),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) throw new BadRequestError('No image provided');
+      res.json(await widget.setBrandAvatar(req.user!.userId, req.file));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ─── team (shared inbox) ─────────────────────────────────────────────
 
 // GET /me/team — the owner's invited members (pending + accepted).
