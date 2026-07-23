@@ -370,11 +370,11 @@
     '<svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 003-3V6a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V22h2v-3.08A7 7 0 0019 12h-2z"/></svg>';
   var AUDIO_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
   var AUDIO_PAUSE = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
-  // Blue verified seal + white check, shown next to a verified owner's name.
+  // Green verified seal + black check, shown next to a verified owner's name.
   var VERIFIED_ICON =
     '<svg class="vf" viewBox="0 0 24 24" aria-label="Verified">' +
-    '<path fill="#1d9bf0" d="M22.25 12l-2.1-2.4.29-3.19-3.12-.71L15.66 3 12 4.57 8.34 3 6.68 5.7l-3.12.7.29 3.2L1.75 12l2.1 2.4-.29 3.2 3.12.7L8.34 21 12 19.42 15.66 21l1.66-2.7 3.12-.71-.29-3.19z"/>' +
-    '<path fill="#fff" d="M10.1 15.3l-3-3 1.3-1.3 1.7 1.7 4.2-4.2 1.3 1.3z"/></svg>';
+    '<path fill="#25D366" d="M22.25 12l-2.1-2.4.29-3.19-3.12-.71L15.66 3 12 4.57 8.34 3 6.68 5.7l-3.12.7.29 3.2L1.75 12l2.1 2.4-.29 3.2 3.12.7L8.34 21 12 19.42 15.66 21l1.66-2.7 3.12-.71-.29-3.19z"/>' +
+    '<path fill="#111" d="M10.1 15.3l-3-3 1.3-1.3 1.7 1.7 4.2-4.2 1.3 1.3z"/></svg>';
   var X_ICON =
     '<svg viewBox="0 0 24 24"><path d="M18.3 5.7a1 1 0 00-1.42 0L12 10.59 7.11 5.7A1 1 0 105.7 7.11L10.59 12 5.7 16.89a1 1 0 101.41 1.41L12 13.41l4.89 4.89a1 1 0 001.41-1.41L13.41 12l4.89-4.89a1 1 0 000-1.41z"/></svg>';
 

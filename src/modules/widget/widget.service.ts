@@ -315,13 +315,6 @@ export async function removeTeamMember(ownerId: string, memberUserId: string) {
   return { ok: true };
 }
 
-/** A member leaves a team they'd joined. */
-export async function leaveTeam(userId: string, widgetConfigId: string) {
-  await prisma.widgetTeamMember.deleteMany({ where: { widgetConfigId, userId } });
-  await removeMemberFromConversations(widgetConfigId, userId);
-  return { ok: true };
-}
-
 /** Add a user as participant to every existing widget conversation (idempotent).
  * New members join CAUGHT-UP (lastReadAt = now) so the existing history is
  * visible but not flagged as a wall of unread messages. */

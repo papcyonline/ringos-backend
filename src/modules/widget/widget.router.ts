@@ -392,15 +392,6 @@ router.post('/me/team/invites/:widgetConfigId/decline', authenticate, async (req
   }
 });
 
-// POST /me/team/leave/:widgetConfigId — a member leaves a team.
-router.post('/me/team/leave/:widgetConfigId', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    res.json(await widget.leaveTeam(req.user!.userId, req.params.widgetConfigId as string));
-  } catch (err) {
-    next(err);
-  }
-});
-
 // POST /me/visitors/:id/block — block a visitor.
 router.post('/me/visitors/:id/block', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
